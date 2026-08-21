@@ -23,10 +23,17 @@ def _read_int(name: str, default: int) -> int:
         raise RuntimeError(f"{name} debe ser un número entero.") from exc
 
 
+def _read_positive_int(name: str, default: int) -> int:
+    value = _read_int(name, default)
+    if value < 1:
+        raise RuntimeError(f"{name} debe ser mayor que cero.")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     app_name: str = "Orion Local Core"
-    version: str = "0.1.0"
+    version: str = "0.1.1"
     host: str = "127.0.0.1"
     port: int = 8765
     ollama_base_url: str = "http://127.0.0.1:11434"
@@ -34,6 +41,8 @@ class Settings:
     deep_model: str = "qwen3:14b"
     quick_context: int = 8192
     deep_context: int = 16384
+    quick_threads: int = 6
+    deep_threads: int = 8
     keep_alive: str = "2m"
     request_timeout_seconds: int = 300
     cors_origins: tuple[str, ...] = DEFAULT_CORS_ORIGINS
@@ -56,6 +65,8 @@ def get_settings() -> Settings:
         deep_model=os.getenv("ORION_DEEP_MODEL", "qwen3:14b"),
         quick_context=_read_int("ORION_QUICK_CONTEXT", 8192),
         deep_context=_read_int("ORION_DEEP_CONTEXT", 16384),
+        quick_threads=_read_positive_int("ORION_QUICK_THREADS", 6),
+        deep_threads=_read_positive_int("ORION_DEEP_THREADS", 8),
         keep_alive=os.getenv("ORION_KEEP_ALIVE", "2m"),
         request_timeout_seconds=_read_int("ORION_REQUEST_TIMEOUT", 300),
         cors_origins=origins or DEFAULT_CORS_ORIGINS,

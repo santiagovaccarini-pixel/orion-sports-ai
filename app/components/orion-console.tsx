@@ -1,6 +1,8 @@
 "use client";
 
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   ChatMessage,
   getOrionStatus,
@@ -16,6 +18,10 @@ type UiMessage = ChatMessage & {
   model?: string;
   mode?: "quick" | "deep";
   recommendation?: string;
+  totalDurationMs?: number | null;
+  tokensPerSecond?: number | null;
+  peakCpuPercent?: number | null;
+  threadLimit?: number | null;
 };
 
 type PendingWarning = {
@@ -41,6 +47,12 @@ function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function formatDuration(milliseconds?: number | null) {
+  if (milliseconds === null || milliseconds === undefined) return null;
+  if (milliseconds < 1_000) return `${milliseconds.toFixed(0)} ms`;
+  return `${(milliseconds / 1_000).toFixed(1)} s`;
+}
+
 export function OrionConsole() {
   const [status, setStatus] = useState<OrionStatus | null>(null);
   const [statusError, setStatusError] = useState(false);
@@ -48,9 +60,11 @@ export function OrionConsole() {
   const [mode, setMode] = useState<RequestedMode>("auto");
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<PendingWarning | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const peakCpuRef = useRef(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -59,6 +73,12 @@ export function OrionConsole() {
       try {
         const next = await getOrionStatus(controller.signal);
         setStatus(next);
+        if (loading) {
+          peakCpuRef.current = Math.max(
+            peakCpuRef.current,
+            next.snapshot.cpu_percent,
+          );
+        }
         setStatusError(false);
       } catch {
         if (!controller.signal.aborted) setStatusError(true);
@@ -66,13 +86,24 @@ export function OrionConsole() {
     };
 
     void refresh();
-    const timer = setInterval(refresh, 20_000);
+    const timer = setInterval(refresh, loading ? 1_200 : 15_000);
 
     return () => {
       controller.abort();
       clearInterval(timer);
     };
-  }, []);
+  }, [loading]);
+
+  useEffect(() => {
+    if (!loading) return;
+
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      setElapsedSeconds(Math.max(1, Math.round((Date.now() - startedAt) / 1_000)));
+    }, 1_000);
+
+    return () => clearInterval(timer);
+  }, [loading]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -83,6 +114,8 @@ export function OrionConsole() {
     requestedMode: RequestedMode,
     allowBusy = false,
   ) => {
+    peakCpuRef.current = status?.snapshot.cpu_percent ?? 0;
+    setElapsedSeconds(0);
     setLoading(true);
     setError(null);
     setWarning(null);
@@ -93,6 +126,19 @@ export function OrionConsole() {
         mode: requestedMode,
         allowBusy,
       });
+      let measuredPeakCpu = peakCpuRef.current;
+      try {
+        const latestStatus = await getOrionStatus();
+        setStatus(latestStatus);
+        setStatusError(false);
+        measuredPeakCpu = Math.max(
+          measuredPeakCpu,
+          latestStatus.snapshot.cpu_percent,
+        );
+      } catch {
+        // The chat result remains valid even if this optional measurement fails.
+      }
+
       setMessages((current) => [
         ...current,
         {
@@ -102,6 +148,10 @@ export function OrionConsole() {
           model: result.model,
           mode: result.selected_mode,
           recommendation: result.recommendation_reason,
+          totalDurationMs: result.total_duration_ms,
+          tokensPerSecond: result.tokens_per_second,
+          peakCpuPercent: measuredPeakCpu,
+          threadLimit: result.thread_limit,
         },
       ]);
     } catch (caught) {
@@ -166,6 +216,7 @@ export function OrionConsole() {
   const quickInstalled = Boolean(
     status?.installed_models.some((name) => name.startsWith("qwen3:8b")),
   );
+  const cpuHigh = Boolean(status && status.snapshot.cpu_percent >= 50);
 
   return (
     <main className="orion-shell">
@@ -203,8 +254,14 @@ export function OrionConsole() {
           </div>
           <div className="status-line">
             <span>CPU</span>
-            <span className="status-value">
+            <span className={`status-value ${cpuHigh ? "resource-hot" : ""}`}>
               {status ? `${status.snapshot.cpu_percent.toFixed(0)}%` : "—"}
+            </span>
+          </div>
+          <div className="status-line">
+            <span>Protección CPU</span>
+            <span className="status-value">
+              {status ? `Activa · ${status.quick_threads ?? 6} hilos` : "Activa"}
             </span>
           </div>
         </div>
@@ -222,7 +279,7 @@ export function OrionConsole() {
         </div>
 
         <p className="side-note">
-          Módulo 1 · Las conversaciones permanecen únicamente en esta sesión y
+          Módulo 1.1 · Las conversaciones permanecen únicamente en esta sesión y
           se pierden al recargar la página.
         </p>
       </aside>
@@ -251,7 +308,7 @@ export function OrionConsole() {
         <div className="chat-stage">
           {messages.length === 0 ? (
             <section className="empty-state">
-              <p className="eyebrow">Núcleo deportivo · Módulo 1</p>
+              <p className="eyebrow">Núcleo deportivo · Módulo 1.1</p>
               <h2>Tu criterio, amplificado.</h2>
               <p>
                 Orion ya tiene la base para conversar con un modelo local,
@@ -272,20 +329,66 @@ export function OrionConsole() {
             </section>
           ) : (
             <div className="messages" aria-live="polite">
-              {messages.map((message) => (
-                <article key={message.id} className={`message ${message.role}`}>
-                  {message.content}
-                  {message.role === "assistant" && message.model ? (
-                    <div className="message-meta">
-                      {message.mode === "deep" ? "Profundo" : "Rápido"} · {message.model}
-                      {message.recommendation ? ` · ${message.recommendation}` : ""}
-                    </div>
-                  ) : null}
-                </article>
-              ))}
+              {messages.map((message) => {
+                const metrics = [
+                  message.mode === "deep" ? "Profundo" : "Rápido",
+                  message.model,
+                  formatDuration(message.totalDurationMs),
+                  message.tokensPerSecond
+                    ? `${message.tokensPerSecond.toFixed(1)} tok/s`
+                    : null,
+                  message.peakCpuPercent !== null &&
+                  message.peakCpuPercent !== undefined
+                    ? `pico CPU ${message.peakCpuPercent.toFixed(0)}%`
+                    : null,
+                  message.threadLimit ? `${message.threadLimit} hilos máx.` : null,
+                ].filter((value): value is string => Boolean(value));
+
+                return (
+                  <article key={message.id} className={`message ${message.role}`}>
+                    {message.role === "assistant" ? (
+                      <div className="message-content markdown-content">
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={{
+                            a: ({ href, children }) => (
+                              <a href={href} target="_blank" rel="noreferrer">
+                                {children}
+                              </a>
+                            ),
+                          }}
+                        >
+                          {message.content}
+                        </ReactMarkdown>
+                      </div>
+                    ) : (
+                      <div className="message-content plain-content">
+                        {message.content}
+                      </div>
+                    )}
+                    {message.role === "assistant" && message.model ? (
+                      <div className="message-meta">
+                        <div className="metric-row">
+                          {metrics.map((metric) => (
+                            <span key={metric}>{metric}</span>
+                          ))}
+                        </div>
+                        {message.recommendation ? (
+                          <p>{message.recommendation}</p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
               {loading ? (
                 <div className="thinking" role="status">
-                  Orion está procesando <span /><span /><span />
+                  <span className="thinking-label">Orion está procesando</span>
+                  <span className="thinking-clock">{elapsedSeconds}s</span>
+                  <span className="thinking-dots" aria-hidden="true">
+                    <i /><i /><i />
+                  </span>
+                  <small>Prioridad reducida activa para proteger las demás aplicaciones.</small>
                 </div>
               ) : null}
               <div ref={bottomRef} />

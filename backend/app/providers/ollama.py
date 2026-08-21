@@ -32,6 +32,25 @@ class OllamaResult:
     content: str
     total_duration_ms: float | None
     tokens_per_second: float | None
+    thread_limit: int
+
+
+def runtime_options(settings: Settings, mode: SelectedMode) -> dict[str, int | float]:
+    context = (
+        settings.quick_context
+        if mode is SelectedMode.QUICK
+        else settings.deep_context
+    )
+    thread_limit = (
+        settings.quick_threads
+        if mode is SelectedMode.QUICK
+        else settings.deep_threads
+    )
+    return {
+        "num_ctx": context,
+        "num_thread": thread_limit,
+        "temperature": 0.2 if mode is SelectedMode.QUICK else 0.35,
+    }
 
 
 class OllamaClient:
@@ -73,11 +92,8 @@ class OllamaClient:
         messages: list[ChatMessage],
         system_prompt: str,
     ) -> OllamaResult:
-        context = (
-            self.settings.quick_context
-            if mode is SelectedMode.QUICK
-            else self.settings.deep_context
-        )
+        options = runtime_options(self.settings, mode)
+        thread_limit = int(options["num_thread"])
         payload: dict[str, Any] = {
             "model": model,
             "messages": [
@@ -90,10 +106,7 @@ class OllamaClient:
             "stream": False,
             "think": mode is SelectedMode.DEEP,
             "keep_alive": self.settings.keep_alive,
-            "options": {
-                "num_ctx": context,
-                "temperature": 0.2 if mode is SelectedMode.QUICK else 0.35,
-            },
+            "options": options,
         }
 
         try:
@@ -137,6 +150,7 @@ class OllamaClient:
                 else None
             ),
             tokens_per_second=tokens_per_second,
+            thread_limit=thread_limit,
         )
 
     async def _unload_other_models(

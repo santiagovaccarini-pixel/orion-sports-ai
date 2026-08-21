@@ -29,6 +29,17 @@ class ResourceGuardTests(unittest.TestCase):
         decision = evaluate_resources(SelectedMode.QUICK, snapshot)
         self.assertFalse(decision.requires_confirmation)
 
+    def test_quick_mode_warns_when_cpu_is_already_busy(self) -> None:
+        snapshot = SystemSnapshot(
+            cpu_percent=75,
+            memory_available_gb=18,
+            memory_total_gb=31.2,
+            battery_percent=100,
+            plugged_in=True,
+        )
+        decision = evaluate_resources(SelectedMode.QUICK, snapshot)
+        self.assertTrue(decision.requires_confirmation)
+
 
 if __name__ == "__main__":
     unittest.main()
