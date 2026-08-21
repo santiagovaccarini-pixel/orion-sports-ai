@@ -35,8 +35,55 @@ export type ChatResult = {
   recommendation_reason: string;
   model: string;
   total_duration_ms: number | null;
+  load_duration_ms: number | null;
+  prompt_eval_duration_ms: number | null;
+  eval_duration_ms: number | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
   tokens_per_second: number | null;
   thread_limit: number;
+};
+
+export type ChatStreamMeta = {
+  type: "meta";
+  selected_mode: SelectedMode;
+  recommended_mode: SelectedMode;
+  recommendation_reason: string;
+  model: string;
+};
+
+export type ChatStreamDone = {
+  type: "done";
+  total_duration_ms: number | null;
+  load_duration_ms: number | null;
+  prompt_eval_duration_ms: number | null;
+  eval_duration_ms: number | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  tokens_per_second: number | null;
+  thread_limit: number;
+};
+
+type ChatStreamContent = {
+  type: "content";
+  content: string;
+};
+
+type ChatStreamError = {
+  type: "error";
+  code?: string;
+  message: string;
+};
+
+type ChatStreamEvent =
+  | ChatStreamMeta
+  | ChatStreamContent
+  | ChatStreamDone
+  | ChatStreamError;
+
+export type ChatStreamResult = {
+  meta: ChatStreamMeta;
+  done: ChatStreamDone;
 };
 
 export type ResourceWarning = {
@@ -105,4 +152,77 @@ export async function sendChat(input: {
     }),
   });
   return parseResponse<ChatResult>(response);
+}
+
+export async function sendChatStream(
+  input: {
+    messages: ChatMessage[];
+    mode: RequestedMode;
+    allowBusy?: boolean;
+  },
+  handlers: {
+    onMeta: (event: ChatStreamMeta) => void;
+    onContent: (content: string) => void;
+  },
+  signal?: AbortSignal,
+): Promise<ChatStreamResult> {
+  const response = await fetch(`${API_BASE}/chat/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      messages: input.messages,
+      mode: input.mode,
+      allow_busy: input.allowBusy ?? false,
+    }),
+    signal,
+  });
+
+  if (!response.ok) {
+    await parseResponse<never>(response);
+  }
+  if (!response.body) {
+    throw new Error("El navegador no permitió recibir la respuesta progresiva.");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let meta: ChatStreamMeta | null = null;
+  let done: ChatStreamDone | null = null;
+
+  const handleLine = (line: string) => {
+    if (!line.trim()) return;
+    let event: ChatStreamEvent;
+    try {
+      event = JSON.parse(line) as ChatStreamEvent;
+    } catch {
+      throw new Error("Orion recibió un fragmento inválido del núcleo local.");
+    }
+
+    if (event.type === "meta") {
+      meta = event;
+      handlers.onMeta(event);
+    } else if (event.type === "content") {
+      handlers.onContent(event.content);
+    } else if (event.type === "done") {
+      done = event;
+    } else if (event.type === "error") {
+      throw new OrionApiError(503, event);
+    }
+  };
+
+  while (true) {
+    const { value, done: readerDone } = await reader.read();
+    buffer += decoder.decode(value, { stream: !readerDone });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) handleLine(line);
+    if (readerDone) break;
+  }
+  if (buffer.trim()) handleLine(buffer);
+
+  if (!meta || !done) {
+    throw new Error("Orion cerró la respuesta antes de terminar.");
+  }
+  return { meta, done };
 }

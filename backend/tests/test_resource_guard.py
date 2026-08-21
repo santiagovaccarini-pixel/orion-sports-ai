@@ -10,7 +10,7 @@ class ResourceGuardTests(unittest.TestCase):
     def test_deep_mode_warns_when_it_would_starve_other_apps(self) -> None:
         snapshot = SystemSnapshot(
             cpu_percent=20,
-            memory_available_gb=18,
+            memory_available_gb=13.5,
             memory_total_gb=31.2,
             battery_percent=100,
             plugged_in=True,

@@ -11,7 +11,8 @@ from backend.app.domain.models import SystemSnapshot
 GIB = 1024**3
 
 
-def read_snapshot(cpu_interval: float = 0.15) -> SystemSnapshot:
+def read_snapshot(cpu_interval: float | None = None) -> SystemSnapshot:
+    """Read current resources without pausing the API event loop by default."""
     memory = psutil.virtual_memory()
     battery = psutil.sensors_battery()
     return SystemSnapshot(
@@ -50,7 +51,7 @@ def lower_ollama_priority() -> None:
 
 async def maintain_ollama_priority(
     stop_event: asyncio.Event,
-    interval_seconds: float = 0.5,
+    interval_seconds: float = 1.5,
 ) -> None:
     """Keep current and newly spawned Ollama processes below normal priority."""
     while not stop_event.is_set():

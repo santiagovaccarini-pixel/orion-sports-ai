@@ -57,6 +57,11 @@ class ChatResponse(BaseModel):
     recommendation_reason: str
     model: str
     total_duration_ms: float | None
+    load_duration_ms: float | None
+    prompt_eval_duration_ms: float | None
+    eval_duration_ms: float | None
+    prompt_tokens: int | None
+    completion_tokens: int | None
     tokens_per_second: float | None
     thread_limit: int
 

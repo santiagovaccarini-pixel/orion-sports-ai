@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import asdict
+from dataclasses import dataclass
+from typing import AsyncIterator
 
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import StreamingResponse
 
 from backend.app.core.config import get_settings
 from backend.app.core.prompt import ORION_SYSTEM_PROMPT
@@ -33,30 +37,30 @@ router = APIRouter()
 chat_lock = asyncio.Lock()
 
 
-@router.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
+@dataclass(frozen=True, slots=True)
+class PreparedChat:
+    selected_mode: SelectedMode
+    recommended_mode: SelectedMode
+    recommendation_reason: str
+    model: str
 
 
-@router.get("/status", response_model=StatusResponse)
-async def system_status() -> StatusResponse:
-    settings = get_settings()
-    ollama = await OllamaClient(settings).status()
-    return StatusResponse(
-        version=settings.version,
-        ollama_online=ollama.online,
-        installed_models=list(ollama.installed_models),
-        loaded_models=list(ollama.loaded_models),
-        quick_model=settings.quick_model,
-        deep_model=settings.deep_model,
-        quick_threads=settings.quick_threads,
-        deep_threads=settings.deep_threads,
-        snapshot=SystemSnapshotResponse(**asdict(read_snapshot())),
+def _ndjson(payload: dict[str, object]) -> bytes:
+    return (
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+
+
+def _model_is_installed(model: str, installed_models: tuple[str, ...]) -> bool:
+    return any(
+        installed == model
+        or installed.startswith(f"{model}:")
+        or model.startswith(f"{installed}:")
+        for installed in installed_models
     )
 
 
-@router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest) -> ChatResponse:
+async def _prepare_chat(request: ChatRequest, *, preflight_model: bool) -> PreparedChat:
     settings = get_settings()
     recommendation = recommend_mode(request.messages)
     selected_mode = (
@@ -88,6 +92,62 @@ async def chat(request: ChatRequest) -> ChatResponse:
         if selected_mode is SelectedMode.QUICK
         else settings.deep_model
     )
+    if preflight_model:
+        ollama = await OllamaClient(settings).status()
+        if not ollama.online:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "ollama_unavailable",
+                    "message": "No se pudo conectar con Ollama en esta computadora.",
+                },
+            )
+        if not _model_is_installed(model, ollama.installed_models):
+            raise HTTPException(
+                status_code=status.HTTP_424_FAILED_DEPENDENCY,
+                detail={
+                    "code": "model_not_installed",
+                    "message": (
+                        f"Falta instalar {model}. Orion no descargará modelos sin tu autorización."
+                    ),
+                    "model": model,
+                },
+            )
+
+    return PreparedChat(
+        selected_mode=selected_mode,
+        recommended_mode=recommendation.mode,
+        recommendation_reason=recommendation.reason,
+        model=model,
+    )
+
+
+@router.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@router.get("/status", response_model=StatusResponse)
+async def system_status() -> StatusResponse:
+    settings = get_settings()
+    ollama = await OllamaClient(settings).status()
+    return StatusResponse(
+        version=settings.version,
+        ollama_online=ollama.online,
+        installed_models=list(ollama.installed_models),
+        loaded_models=list(ollama.loaded_models),
+        quick_model=settings.quick_model,
+        deep_model=settings.deep_model,
+        quick_threads=settings.quick_threads,
+        deep_threads=settings.deep_threads,
+        snapshot=SystemSnapshotResponse(**asdict(read_snapshot())),
+    )
+
+
+@router.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest) -> ChatResponse:
+    settings = get_settings()
+    prepared = await _prepare_chat(request, preflight_model=False)
 
     try:
         async with chat_lock:
@@ -98,8 +158,8 @@ async def chat(request: ChatRequest) -> ChatResponse:
             )
             try:
                 result = await OllamaClient(settings).chat(
-                    model=model,
-                    mode=selected_mode,
+                    model=prepared.model,
+                    mode=prepared.selected_mode,
                     messages=request.messages,
                     system_prompt=ORION_SYSTEM_PROMPT,
                 )
@@ -123,11 +183,98 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
     return ChatResponse(
         content=result.content,
-        selected_mode=selected_mode,
-        recommended_mode=recommendation.mode,
-        recommendation_reason=recommendation.reason,
-        model=model,
+        selected_mode=prepared.selected_mode,
+        recommended_mode=prepared.recommended_mode,
+        recommendation_reason=prepared.recommendation_reason,
+        model=prepared.model,
         total_duration_ms=result.total_duration_ms,
+        load_duration_ms=result.load_duration_ms,
+        prompt_eval_duration_ms=result.prompt_eval_duration_ms,
+        eval_duration_ms=result.eval_duration_ms,
+        prompt_tokens=result.prompt_tokens,
+        completion_tokens=result.completion_tokens,
         tokens_per_second=result.tokens_per_second,
         thread_limit=result.thread_limit,
+    )
+
+
+@router.post("/chat/stream")
+async def chat_stream(request: ChatRequest) -> StreamingResponse:
+    settings = get_settings()
+    prepared = await _prepare_chat(request, preflight_model=True)
+
+    async def generate() -> AsyncIterator[bytes]:
+        yield _ndjson(
+            {
+                "type": "meta",
+                "selected_mode": prepared.selected_mode.value,
+                "recommended_mode": prepared.recommended_mode.value,
+                "recommendation_reason": prepared.recommendation_reason,
+                "model": prepared.model,
+            }
+        )
+
+        try:
+            async with chat_lock:
+                lower_ollama_priority()
+                priority_stop = asyncio.Event()
+                priority_task = asyncio.create_task(
+                    maintain_ollama_priority(priority_stop)
+                )
+                try:
+                    async for event in OllamaClient(settings).chat_stream(
+                        model=prepared.model,
+                        mode=prepared.selected_mode,
+                        messages=request.messages,
+                        system_prompt=ORION_SYSTEM_PROMPT,
+                    ):
+                        if event.content:
+                            yield _ndjson(
+                                {"type": "content", "content": event.content}
+                            )
+                        if event.done:
+                            yield _ndjson(
+                                {
+                                    "type": "done",
+                                    "total_duration_ms": event.total_duration_ms,
+                                    "load_duration_ms": event.load_duration_ms,
+                                    "prompt_eval_duration_ms": (
+                                        event.prompt_eval_duration_ms
+                                    ),
+                                    "eval_duration_ms": event.eval_duration_ms,
+                                    "prompt_tokens": event.prompt_tokens,
+                                    "completion_tokens": event.completion_tokens,
+                                    "tokens_per_second": event.tokens_per_second,
+                                    "thread_limit": event.thread_limit,
+                                }
+                            )
+                finally:
+                    priority_stop.set()
+                    await priority_task
+        except asyncio.CancelledError:
+            raise
+        except ModelNotInstalledError as exc:
+            yield _ndjson(
+                {
+                    "type": "error",
+                    "code": "model_not_installed",
+                    "message": f"Falta instalar {exc.model}.",
+                }
+            )
+        except OllamaUnavailableError as exc:
+            yield _ndjson(
+                {
+                    "type": "error",
+                    "code": "ollama_unavailable",
+                    "message": str(exc),
+                }
+            )
+
+    return StreamingResponse(
+        generate(),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
     )

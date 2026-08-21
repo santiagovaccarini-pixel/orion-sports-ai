@@ -58,7 +58,7 @@ button {
   min-height: 0;
   flex-direction: column;
   gap: 2rem;
-  overflow-y: auto;
+  overflow: hidden;
   border-right: 1px solid rgba(255, 255, 255, 0.1);
   background: #11120f;
   padding: 1.5rem;
@@ -389,6 +389,11 @@ button {
   color: #292b25;
 }
 
+.stream-placeholder {
+  color: #8a8c82;
+  font-style: italic;
+}
+
 .message-meta {
   margin-top: 0.65rem;
   color: #777970;
@@ -465,6 +470,21 @@ button {
   flex-basis: 100%;
   color: #85877e;
   font-size: 0.68rem;
+}
+
+.cancel-button {
+  border: 1px solid #c6c8bd;
+  border-radius: 999px;
+  background: transparent;
+  padding: 0.25rem 0.55rem;
+  color: #55584e;
+  font-size: 0.68rem;
+  font-weight: 750;
+}
+
+.cancel-button:hover {
+  border-color: #8f9187;
+  color: var(--ink);
 }
 
 @keyframes pulse {
