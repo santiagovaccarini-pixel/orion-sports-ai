@@ -24,14 +24,14 @@ def evaluate_resources(
             reasons.append(
                 "el modo Profundo podría dejar menos de 8 GB libres para Windows y tus aplicaciones"
             )
-        if snapshot.cpu_percent >= 65:
+        if snapshot.cpu_percent >= 55:
             reasons.append(f"la CPU ya está usando {snapshot.cpu_percent:.0f}%")
         if snapshot.plugged_in is False and (snapshot.battery_percent or 100) < 35:
             reasons.append("la batería está baja y el equipo no está conectado")
     else:
         if snapshot.memory_available_gb < 7:
             reasons.append("hay menos de 7 GB de memoria disponible")
-        if snapshot.cpu_percent >= 88:
+        if snapshot.cpu_percent >= 70:
             reasons.append(f"la CPU ya está usando {snapshot.cpu_percent:.0f}%")
 
     return ResourceDecision(

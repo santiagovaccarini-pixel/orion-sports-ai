@@ -58,6 +58,7 @@ class ChatResponse(BaseModel):
     model: str
     total_duration_ms: float | None
     tokens_per_second: float | None
+    thread_limit: int
 
 
 class StatusResponse(BaseModel):
@@ -67,6 +68,8 @@ class StatusResponse(BaseModel):
     installed_models: list[str]
     quick_model: str
     deep_model: str
+    quick_threads: int
+    deep_threads: int
     loaded_models: list[str]
     snapshot: SystemSnapshotResponse
     memory_enabled: Literal[False] = False

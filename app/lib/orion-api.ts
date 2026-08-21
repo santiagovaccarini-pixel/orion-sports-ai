@@ -21,6 +21,8 @@ export type OrionStatus = {
   installed_models: string[];
   quick_model: string;
   deep_model: string;
+  quick_threads: number;
+  deep_threads: number;
   loaded_models: string[];
   snapshot: SystemSnapshot;
   memory_enabled: false;
@@ -34,6 +36,7 @@ export type ChatResult = {
   model: string;
   total_duration_ms: number | null;
   tokens_per_second: number | null;
+  thread_limit: number;
 };
 
 export type ResourceWarning = {

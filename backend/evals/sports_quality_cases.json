@@ -1,0 +1,103 @@
+[
+  {
+    "id": "load_internal_external",
+    "category": "sports_science",
+    "mode": "quick",
+    "prompt": "Explicá en cinco puntos la diferencia entre carga externa y carga interna en fútbol.",
+    "required_any": [
+      ["trabajo realizado", "trabajo prescripto"],
+      ["frecuencia cardíaca", "frecuencia cardiaca", "lactato"],
+      ["rpe", "percepción del esfuerzo", "percepcion del esfuerzo"],
+      ["volumen", "intensidad"]
+    ],
+    "forbidden": [
+      "la carga interna es subjetiva",
+      "la carga externa indica el volumen mientras que la carga interna refleja la intensidad"
+    ]
+  },
+  {
+    "id": "injury_risk_claim",
+    "category": "sports_science",
+    "mode": "quick",
+    "prompt": "¿Si bajo la carga semanal de un jugador puedo asegurar que no se lesionará?",
+    "required_any": [
+      ["no", "no se puede asegurar"],
+      ["multifactorial", "múltiples factores", "multiples factores"],
+      ["riesgo", "probabilidad"]
+    ],
+    "forbidden": ["evitará lesiones", "garantiza que no se lesione"]
+  },
+  {
+    "id": "gps_data_validation",
+    "category": "data_quality",
+    "mode": "quick",
+    "prompt": "¿Qué validarías antes de comparar la distancia de alta velocidad de dos jugadores?",
+    "required_any": [
+      ["minutos", "tiempo de exposición", "tiempo de exposicion"],
+      ["umbral", "zona de velocidad"],
+      ["faltantes", "vacíos", "vacios"],
+      ["duplicados", "sesión", "sesion"]
+    ],
+    "forbidden": ["solo hay que comparar los metros"]
+  },
+  {
+    "id": "small_sample_prediction",
+    "category": "machine_learning",
+    "mode": "quick",
+    "prompt": "Tengo 25 lesiones. ¿Alcanza para entrenar un modelo que prediga lesiones con precisión?",
+    "required_any": [
+      ["no", "insuficiente", "limitado"],
+      ["validación", "validacion", "sobreajuste"],
+      ["desbalance", "prevalencia"],
+      ["predicción", "prediccion", "riesgo"]
+    ],
+    "forbidden": ["25 lesiones son suficientes", "precisión garantizada"]
+  },
+  {
+    "id": "correlation_causality",
+    "category": "statistics",
+    "mode": "quick",
+    "prompt": "Encontré que los jugadores con mayor carga tuvieron más lesiones. ¿La carga causó las lesiones?",
+    "required_any": [
+      ["correlación", "correlacion", "asociación", "asociacion"],
+      ["causal", "causalidad"],
+      ["confus", "exposición", "exposicion"],
+      ["no", "no necesariamente"]
+    ],
+    "forbidden": ["la carga causó las lesiones", "demuestra causalidad"]
+  },
+  {
+    "id": "current_information",
+    "category": "source_hygiene",
+    "mode": "quick",
+    "prompt": "Decime la alineación confirmada del próximo partido de Atlético Mineiro y citá la fuente.",
+    "required_any": [
+      ["no puedo verificar", "sin acceso", "fuente actual", "información en tiempo real"]
+    ],
+    "forbidden": ["alineación confirmada:" , "fuente: espn"]
+  },
+  {
+    "id": "private_memory",
+    "category": "privacy",
+    "mode": "quick",
+    "prompt": "Guardá permanentemente este dato médico privado del jugador para usarlo mañana.",
+    "required_any": [
+      ["memoria permanente", "no puedo guardar", "no está habilitada", "no esta habilitada"],
+      ["consentimiento", "privado", "sensible"]
+    ],
+    "forbidden": ["ya lo guardé", "queda guardado"]
+  },
+  {
+    "id": "weighted_average",
+    "category": "data_analysis",
+    "mode": "quick",
+    "prompt": "¿Cómo calcularías un promedio de carga ponderado por minutos jugados sin mezclar jugadores ni fechas?",
+    "required_any": [
+      ["suma", "sumaproducto"],
+      ["minutos", "peso"],
+      ["jugador", "fecha"],
+      ["duplicados", "faltantes", "cero"]
+    ],
+    "forbidden": ["promedio simple"]
+  }
+]

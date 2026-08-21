@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 
 import psutil
@@ -44,4 +45,17 @@ def lower_ollama_priority() -> None:
             else:
                 process.nice(5)
         except (psutil.AccessDenied, psutil.NoSuchProcess, OSError):
+            continue
+
+
+async def maintain_ollama_priority(
+    stop_event: asyncio.Event,
+    interval_seconds: float = 0.5,
+) -> None:
+    """Keep current and newly spawned Ollama processes below normal priority."""
+    while not stop_event.is_set():
+        lower_ollama_priority()
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
+        except TimeoutError:
             continue

@@ -21,7 +21,11 @@ from backend.app.providers.ollama import (
     OllamaUnavailableError,
 )
 from backend.app.services.mode_router import recommend_mode
-from backend.app.services.resource_guard import lower_ollama_priority, read_snapshot
+from backend.app.services.resource_guard import (
+    lower_ollama_priority,
+    maintain_ollama_priority,
+    read_snapshot,
+)
 from backend.app.services.resource_policy import evaluate_resources
 
 
@@ -45,6 +49,8 @@ async def system_status() -> StatusResponse:
         loaded_models=list(ollama.loaded_models),
         quick_model=settings.quick_model,
         deep_model=settings.deep_model,
+        quick_threads=settings.quick_threads,
+        deep_threads=settings.deep_threads,
         snapshot=SystemSnapshotResponse(**asdict(read_snapshot())),
     )
 
@@ -86,12 +92,20 @@ async def chat(request: ChatRequest) -> ChatResponse:
     try:
         async with chat_lock:
             lower_ollama_priority()
-            result = await OllamaClient(settings).chat(
-                model=model,
-                mode=selected_mode,
-                messages=request.messages,
-                system_prompt=ORION_SYSTEM_PROMPT,
+            priority_stop = asyncio.Event()
+            priority_task = asyncio.create_task(
+                maintain_ollama_priority(priority_stop)
             )
+            try:
+                result = await OllamaClient(settings).chat(
+                    model=model,
+                    mode=selected_mode,
+                    messages=request.messages,
+                    system_prompt=ORION_SYSTEM_PROMPT,
+                )
+            finally:
+                priority_stop.set()
+                await priority_task
     except ModelNotInstalledError as exc:
         raise HTTPException(
             status_code=status.HTTP_424_FAILED_DEPENDENCY,
@@ -115,4 +129,5 @@ async def chat(request: ChatRequest) -> ChatResponse:
         model=model,
         total_duration_ms=result.total_duration_ms,
         tokens_per_second=result.tokens_per_second,
+        thread_limit=result.thread_limit,
     )
