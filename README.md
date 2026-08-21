@@ -15,6 +15,7 @@ Este módulo incorpora:
 - advertencia antes de una operación pesada cuando la PC está exigida;
 - prioridad reducida continua para los procesos de Ollama;
 - presupuesto configurable de 6 hilos en Rápido y 8 en Profundo;
+- servidor Python oculto, con verificación de arranque y registros de errores;
 - conversación con desplazamiento independiente y panel de estado fijo;
 - Markdown seguro y métricas de tiempo, velocidad y pico de CPU por respuesta;
 - reglas de prudencia científica y una batería reproducible de calidad deportiva;
@@ -64,6 +65,19 @@ Para iniciar Orion:
 ```powershell
 .\scripts\windows\Start-Orion.ps1
 ```
+
+El núcleo Python se ejecuta oculto y sus registros quedan en
+`.orion-runtime`. La terminal desde la que se inicia Orion sigue siendo el
+controlador temporal del prototipo: al detenerla, el núcleo local se cierra de
+forma ordenada.
+
+## Dirección del producto
+
+El iniciador actual es transitorio. El objetivo de la siguiente etapa es
+empaquetar Orion como una aplicación liviana para Windows, con acceso directo e
+icono propio en la barra de tareas, sin necesitar VS Code. La aplicación deberá
+iniciar y detener de forma segura el núcleo local y mantener el mismo control
+de privacidad y recursos.
 
 ## Pruebas
 
