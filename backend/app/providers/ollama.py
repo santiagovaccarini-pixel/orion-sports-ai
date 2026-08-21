@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, AsyncIterator, Sequence
 
 import httpx
 
@@ -31,8 +32,75 @@ class OllamaStatus:
 class OllamaResult:
     content: str
     total_duration_ms: float | None
+    load_duration_ms: float | None
+    prompt_eval_duration_ms: float | None
+    eval_duration_ms: float | None
+    prompt_tokens: int | None
+    completion_tokens: int | None
     tokens_per_second: float | None
     thread_limit: int
+
+
+@dataclass(frozen=True, slots=True)
+class OllamaStreamEvent:
+    content: str
+    done: bool
+    total_duration_ms: float | None = None
+    load_duration_ms: float | None = None
+    prompt_eval_duration_ms: float | None = None
+    eval_duration_ms: float | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    tokens_per_second: float | None = None
+    thread_limit: int | None = None
+
+
+def _nanoseconds_to_milliseconds(value: object) -> float | None:
+    if isinstance(value, int):
+        return round(value / 1_000_000, 2)
+    return None
+
+
+def parse_stream_payload(
+    payload: dict[str, Any],
+    *,
+    thread_limit: int,
+) -> OllamaStreamEvent:
+    eval_duration = payload.get("eval_duration")
+    completion_tokens = payload.get("eval_count")
+    tokens_per_second = None
+    if (
+        isinstance(eval_duration, int)
+        and eval_duration > 0
+        and isinstance(completion_tokens, int)
+    ):
+        tokens_per_second = round(
+            completion_tokens / (eval_duration / 1_000_000_000),
+            2,
+        )
+
+    return OllamaStreamEvent(
+        content=str(payload.get("message", {}).get("content", "")),
+        done=bool(payload.get("done", False)),
+        total_duration_ms=_nanoseconds_to_milliseconds(
+            payload.get("total_duration")
+        ),
+        load_duration_ms=_nanoseconds_to_milliseconds(payload.get("load_duration")),
+        prompt_eval_duration_ms=_nanoseconds_to_milliseconds(
+            payload.get("prompt_eval_duration")
+        ),
+        eval_duration_ms=_nanoseconds_to_milliseconds(eval_duration),
+        prompt_tokens=(
+            payload.get("prompt_eval_count")
+            if isinstance(payload.get("prompt_eval_count"), int)
+            else None
+        ),
+        completion_tokens=(
+            completion_tokens if isinstance(completion_tokens, int) else None
+        ),
+        tokens_per_second=tokens_per_second,
+        thread_limit=thread_limit,
+    )
 
 
 def runtime_options(settings: Settings, mode: SelectedMode) -> dict[str, int | float]:
@@ -46,11 +114,47 @@ def runtime_options(settings: Settings, mode: SelectedMode) -> dict[str, int | f
         if mode is SelectedMode.QUICK
         else settings.deep_threads
     )
+    max_tokens = (
+        settings.quick_max_tokens
+        if mode is SelectedMode.QUICK
+        else settings.deep_max_tokens
+    )
     return {
         "num_ctx": context,
         "num_thread": thread_limit,
+        "num_predict": max_tokens,
         "temperature": 0.2 if mode is SelectedMode.QUICK else 0.35,
     }
+
+
+def select_history(
+    settings: Settings,
+    mode: SelectedMode,
+    messages: Sequence[ChatMessage],
+) -> list[ChatMessage]:
+    character_budget = (
+        settings.quick_history_characters
+        if mode is SelectedMode.QUICK
+        else settings.deep_history_characters
+    )
+    message_limit = 8 if mode is SelectedMode.QUICK else 16
+    selected: list[ChatMessage] = []
+    used_characters = 0
+
+    for message in reversed(messages):
+        message_size = len(message.content)
+        if selected and (
+            len(selected) >= message_limit
+            or used_characters + message_size > character_budget
+        ):
+            break
+        selected.append(message)
+        used_characters += message_size
+
+    selected.reverse()
+    while selected and selected[0].role == "assistant":
+        selected.pop(0)
+    return selected or [messages[-1]]
 
 
 class OllamaClient:
@@ -92,19 +196,61 @@ class OllamaClient:
         messages: list[ChatMessage],
         system_prompt: str,
     ) -> OllamaResult:
+        content_parts: list[str] = []
+        final_event: OllamaStreamEvent | None = None
+        async for event in self.chat_stream(
+            model=model,
+            mode=mode,
+            messages=messages,
+            system_prompt=system_prompt,
+        ):
+            if event.content:
+                content_parts.append(event.content)
+            if event.done:
+                final_event = event
+
+        content = "".join(content_parts).strip()
+        if not content:
+            raise OllamaUnavailableError("El modelo devolvió una respuesta vacía.")
+        if final_event is None:
+            raise OllamaUnavailableError("Ollama cerró la respuesta antes de terminar.")
+
+        return OllamaResult(
+            content=content,
+            total_duration_ms=final_event.total_duration_ms,
+            load_duration_ms=final_event.load_duration_ms,
+            prompt_eval_duration_ms=final_event.prompt_eval_duration_ms,
+            eval_duration_ms=final_event.eval_duration_ms,
+            prompt_tokens=final_event.prompt_tokens,
+            completion_tokens=final_event.completion_tokens,
+            tokens_per_second=final_event.tokens_per_second,
+            thread_limit=final_event.thread_limit or self.settings.quick_threads,
+        )
+
+    async def chat_stream(
+        self,
+        *,
+        model: str,
+        mode: SelectedMode,
+        messages: list[ChatMessage],
+        system_prompt: str,
+    ) -> AsyncIterator[OllamaStreamEvent]:
         options = runtime_options(self.settings, mode)
         thread_limit = int(options["num_thread"])
+        selected_messages = select_history(self.settings, mode, messages)
         payload: dict[str, Any] = {
             "model": model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 *[
                     {"role": message.role, "content": message.content}
-                    for message in messages
+                    for message in selected_messages
                 ],
             ],
-            "stream": False,
-            "think": mode is SelectedMode.DEEP,
+            "stream": True,
+            # Both modes avoid hidden reasoning tokens. Profundo gains quality from
+            # the larger model, context and answer budget instead.
+            "think": False,
             "keep_alive": self.settings.keep_alive,
             "options": options,
         }
@@ -112,46 +258,42 @@ class OllamaClient:
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 await self._unload_other_models(client, keep_model=model)
-                response = await client.post(
+                async with client.stream(
+                    "POST",
                     f"{self.settings.ollama_base_url}/api/chat",
                     json=payload,
-                )
+                ) as response:
+                    if response.status_code == 404:
+                        await response.aread()
+                        raise ModelNotInstalledError(model)
+                    response.raise_for_status()
+
+                    saw_done = False
+                    async for line in response.aiter_lines():
+                        if not line.strip():
+                            continue
+                        try:
+                            data = json.loads(line)
+                        except ValueError as exc:
+                            raise OllamaUnavailableError(
+                                "Ollama envió una respuesta progresiva inválida."
+                            ) from exc
+                        event = parse_stream_payload(data, thread_limit=thread_limit)
+                        saw_done = saw_done or event.done
+                        yield event
+
+                    if not saw_done:
+                        raise OllamaUnavailableError(
+                            "Ollama cerró la respuesta antes de terminar."
+                        )
+        except ModelNotInstalledError:
+            raise
+        except OllamaUnavailableError:
+            raise
         except httpx.HTTPError as exc:
             raise OllamaUnavailableError(
-                "No se pudo conectar con Ollama en esta computadora."
+                "No se pudo completar la respuesta con Ollama."
             ) from exc
-
-        if response.status_code == 404:
-            raise ModelNotInstalledError(model)
-        try:
-            response.raise_for_status()
-            data = response.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            raise OllamaUnavailableError(
-                "Ollama respondió con un error inesperado."
-            ) from exc
-
-        content = str(data.get("message", {}).get("content", "")).strip()
-        if not content:
-            raise OllamaUnavailableError("El modelo devolvió una respuesta vacía.")
-
-        total_duration = data.get("total_duration")
-        eval_duration = data.get("eval_duration")
-        eval_count = data.get("eval_count")
-        tokens_per_second = None
-        if isinstance(eval_duration, int) and eval_duration > 0 and isinstance(eval_count, int):
-            tokens_per_second = round(eval_count / (eval_duration / 1_000_000_000), 2)
-
-        return OllamaResult(
-            content=content,
-            total_duration_ms=(
-                round(total_duration / 1_000_000, 2)
-                if isinstance(total_duration, int)
-                else None
-            ),
-            tokens_per_second=tokens_per_second,
-            thread_limit=thread_limit,
-        )
 
     async def _unload_other_models(
         self,

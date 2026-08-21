@@ -10,7 +10,7 @@ import {
   OrionStatus,
   RequestedMode,
   ResourceWarning,
-  sendChat,
+  sendChatStream,
 } from "../lib/orion-api";
 
 type UiMessage = ChatMessage & {
@@ -19,6 +19,10 @@ type UiMessage = ChatMessage & {
   mode?: "quick" | "deep";
   recommendation?: string;
   totalDurationMs?: number | null;
+  firstTokenMs?: number | null;
+  loadDurationMs?: number | null;
+  promptTokens?: number | null;
+  completionTokens?: number | null;
   tokensPerSecond?: number | null;
   peakCpuPercent?: number | null;
   threadLimit?: number | null;
@@ -63,7 +67,8 @@ export function OrionConsole() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<PendingWarning | null>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const activeRequestRef = useRef<AbortController | null>(null);
   const peakCpuRef = useRef(0);
 
   useEffect(() => {
@@ -86,7 +91,7 @@ export function OrionConsole() {
     };
 
     void refresh();
-    const timer = setInterval(refresh, loading ? 1_200 : 15_000);
+    const timer = setInterval(refresh, loading ? 2_500 : 15_000);
 
     return () => {
       controller.abort();
@@ -106,26 +111,77 @@ export function OrionConsole() {
   }, [loading]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const container = messagesRef.current;
+    if (!container) return;
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: loading ? "auto" : "smooth",
+    });
   }, [messages, loading, warning]);
+
+  useEffect(
+    () => () => {
+      activeRequestRef.current?.abort();
+    },
+    [],
+  );
 
   const runRequest = async (
     requestMessages: ChatMessage[],
     requestedMode: RequestedMode,
     allowBusy = false,
   ) => {
+    const controller = new AbortController();
+    activeRequestRef.current?.abort();
+    activeRequestRef.current = controller;
     peakCpuRef.current = status?.snapshot.cpu_percent ?? 0;
     setElapsedSeconds(0);
     setLoading(true);
     setError(null);
     setWarning(null);
 
+    const assistantId = makeId("assistant");
+    const startedAt = performance.now();
+    let firstTokenMs: number | null = null;
+    let assistantStarted = false;
+
     try {
-      const result = await sendChat({
-        messages: requestMessages,
-        mode: requestedMode,
-        allowBusy,
-      });
+      const result = await sendChatStream(
+        {
+          messages: requestMessages,
+          mode: requestedMode,
+          allowBusy,
+        },
+        {
+          onMeta: (meta) => {
+            assistantStarted = true;
+            setMessages((current) => [
+              ...current,
+              {
+                id: assistantId,
+                role: "assistant",
+                content: "",
+                model: meta.model,
+                mode: meta.selected_mode,
+                recommendation: meta.recommendation_reason,
+              },
+            ]);
+          },
+          onContent: (content) => {
+            if (firstTokenMs === null) {
+              firstTokenMs = performance.now() - startedAt;
+            }
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === assistantId
+                  ? { ...message, content: message.content + content }
+                  : message,
+              ),
+            );
+          },
+        },
+        controller.signal,
+      );
       let measuredPeakCpu = peakCpuRef.current;
       try {
         const latestStatus = await getOrionStatus();
@@ -139,22 +195,44 @@ export function OrionConsole() {
         // The chat result remains valid even if this optional measurement fails.
       }
 
-      setMessages((current) => [
-        ...current,
-        {
-          id: makeId("assistant"),
-          role: "assistant",
-          content: result.content,
-          model: result.model,
-          mode: result.selected_mode,
-          recommendation: result.recommendation_reason,
-          totalDurationMs: result.total_duration_ms,
-          tokensPerSecond: result.tokens_per_second,
-          peakCpuPercent: measuredPeakCpu,
-          threadLimit: result.thread_limit,
-        },
-      ]);
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === assistantId
+            ? {
+                ...message,
+                model: result.meta.model,
+                mode: result.meta.selected_mode,
+                recommendation: result.meta.recommendation_reason,
+                totalDurationMs: result.done.total_duration_ms,
+                firstTokenMs,
+                loadDurationMs: result.done.load_duration_ms,
+                promptTokens: result.done.prompt_tokens,
+                completionTokens: result.done.completion_tokens,
+                tokensPerSecond: result.done.tokens_per_second,
+                peakCpuPercent: measuredPeakCpu,
+                threadLimit: result.done.thread_limit,
+              }
+            : message,
+        ),
+      );
     } catch (caught) {
+      if (controller.signal.aborted) {
+        if (assistantStarted) {
+          setMessages((current) =>
+            current
+              .map((message) =>
+                message.id === assistantId
+                  ? {
+                      ...message,
+                      content: message.content || "Respuesta detenida.",
+                      recommendation: "Respuesta detenida por el usuario.",
+                    }
+                  : message,
+              ),
+          );
+        }
+        return;
+      }
       if (
         caught instanceof OrionApiError &&
         caught.status === 409 &&
@@ -167,6 +245,20 @@ export function OrionConsole() {
           detail: caught.detail as ResourceWarning,
         });
       } else {
+        if (assistantStarted) {
+          setMessages((current) =>
+            current.flatMap((message) => {
+              if (message.id !== assistantId) return [message];
+              if (!message.content) return [];
+              return [
+                {
+                  ...message,
+                  recommendation: "La respuesta se interrumpió antes de terminar.",
+                },
+              ];
+            }),
+          );
+        }
         setError(
           caught instanceof Error
             ? caught.message
@@ -174,8 +266,15 @@ export function OrionConsole() {
         );
       }
     } finally {
+      if (activeRequestRef.current === controller) {
+        activeRequestRef.current = null;
+      }
       setLoading(false);
     }
+  };
+
+  const stopRequest = () => {
+    activeRequestRef.current?.abort();
   };
 
   const submitPrompt = async (prompt: string) => {
@@ -214,7 +313,9 @@ export function OrionConsole() {
   const online = Boolean(status && !statusError);
   const ollamaOnline = Boolean(status?.ollama_online);
   const quickInstalled = Boolean(
-    status?.installed_models.some((name) => name.startsWith("qwen3:8b")),
+    status?.installed_models.some(
+      (name) => name === status.quick_model || name.startsWith(status.quick_model),
+    ),
   );
   const cpuHigh = Boolean(status && status.snapshot.cpu_percent >= 50);
 
@@ -243,7 +344,7 @@ export function OrionConsole() {
             <span className="status-value">{ollamaOnline ? "Activo" : "Pendiente"}</span>
           </div>
           <div className="status-line">
-            <span>Qwen3 8B</span>
+            <span>Modelo Rápido</span>
             <span className="status-value">{quickInstalled ? "Instalado" : "Pendiente"}</span>
           </div>
           <div className="status-line">
@@ -261,7 +362,7 @@ export function OrionConsole() {
           <div className="status-line">
             <span>Protección CPU</span>
             <span className="status-value">
-              {status ? `Activa · ${status.quick_threads ?? 6} hilos` : "Activa"}
+              {status ? `Activa · ${status.quick_threads ?? 8} hilos` : "Activa"}
             </span>
           </div>
         </div>
@@ -279,7 +380,7 @@ export function OrionConsole() {
         </div>
 
         <p className="side-note">
-          Módulo 1.1 · Las conversaciones permanecen únicamente en esta sesión y
+          Módulo 1.2 · Las conversaciones permanecen únicamente en esta sesión y
           se pierden al recargar la página.
         </p>
       </aside>
@@ -308,7 +409,7 @@ export function OrionConsole() {
         <div className="chat-stage">
           {messages.length === 0 ? (
             <section className="empty-state">
-              <p className="eyebrow">Núcleo deportivo · Módulo 1.1</p>
+              <p className="eyebrow">Núcleo deportivo · Módulo 1.2</p>
               <h2>Tu criterio, amplificado.</h2>
               <p>
                 Orion ya tiene la base para conversar con un modelo local,
@@ -328,14 +429,31 @@ export function OrionConsole() {
               </div>
             </section>
           ) : (
-            <div className="messages" aria-live="polite">
+            <div ref={messagesRef} className="messages" aria-live="polite">
               {messages.map((message) => {
                 const metrics = [
                   message.mode === "deep" ? "Profundo" : "Rápido",
                   message.model,
-                  formatDuration(message.totalDurationMs),
+                  message.firstTokenMs !== null &&
+                  message.firstTokenMs !== undefined
+                    ? `primer texto ${formatDuration(message.firstTokenMs)}`
+                    : null,
+                  message.totalDurationMs !== null &&
+                  message.totalDurationMs !== undefined
+                    ? `total ${formatDuration(message.totalDurationMs)}`
+                    : null,
+                  message.loadDurationMs !== null &&
+                  message.loadDurationMs !== undefined
+                    ? `carga ${formatDuration(message.loadDurationMs)}`
+                    : null,
                   message.tokensPerSecond
                     ? `${message.tokensPerSecond.toFixed(1)} tok/s`
+                    : null,
+                  message.promptTokens
+                    ? `${message.promptTokens} tokens de entrada`
+                    : null,
+                  message.completionTokens
+                    ? `${message.completionTokens} tokens de salida`
                     : null,
                   message.peakCpuPercent !== null &&
                   message.peakCpuPercent !== undefined
@@ -348,18 +466,22 @@ export function OrionConsole() {
                   <article key={message.id} className={`message ${message.role}`}>
                     {message.role === "assistant" ? (
                       <div className="message-content markdown-content">
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm]}
-                          components={{
-                            a: ({ href, children }) => (
-                              <a href={href} target="_blank" rel="noreferrer">
-                                {children}
-                              </a>
-                            ),
-                          }}
-                        >
-                          {message.content}
-                        </ReactMarkdown>
+                        {message.content ? (
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              a: ({ href, children }) => (
+                                <a href={href} target="_blank" rel="noreferrer">
+                                  {children}
+                                </a>
+                              ),
+                            }}
+                          >
+                            {message.content}
+                          </ReactMarkdown>
+                        ) : (
+                          <span className="stream-placeholder">Preparando respuesta…</span>
+                        )}
                       </div>
                     ) : (
                       <div className="message-content plain-content">
@@ -383,15 +505,21 @@ export function OrionConsole() {
               })}
               {loading ? (
                 <div className="thinking" role="status">
-                  <span className="thinking-label">Orion está procesando</span>
+                  <span className="thinking-label">Orion está respondiendo</span>
                   <span className="thinking-clock">{elapsedSeconds}s</span>
                   <span className="thinking-dots" aria-hidden="true">
                     <i /><i /><i />
                   </span>
-                  <small>Prioridad reducida activa para proteger las demás aplicaciones.</small>
+                  <button
+                    type="button"
+                    className="cancel-button"
+                    onClick={stopRequest}
+                  >
+                    Detener
+                  </button>
+                  <small>La respuesta aparece progresivamente · prioridad reducida activa.</small>
                 </div>
               ) : null}
-              <div ref={bottomRef} />
             </div>
           )}
 

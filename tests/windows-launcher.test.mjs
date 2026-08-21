@@ -21,3 +21,10 @@ test("always stops the hidden backend when the launcher finishes", async () => {
   assert.match(source, /finally\s*\{[\s\S]*Stop-Process -Id \$BackendProcess\.Id/);
   assert.match(source, /\.orion-runtime/);
 });
+
+test("disables interactive tunnel shortcuts in the local launcher", async () => {
+  const source = await readFile(launcher, "utf8");
+
+  assert.match(source, /\$env:CI\s*=\s*"1"/);
+  assert.match(source, /npm exec vite -- --host 127\.0\.0\.1/);
+});

@@ -77,6 +77,9 @@ try {
 
     Push-Location $ProjectRoot
     try {
+        # Desactiva los atajos interactivos de Vite/Cloudflare. Así, pegar un
+        # comando en esta terminal no puede abrir un túnel público por accidente.
+        $env:CI = "1"
         npm exec vite -- --host 127.0.0.1
     }
     finally {

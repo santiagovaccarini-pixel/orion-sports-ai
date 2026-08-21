@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [switch]$InstallOllama,
-    [switch]$DownloadQuickModel
+    [switch]$DownloadQuickModel,
+    [switch]$DownloadDeepModel
 )
 
 $ErrorActionPreference = "Stop"
@@ -78,6 +79,13 @@ if ($InstallOllama -and -not $OllamaExecutable) {
 }
 
 if ($DownloadQuickModel) {
+    if (-not $OllamaExecutable) {
+        throw "Ollama todavía no está instalado o requiere reiniciar la terminal."
+    }
+    & $OllamaExecutable pull qwen3:4b-instruct
+}
+
+if ($DownloadDeepModel) {
     if (-not $OllamaExecutable) {
         throw "Ollama todavía no está instalado o requiere reiniciar la terminal."
     }

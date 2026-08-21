@@ -18,7 +18,8 @@ def evaluate_resources(
     reasons: list[str] = []
 
     if mode is SelectedMode.DEEP:
-        estimated_model_gb = 12.5
+        # Qwen3 8B Q4 plus its context/cache leaves a conservative local margin.
+        estimated_model_gb = 6.5
         reserve_for_other_apps_gb = 8.0
         if snapshot.memory_available_gb - estimated_model_gb < reserve_for_other_apps_gb:
             reasons.append(

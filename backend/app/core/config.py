@@ -33,17 +33,21 @@ def _read_positive_int(name: str, default: int) -> int:
 @dataclass(frozen=True, slots=True)
 class Settings:
     app_name: str = "Orion Local Core"
-    version: str = "0.1.1"
+    version: str = "0.1.2"
     host: str = "127.0.0.1"
     port: int = 8765
     ollama_base_url: str = "http://127.0.0.1:11434"
-    quick_model: str = "qwen3:8b"
-    deep_model: str = "qwen3:14b"
-    quick_context: int = 8192
-    deep_context: int = 16384
-    quick_threads: int = 6
+    quick_model: str = "qwen3:4b-instruct"
+    deep_model: str = "qwen3:8b"
+    quick_context: int = 4096
+    deep_context: int = 8192
+    quick_threads: int = 8
     deep_threads: int = 8
-    keep_alive: str = "2m"
+    quick_max_tokens: int = 384
+    deep_max_tokens: int = 1024
+    quick_history_characters: int = 12_000
+    deep_history_characters: int = 30_000
+    keep_alive: str = "10m"
     request_timeout_seconds: int = 300
     cors_origins: tuple[str, ...] = DEFAULT_CORS_ORIGINS
 
@@ -61,13 +65,21 @@ def get_settings() -> Settings:
         ollama_base_url=os.getenv(
             "ORION_OLLAMA_URL", "http://127.0.0.1:11434"
         ).rstrip("/"),
-        quick_model=os.getenv("ORION_QUICK_MODEL", "qwen3:8b"),
-        deep_model=os.getenv("ORION_DEEP_MODEL", "qwen3:14b"),
-        quick_context=_read_int("ORION_QUICK_CONTEXT", 8192),
-        deep_context=_read_int("ORION_DEEP_CONTEXT", 16384),
-        quick_threads=_read_positive_int("ORION_QUICK_THREADS", 6),
+        quick_model=os.getenv("ORION_QUICK_MODEL", "qwen3:4b-instruct"),
+        deep_model=os.getenv("ORION_DEEP_MODEL", "qwen3:8b"),
+        quick_context=_read_positive_int("ORION_QUICK_CONTEXT", 4096),
+        deep_context=_read_positive_int("ORION_DEEP_CONTEXT", 8192),
+        quick_threads=_read_positive_int("ORION_QUICK_THREADS", 8),
         deep_threads=_read_positive_int("ORION_DEEP_THREADS", 8),
-        keep_alive=os.getenv("ORION_KEEP_ALIVE", "2m"),
+        quick_max_tokens=_read_positive_int("ORION_QUICK_MAX_TOKENS", 384),
+        deep_max_tokens=_read_positive_int("ORION_DEEP_MAX_TOKENS", 1024),
+        quick_history_characters=_read_positive_int(
+            "ORION_QUICK_HISTORY_CHARACTERS", 12_000
+        ),
+        deep_history_characters=_read_positive_int(
+            "ORION_DEEP_HISTORY_CHARACTERS", 30_000
+        ),
+        keep_alive=os.getenv("ORION_KEEP_ALIVE", "10m"),
         request_timeout_seconds=_read_int("ORION_REQUEST_TIMEOUT", 300),
         cors_origins=origins or DEFAULT_CORS_ORIGINS,
     )
