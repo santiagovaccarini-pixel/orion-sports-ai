@@ -300,6 +300,11 @@ button {
   white-space: pre-wrap;
 }
 
+.streaming-content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .markdown-content > :first-child {
   margin-top: 0;
 }
@@ -372,6 +377,12 @@ button {
   border: 1px solid var(--line);
   padding: 0.45rem 0.6rem;
   text-align: left;
+}
+
+.markdown-content th {
+  background: #f0f1ea;
+  color: #34362f;
+  font-weight: 750;
 }
 
 .message.user {
@@ -472,31 +483,35 @@ button {
   font-size: 0.68rem;
 }
 
-.cancel-button {
-  border: 1px solid #c6c8bd;
-  border-radius: 999px;
-  background: transparent;
-  padding: 0.25rem 0.55rem;
-  color: #55584e;
-  font-size: 0.68rem;
-  font-weight: 750;
-}
-
-.cancel-button:hover {
-  border-color: #8f9187;
-  color: var(--ink);
-}
-
 @keyframes pulse {
   0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
   30% { opacity: 1; transform: translateY(-2px); }
 }
 
 .composer-wrap {
+  position: relative;
   flex: 0 0 auto;
   margin-top: auto;
   padding-top: 1rem;
   background: linear-gradient(transparent, var(--paper) 18%);
+}
+
+.scroll-to-latest {
+  display: block;
+  margin: 0 auto 0.65rem;
+  border: 1px solid #c9cbc1;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+  padding: 0.45rem 0.75rem;
+  color: #464940;
+  font-size: 0.72rem;
+  font-weight: 750;
+  box-shadow: 0 0.5rem 1.5rem rgba(25, 26, 22, 0.08);
+}
+
+.scroll-to-latest:hover {
+  border-color: #92948a;
+  color: var(--ink);
 }
 
 .resource-warning,
@@ -543,10 +558,9 @@ button {
 }
 
 .composer {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: end;
-  gap: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
   border: 1px solid #cfd0c8;
   border-radius: 1.35rem;
   background: var(--surface);
@@ -567,7 +581,97 @@ button {
   line-height: 1.5;
 }
 
+.composer-controls {
+  display: flex;
+  min-width: 0;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.sport-picker {
+  position: relative;
+  min-width: 0;
+}
+
+.sport-picker summary {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.45rem;
+  overflow: hidden;
+  border: 1px solid #d9dad3;
+  border-radius: 999px;
+  background: #f7f8f2;
+  padding: 0.44rem 0.68rem;
+  color: #484b42;
+  font-size: 0.74rem;
+  font-weight: 700;
+  list-style: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sport-picker summary::-webkit-details-marker {
+  display: none;
+}
+
+.sport-picker[open] summary,
+.sport-picker summary:hover {
+  border-color: #aeb1a5;
+  color: var(--ink);
+}
+
+.sport-picker-chevron {
+  color: #85877e;
+  font-size: 0.65rem;
+}
+
+.sport-menu {
+  position: absolute;
+  bottom: calc(100% + 0.55rem);
+  left: 0;
+  z-index: 20;
+  display: grid;
+  width: min(20rem, calc(100vw - 3rem));
+  max-height: 16rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.3rem;
+  overflow-y: auto;
+  border: 1px solid #d1d2ca;
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.98);
+  padding: 0.45rem;
+  box-shadow: 0 1rem 3rem rgba(25, 26, 22, 0.16);
+}
+
+.sport-menu button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 0;
+  border-radius: 0.7rem;
+  background: transparent;
+  padding: 0.55rem 0.65rem;
+  color: #4c4f46;
+  text-align: left;
+  font-size: 0.75rem;
+}
+
+.sport-menu button:hover {
+  background: #f0f1ea;
+}
+
+.sport-menu button.active {
+  background: #e8f5ce;
+  color: #26310f;
+  font-weight: 780;
+}
+
 .send-button {
+  flex: 0 0 auto;
   display: grid;
   width: 2.8rem;
   height: 2.8rem;
@@ -578,6 +682,18 @@ button {
   color: var(--accent-ink);
   font-size: 1.1rem;
   font-weight: 900;
+}
+
+.send-button.stop {
+  background: var(--ink);
+  color: #fff;
+}
+
+.stop-square {
+  width: 0.72rem;
+  height: 0.72rem;
+  border-radius: 0.16rem;
+  background: currentColor;
 }
 
 .send-button:disabled {
@@ -634,6 +750,10 @@ button {
 
   .message {
     max-width: 94%;
+  }
+
+  .sport-menu {
+    grid-template-columns: 1fr;
   }
 }
 

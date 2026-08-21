@@ -11,10 +11,13 @@ import {
   RequestedMode,
   ResourceWarning,
   sendChatStream,
+  Sport,
 } from "../lib/orion-api";
 
 type UiMessage = ChatMessage & {
   id: string;
+  sport?: Sport;
+  streaming?: boolean;
   model?: string;
   mode?: "quick" | "deep";
   recommendation?: string;
@@ -31,6 +34,7 @@ type UiMessage = ChatMessage & {
 type PendingWarning = {
   messages: ChatMessage[];
   requestedMode: RequestedMode;
+  sport: Sport;
   detail: ResourceWarning;
 };
 
@@ -39,6 +43,26 @@ const MODE_LABELS: Record<RequestedMode, string> = {
   quick: "Rápido",
   deep: "Profundo",
 };
+
+const SPORT_OPTIONS: ReadonlyArray<{
+  value: Sport;
+  label: string;
+  icon: string;
+}> = [
+  { value: "general", label: "General", icon: "◎" },
+  { value: "football", label: "Fútbol", icon: "⚽" },
+  { value: "basketball", label: "Básquet", icon: "🏀" },
+  { value: "volleyball", label: "Vóley", icon: "🏐" },
+  { value: "rugby", label: "Rugby", icon: "🏉" },
+  { value: "tennis", label: "Tenis", icon: "🎾" },
+  { value: "athletics", label: "Atletismo", icon: "🏃" },
+  { value: "swimming", label: "Natación", icon: "🏊" },
+  { value: "cycling", label: "Ciclismo", icon: "🚴" },
+];
+
+const SPORT_LABELS = Object.fromEntries(
+  SPORT_OPTIONS.map(({ value, label }) => [value, label]),
+) as Record<Sport, string>;
 
 const SUGGESTIONS = [
   "Explicame qué diferencia hay entre carga externa e interna.",
@@ -57,19 +81,43 @@ function formatDuration(milliseconds?: number | null) {
   return `${(milliseconds / 1_000).toFixed(1)} s`;
 }
 
+function simplifyFormula(expression: string) {
+  return expression
+    .trim()
+    .replace(/\\bar\{([^{}]+)\}/g, "$1̄")
+    .replace(/\\cdot|\\times/g, "×")
+    .replace(/\\sum/g, "Σ")
+    .replace(/\\left|\\right/g, "")
+    .replace(/\s+/g, " ");
+}
+
+function normalizeCompletedMarkdown(content: string) {
+  return content
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_match, expression: string) =>
+      `\n\n\`\`\`text\n${simplifyFormula(expression)}\n\`\`\`\n\n`,
+    )
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_match, expression: string) =>
+      `\`${simplifyFormula(expression)}\``,
+    );
+}
+
 export function OrionConsole() {
   const [status, setStatus] = useState<OrionStatus | null>(null);
   const [statusError, setStatusError] = useState(false);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [mode, setMode] = useState<RequestedMode>("auto");
+  const [sport, setSport] = useState<Sport>("football");
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<PendingWarning | null>(null);
+  const [showScrollToLatest, setShowScrollToLatest] = useState(false);
   const messagesRef = useRef<HTMLDivElement>(null);
+  const sportPickerRef = useRef<HTMLDetailsElement>(null);
   const activeRequestRef = useRef<AbortController | null>(null);
   const peakCpuRef = useRef(0);
+  const shouldFollowRef = useRef(true);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -112,7 +160,7 @@ export function OrionConsole() {
 
   useEffect(() => {
     const container = messagesRef.current;
-    if (!container) return;
+    if (!container || !shouldFollowRef.current) return;
     container.scrollTo({
       top: container.scrollHeight,
       behavior: loading ? "auto" : "smooth",
@@ -129,6 +177,7 @@ export function OrionConsole() {
   const runRequest = async (
     requestMessages: ChatMessage[],
     requestedMode: RequestedMode,
+    selectedSport: Sport,
     allowBusy = false,
   ) => {
     const controller = new AbortController();
@@ -150,6 +199,7 @@ export function OrionConsole() {
         {
           messages: requestMessages,
           mode: requestedMode,
+          sport: selectedSport,
           allowBusy,
         },
         {
@@ -161,6 +211,8 @@ export function OrionConsole() {
                 id: assistantId,
                 role: "assistant",
                 content: "",
+                sport: meta.sport,
+                streaming: true,
                 model: meta.model,
                 mode: meta.selected_mode,
                 recommendation: meta.recommendation_reason,
@@ -200,6 +252,8 @@ export function OrionConsole() {
           message.id === assistantId
             ? {
                 ...message,
+                sport: result.meta.sport,
+                streaming: false,
                 model: result.meta.model,
                 mode: result.meta.selected_mode,
                 recommendation: result.meta.recommendation_reason,
@@ -225,6 +279,7 @@ export function OrionConsole() {
                   ? {
                       ...message,
                       content: message.content || "Respuesta detenida.",
+                      streaming: false,
                       recommendation: "Respuesta detenida por el usuario.",
                     }
                   : message,
@@ -242,6 +297,7 @@ export function OrionConsole() {
         setWarning({
           messages: requestMessages,
           requestedMode,
+          sport: selectedSport,
           detail: caught.detail as ResourceWarning,
         });
       } else {
@@ -253,6 +309,7 @@ export function OrionConsole() {
               return [
                 {
                   ...message,
+                  streaming: false,
                   recommendation: "La respuesta se interrumpió antes de terminar.",
                 },
               ];
@@ -277,6 +334,28 @@ export function OrionConsole() {
     activeRequestRef.current?.abort();
   };
 
+  const handleConversationScroll = () => {
+    const container = messagesRef.current;
+    if (!container) return;
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    const isNearBottom = distanceFromBottom <= 96;
+    shouldFollowRef.current = isNearBottom;
+    setShowScrollToLatest(!isNearBottom);
+  };
+
+  const scrollToLatest = () => {
+    const container = messagesRef.current;
+    shouldFollowRef.current = true;
+    setShowScrollToLatest(false);
+    container?.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+  };
+
+  const selectSport = (nextSport: Sport) => {
+    setSport(nextSport);
+    sportPickerRef.current?.removeAttribute("open");
+  };
+
   const submitPrompt = async (prompt: string) => {
     const clean = prompt.trim();
     if (!clean || loading) return;
@@ -287,6 +366,8 @@ export function OrionConsole() {
       content: clean,
     };
     const nextMessages = [...messages, nextUiMessage];
+    shouldFollowRef.current = true;
+    setShowScrollToLatest(false);
     setMessages(nextMessages);
     setDraft("");
 
@@ -295,6 +376,7 @@ export function OrionConsole() {
         .slice(-20)
         .map(({ role, content }) => ({ role, content })),
       mode,
+      sport,
     );
   };
 
@@ -380,7 +462,7 @@ export function OrionConsole() {
         </div>
 
         <p className="side-note">
-          Módulo 1.2 · Las conversaciones permanecen únicamente en esta sesión y
+          Módulo 1.3 · Las conversaciones permanecen únicamente en esta sesión y
           se pierden al recargar la página.
         </p>
       </aside>
@@ -409,7 +491,7 @@ export function OrionConsole() {
         <div className="chat-stage">
           {messages.length === 0 ? (
             <section className="empty-state">
-              <p className="eyebrow">Núcleo deportivo · Módulo 1.2</p>
+              <p className="eyebrow">Núcleo deportivo · Módulo 1.3</p>
               <h2>Tu criterio, amplificado.</h2>
               <p>
                 Orion ya tiene la base para conversar con un modelo local,
@@ -429,10 +511,16 @@ export function OrionConsole() {
               </div>
             </section>
           ) : (
-            <div ref={messagesRef} className="messages" aria-live="polite">
+            <div
+              ref={messagesRef}
+              className="messages"
+              aria-live="polite"
+              onScroll={handleConversationScroll}
+            >
               {messages.map((message) => {
                 const metrics = [
                   message.mode === "deep" ? "Profundo" : "Rápido",
+                  message.sport ? SPORT_LABELS[message.sport] : null,
                   message.model,
                   message.firstTokenMs !== null &&
                   message.firstTokenMs !== undefined
@@ -467,18 +555,22 @@ export function OrionConsole() {
                     {message.role === "assistant" ? (
                       <div className="message-content markdown-content">
                         {message.content ? (
-                          <ReactMarkdown
-                            remarkPlugins={[remarkGfm]}
-                            components={{
-                              a: ({ href, children }) => (
-                                <a href={href} target="_blank" rel="noreferrer">
-                                  {children}
-                                </a>
-                              ),
-                            }}
-                          >
-                            {message.content}
-                          </ReactMarkdown>
+                          message.streaming ? (
+                            <div className="streaming-content">{message.content}</div>
+                          ) : (
+                            <ReactMarkdown
+                              remarkPlugins={[remarkGfm]}
+                              components={{
+                                a: ({ href, children }) => (
+                                  <a href={href} target="_blank" rel="noreferrer">
+                                    {children}
+                                  </a>
+                                ),
+                              }}
+                            >
+                              {normalizeCompletedMarkdown(message.content)}
+                            </ReactMarkdown>
+                          )
                         ) : (
                           <span className="stream-placeholder">Preparando respuesta…</span>
                         )}
@@ -510,13 +602,6 @@ export function OrionConsole() {
                   <span className="thinking-dots" aria-hidden="true">
                     <i /><i /><i />
                   </span>
-                  <button
-                    type="button"
-                    className="cancel-button"
-                    onClick={stopRequest}
-                  >
-                    Detener
-                  </button>
                   <small>La respuesta aparece progresivamente · prioridad reducida activa.</small>
                 </div>
               ) : null}
@@ -524,6 +609,16 @@ export function OrionConsole() {
           )}
 
           <div className="composer-wrap">
+            {showScrollToLatest ? (
+              <button
+                type="button"
+                className="scroll-to-latest"
+                onClick={scrollToLatest}
+              >
+                ↓ Volver al final
+              </button>
+            ) : null}
+
             {warning ? (
               <div className="resource-warning" role="alert">
                 <strong>La computadora está exigida.</strong> {warning.detail.message}
@@ -532,7 +627,14 @@ export function OrionConsole() {
                   <button
                     type="button"
                     className="small-button primary"
-                    onClick={() => void runRequest(warning.messages, "quick", false)}
+                    onClick={() =>
+                      void runRequest(
+                        warning.messages,
+                        "quick",
+                        warning.sport,
+                        false,
+                      )
+                    }
                   >
                     Usar Rápido
                   </button>
@@ -550,6 +652,7 @@ export function OrionConsole() {
                       void runRequest(
                         warning.messages,
                         warning.requestedMode,
+                        warning.sport,
                         true,
                       )
                     }
@@ -571,17 +674,50 @@ export function OrionConsole() {
                 aria-label="Mensaje para Orion"
                 maxLength={20_000}
               />
-              <button
-                type="submit"
-                className="send-button"
-                disabled={!draft.trim() || loading}
-                aria-label="Enviar mensaje"
-              >
-                ↑
-              </button>
+              <div className="composer-controls">
+                <details ref={sportPickerRef} className="sport-picker">
+                  <summary aria-label={`Deporte seleccionado: ${SPORT_LABELS[sport]}`}>
+                    <span aria-hidden="true">
+                      {SPORT_OPTIONS.find((option) => option.value === sport)?.icon}
+                    </span>
+                    {SPORT_LABELS[sport]}
+                    <span className="sport-picker-chevron" aria-hidden="true">⌃</span>
+                  </summary>
+                  <div className="sport-menu" role="listbox" aria-label="Elegir deporte">
+                    {SPORT_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        role="option"
+                        aria-selected={sport === option.value}
+                        className={sport === option.value ? "active" : ""}
+                        onClick={() => selectSport(option.value)}
+                      >
+                        <span aria-hidden="true">{option.icon}</span>
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </details>
+
+                <button
+                  type={loading ? "button" : "submit"}
+                  className={`send-button ${loading ? "stop" : ""}`}
+                  disabled={!loading && !draft.trim()}
+                  aria-label={loading ? "Detener respuesta" : "Enviar mensaje"}
+                  title={loading ? "Detener respuesta" : "Enviar mensaje"}
+                  onClick={loading ? stopRequest : undefined}
+                >
+                  {loading ? (
+                    <span className="stop-square" aria-hidden="true" />
+                  ) : (
+                    <span aria-hidden="true">↑</span>
+                  )}
+                </button>
+              </div>
             </form>
             <p className="composer-note">
-              Enter para enviar · Shift + Enter para una nueva línea · Sin memoria permanente
+              Contexto local: {SPORT_LABELS[sport]} · Enter para enviar · Shift + Enter para una nueva línea · Sin memoria permanente
             </p>
           </div>
         </div>
