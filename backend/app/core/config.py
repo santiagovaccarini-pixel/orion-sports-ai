@@ -33,7 +33,7 @@ def _read_positive_int(name: str, default: int) -> int:
 @dataclass(frozen=True, slots=True)
 class Settings:
     app_name: str = "Orion Local Core"
-    version: str = "0.1.2"
+    version: str = "0.1.3"
     host: str = "127.0.0.1"
     port: int = 8765
     ollama_base_url: str = "http://127.0.0.1:11434"

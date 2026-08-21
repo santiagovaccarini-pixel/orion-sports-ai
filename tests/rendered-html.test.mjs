@@ -26,6 +26,6 @@ test("renders Orion metadata and first module", async () => {
   const html = await response.text();
   assert.match(html, /Orion — Inteligencia deportiva/i);
   assert.match(html, /Tu criterio, amplificado/i);
-  assert.match(html, /Módulo 1\.2/i);
+  assert.match(html, /Módulo 1\.3/i);
   assert.doesNotMatch(html, /codex-preview/i);
 });

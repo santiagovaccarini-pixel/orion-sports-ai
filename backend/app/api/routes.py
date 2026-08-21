@@ -10,11 +10,12 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
 
 from backend.app.core.config import get_settings
-from backend.app.core.prompt import ORION_SYSTEM_PROMPT
+from backend.app.core.prompt import build_system_prompt
 from backend.app.domain.schemas import (
     ChatRequest,
     ChatResponse,
     RequestedMode,
+    SportContext,
     StatusResponse,
     SystemSnapshotResponse,
 )
@@ -43,6 +44,7 @@ class PreparedChat:
     recommended_mode: SelectedMode
     recommendation_reason: str
     model: str
+    sport: SportContext
 
 
 def _ndjson(payload: dict[str, object]) -> bytes:
@@ -119,6 +121,7 @@ async def _prepare_chat(request: ChatRequest, *, preflight_model: bool) -> Prepa
         recommended_mode=recommendation.mode,
         recommendation_reason=recommendation.reason,
         model=model,
+        sport=request.sport,
     )
 
 
@@ -161,7 +164,9 @@ async def chat(request: ChatRequest) -> ChatResponse:
                     model=prepared.model,
                     mode=prepared.selected_mode,
                     messages=request.messages,
-                    system_prompt=ORION_SYSTEM_PROMPT,
+                    system_prompt=build_system_prompt(
+                        prepared.sport, prepared.selected_mode
+                    ),
                 )
             finally:
                 priority_stop.set()
@@ -183,6 +188,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
     return ChatResponse(
         content=result.content,
+        sport=prepared.sport,
         selected_mode=prepared.selected_mode,
         recommended_mode=prepared.recommended_mode,
         recommendation_reason=prepared.recommendation_reason,
@@ -211,6 +217,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                 "recommended_mode": prepared.recommended_mode.value,
                 "recommendation_reason": prepared.recommendation_reason,
                 "model": prepared.model,
+                "sport": prepared.sport.value,
             }
         )
 
@@ -226,7 +233,9 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                         model=prepared.model,
                         mode=prepared.selected_mode,
                         messages=request.messages,
-                        system_prompt=ORION_SYSTEM_PROMPT,
+                        system_prompt=build_system_prompt(
+                            prepared.sport, prepared.selected_mode
+                        ),
                     ):
                         if event.content:
                             yield _ndjson(

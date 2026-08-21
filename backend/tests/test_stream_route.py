@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.api.routes import PreparedChat
 from backend.app.domain.models import SelectedMode
+from backend.app.domain.schemas import SportContext
 from backend.app.main import app
 from backend.app.providers.ollama import OllamaStreamEvent
 
@@ -18,6 +19,7 @@ async def fake_prepare_chat(*_args, **_kwargs) -> PreparedChat:
         recommended_mode=SelectedMode.QUICK,
         recommendation_reason="Consulta directa.",
         model="qwen3:4b-instruct",
+        sport=SportContext.FOOTBALL,
     )
 
 
@@ -55,6 +57,10 @@ class StreamRouteTests(unittest.TestCase):
                 "backend.app.api.routes.maintain_ollama_priority",
                 new=fake_priority_monitor,
             ),
+            patch(
+                "backend.app.api.routes.build_system_prompt",
+                return_value="PROMPT DE PRUEBA",
+            ) as build_prompt,
             patch("backend.app.api.routes.lower_ollama_priority"),
             TestClient(app) as client,
         ):
@@ -78,7 +84,11 @@ class StreamRouteTests(unittest.TestCase):
             "done",
         ])
         self.assertEqual(events[0]["model"], "qwen3:4b-instruct")
+        self.assertEqual(events[0]["sport"], "football")
         self.assertEqual(events[-1]["completion_tokens"], 12)
+        build_prompt.assert_called_once_with(
+            SportContext.FOOTBALL, SelectedMode.QUICK
+        )
 
 
 if __name__ == "__main__":

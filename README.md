@@ -3,7 +3,7 @@
 Agente personal de inteligencia deportiva con modelo local, control de recursos
 y memoria privada por consentimiento.
 
-## Estado actual: Módulo 1.2
+## Estado actual: Módulo 1.3
 
 Este módulo incorpora:
 
@@ -12,7 +12,9 @@ Este módulo incorpora:
 - conexión con Ollama;
 - modos Automático, Rápido y Profundo;
 - respuesta progresiva: el texto aparece mientras Ollama lo genera;
-- botón para detener una generación en curso;
+- el mismo botón del cuadro de escritura permite enviar o detener una generación;
+- selector de contexto local para General, Fútbol, Básquet, Vóley, Rugby,
+  Tenis, Atletismo, Natación y Ciclismo;
 - recomendación transparente del modo de respuesta;
 - advertencia antes de una operación pesada cuando la PC está exigida;
 - prioridad reducida continua para los procesos de Ollama;
@@ -20,13 +22,21 @@ Este módulo incorpora:
 - presupuesto configurable de 8 hilos físicos en ambos modos;
 - contexto, historial y salida acotados por modo para evitar trabajo innecesario;
 - servidor Python oculto, con verificación de arranque y registros de errores;
-- conversación con desplazamiento independiente y panel de estado fijo;
-- Markdown seguro y métricas de primer texto, carga, tiempo total, velocidad,
+- conversación con desplazamiento independiente, lectura libre durante la
+  generación y un control para volver al final;
+- reconstrucción final en Markdown seguro, fórmulas legibles sin LaTeX crudo y
+  métricas de primer texto, carga, tiempo total, velocidad,
   tokens y pico de CPU por respuesta;
 - reglas de prudencia científica y una batería reproducible de calidad deportiva;
 - modelo activo en memoria durante diez minutos para acelerar preguntas seguidas;
 - atajos de túnel desactivados en el iniciador local;
 - cero memoria permanente y cero proveedores externos.
+
+El deporte seleccionado especializa el vocabulario, las variables y los
+ejemplos del modelo local, pero no reemplaza la pregunta central ni activa una
+búsqueda en Internet. Si una consulta depende de información reciente, Orion
+debe reconocer esa limitación. Las fuentes web verificables se incorporarán en
+un módulo posterior con controles explícitos de privacidad.
 
 La memoria con Supabase se implementará en el Módulo 2. Hasta entonces, la
 conversación existe únicamente en la pestaña abierta.

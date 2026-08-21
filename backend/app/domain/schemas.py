@@ -14,6 +14,18 @@ class RequestedMode(str, Enum):
     DEEP = "deep"
 
 
+class SportContext(str, Enum):
+    GENERAL = "general"
+    FOOTBALL = "football"
+    BASKETBALL = "basketball"
+    VOLLEYBALL = "volleyball"
+    RUGBY = "rugby"
+    TENNIS = "tennis"
+    ATHLETICS = "athletics"
+    SWIMMING = "swimming"
+    CYCLING = "cycling"
+
+
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str = Field(min_length=1, max_length=20_000)
@@ -30,6 +42,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=20)
     mode: RequestedMode = RequestedMode.AUTO
+    sport: SportContext = SportContext.FOOTBALL
     allow_busy: bool = False
 
     @model_validator(mode="after")
@@ -52,6 +65,7 @@ class SystemSnapshotResponse(BaseModel):
 
 class ChatResponse(BaseModel):
     content: str
+    sport: SportContext
     selected_mode: SelectedMode
     recommended_mode: SelectedMode
     recommendation_reason: str

@@ -20,12 +20,49 @@ test("renders safe Markdown and visible performance metrics", async () => {
   );
   assert.match(component, /ReactMarkdown/);
   assert.match(component, /remarkGfm/);
+  assert.match(component, /normalizeCompletedMarkdown/);
+  assert.match(component, /message\.streaming/);
   assert.match(component, /pico CPU/);
   assert.match(component, /tokensPerSecond/);
   assert.match(component, /threadLimit/);
   assert.match(component, /primer texto/);
-  assert.match(component, /Detener/);
+  assert.match(component, /Detener respuesta/);
+  assert.match(component, /stop-square/);
   assert.match(component, /AbortController/);
+});
+
+test("lets the reader leave auto-scroll and return to the latest message", async () => {
+  const component = await readFile(
+    new URL("app/components/orion-console.tsx", root),
+    "utf8",
+  );
+  assert.match(component, /shouldFollowRef/);
+  assert.match(component, /distanceFromBottom <= 96/);
+  assert.match(component, /onScroll=\{handleConversationScroll\}/);
+  assert.match(component, /Volver al final/);
+});
+
+test("sends the selected local sport context to the core", async () => {
+  const component = await readFile(
+    new URL("app/components/orion-console.tsx", root),
+    "utf8",
+  );
+  const client = await readFile(new URL("app/lib/orion-api.ts", root), "utf8");
+  for (const sport of [
+    "General",
+    "Fútbol",
+    "Básquet",
+    "Vóley",
+    "Rugby",
+    "Tenis",
+    "Atletismo",
+    "Natación",
+    "Ciclismo",
+  ]) {
+    assert.match(component, new RegExp(sport));
+  }
+  assert.match(component, /sport-picker/);
+  assert.match(client, /sport:\s*input\.sport/);
 });
 
 test("streams chat fragments instead of waiting for one large JSON response", async () => {

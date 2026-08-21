@@ -1,5 +1,15 @@
 export type RequestedMode = "auto" | "quick" | "deep";
 export type SelectedMode = "quick" | "deep";
+export type Sport =
+  | "general"
+  | "football"
+  | "basketball"
+  | "volleyball"
+  | "rugby"
+  | "tennis"
+  | "athletics"
+  | "swimming"
+  | "cycling";
 
 export type ChatMessage = {
   role: "user" | "assistant";
@@ -30,6 +40,7 @@ export type OrionStatus = {
 
 export type ChatResult = {
   content: string;
+  sport: Sport;
   selected_mode: SelectedMode;
   recommended_mode: SelectedMode;
   recommendation_reason: string;
@@ -46,6 +57,7 @@ export type ChatResult = {
 
 export type ChatStreamMeta = {
   type: "meta";
+  sport: Sport;
   selected_mode: SelectedMode;
   recommended_mode: SelectedMode;
   recommendation_reason: string;
@@ -140,6 +152,7 @@ export async function getOrionStatus(signal?: AbortSignal): Promise<OrionStatus>
 export async function sendChat(input: {
   messages: ChatMessage[];
   mode: RequestedMode;
+  sport: Sport;
   allowBusy?: boolean;
 }): Promise<ChatResult> {
   const response = await fetch(`${API_BASE}/chat`, {
@@ -148,6 +161,7 @@ export async function sendChat(input: {
     body: JSON.stringify({
       messages: input.messages,
       mode: input.mode,
+      sport: input.sport,
       allow_busy: input.allowBusy ?? false,
     }),
   });
@@ -158,6 +172,7 @@ export async function sendChatStream(
   input: {
     messages: ChatMessage[];
     mode: RequestedMode;
+    sport: Sport;
     allowBusy?: boolean;
   },
   handlers: {
@@ -172,6 +187,7 @@ export async function sendChatStream(
     body: JSON.stringify({
       messages: input.messages,
       mode: input.mode,
+      sport: input.sport,
       allow_busy: input.allowBusy ?? false,
     }),
     signal,
