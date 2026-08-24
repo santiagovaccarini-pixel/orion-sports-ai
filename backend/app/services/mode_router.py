@@ -15,6 +15,7 @@ class MessageLike(Protocol):
 DEEP_MARKERS = (
     "analiz",
     "argument",
+    "compar",
     "investig",
     "hipotesis",
     "modelo",
@@ -50,10 +51,9 @@ def recommend_mode(
 ) -> ModeRecommendation:
     """Choose the expensive 8B path only when its expected value justifies latency.
 
-    The current hardware benchmark is CPU-bound, so ordinary interpretation and
-    comparison should remain on Quick after semantic normalization. Deep is reserved
-    for genuinely difficult reasoning, not simply for queries containing analytical
-    vocabulary.
+    When a semantic plan exists, ordinary interpretation and comparison stay on Quick
+    unless complexity justifies 8B compute. If planning is unavailable, Orion preserves
+    its previous deterministic selector for compatibility and safe degradation.
     """
     if semantic_plan is not None:
         deep_reasons: list[str] = []
@@ -93,7 +93,7 @@ def recommend_mode(
             reason=f"Orion recomienda Rápido porque {quick_reason}.",
         )
 
-    # Compatibility fallback if no semantic plan is available.
+    # Legacy deterministic fallback retained intentionally.
     prompt = _fold_text(messages[-1].content)
     word_count = len(prompt.split())
     marker_count = sum(marker in prompt for marker in DEEP_MARKERS)
@@ -101,10 +101,10 @@ def recommend_mode(
 
     score = 0
     reasons: list[str] = []
-    if word_count >= 100:
+    if word_count >= 90:
         score += 2
         reasons.append("la consulta contiene bastante contexto")
-    elif word_count >= 55:
+    elif word_count >= 45:
         score += 1
         reasons.append("la consulta es extensa")
     if marker_count >= 2:
@@ -117,12 +117,12 @@ def recommend_mode(
         score += 1
         reasons.append("reúne varias preguntas")
 
-    if score >= 3:
+    if score >= 2:
         return ModeRecommendation(
             mode=SelectedMode.DEEP,
             reason="Orion recomienda Profundo porque " + " y ".join(reasons) + ".",
         )
     return ModeRecommendation(
         mode=SelectedMode.QUICK,
-        reason="Orion recomienda Rápido porque la consulta parece directa o acotada.",
+        reason="Orion recomienda Rápido porque la consulta parece directa y acotada.",
     )
