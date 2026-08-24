@@ -12,7 +12,10 @@ from backend.app.domain.schemas import ChatMessage, SportContext
 from backend.app.services.semantic_planner import create_semantic_plan
 
 
-CASES_PATH = Path(__file__).with_name("semantic_intent_cases.json")
+DATASETS = {
+    "core": Path(__file__).with_name("semantic_intent_cases.json"),
+    "generalization": Path(__file__).with_name("semantic_generalization_cases.json"),
+}
 
 
 def _fold(value: str) -> str:
@@ -23,6 +26,10 @@ def _contains_any(values: list[str], expected: list[str]) -> bool:
     haystack = " | ".join(values)
     folded = _fold(haystack)
     return any(_fold(item) in folded for item in expected)
+
+
+def _contains_all(values: list[str], groups: list[list[str]]) -> bool:
+    return all(_contains_any(values, group) for group in groups)
 
 
 def _score(plan: Any, expected: dict[str, Any]) -> tuple[int, int, list[str]]:
@@ -59,22 +66,51 @@ def _score(plan: Any, expected: dict[str, Any]) -> tuple[int, int, list[str]]:
                 f"domain: esperado alguno de {expected_domains!r}, actual={plan.domain!r}"
             )
 
+    semantic_values = [*plan.concepts, *plan.retrieval_queries, plan.user_goal]
     if expected_concepts := expected.get("concepts_any"):
         total += 1
-        semantic_values = [*plan.concepts, *plan.retrieval_queries, plan.user_goal]
         if _contains_any(semantic_values, expected_concepts):
             passed += 1
         else:
             failures.append(
-                "concepts: no apareció ninguno de "
+                "concepts_any: no apareció ninguno de "
                 f"{expected_concepts!r}; actual={plan.concepts!r}"
+            )
+
+    if concept_groups := expected.get("concepts_all"):
+        total += 1
+        if _contains_all(semantic_values, concept_groups):
+            passed += 1
+        else:
+            failures.append(
+                "concepts_all: no se cubrieron todos los grupos "
+                f"{concept_groups!r}; actual={plan.concepts!r}"
+            )
+
+    if minimum := expected.get("complexity_min"):
+        total += 1
+        if plan.complexity >= float(minimum):
+            passed += 1
+        else:
+            failures.append(
+                f"complexity: esperado>={minimum}, actual={plan.complexity:.2f}"
+            )
+
+    if maximum := expected.get("complexity_max"):
+        total += 1
+        if plan.complexity <= float(maximum):
+            passed += 1
+        else:
+            failures.append(
+                f"complexity: esperado<={maximum}, actual={plan.complexity:.2f}"
             )
 
     return passed, total, failures
 
 
-async def run(limit: int | None = None) -> int:
-    cases = json.loads(CASES_PATH.read_text(encoding="utf-8"))
+async def run(dataset: str = "core", limit: int | None = None) -> int:
+    cases_path = DATASETS[dataset]
+    cases = json.loads(cases_path.read_text(encoding="utf-8"))
     if limit is not None:
         cases = cases[:limit]
 
@@ -113,7 +149,7 @@ async def run(limit: int | None = None) -> int:
 
     accuracy = (total_passed / total_checks * 100.0) if total_checks else 0.0
     print(
-        f"\nResultado: {total_passed}/{total_checks} checks "
+        f"\nDataset: {dataset} | Resultado: {total_passed}/{total_checks} checks "
         f"({accuracy:.1f}%), {failed_cases}/{len(cases)} casos con fallos."
     )
     return 1 if failed_cases else 0
@@ -123,9 +159,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Evalúa si el Semantic Planner de Orion entiende la intención deportiva."
     )
+    parser.add_argument("--dataset", choices=tuple(DATASETS), default="core")
     parser.add_argument("--limit", type=int, default=None)
     args = parser.parse_args()
-    raise SystemExit(asyncio.run(run(args.limit)))
+    raise SystemExit(asyncio.run(run(args.dataset, args.limit)))
 
 
 if __name__ == "__main__":
