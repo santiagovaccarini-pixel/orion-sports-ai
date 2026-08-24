@@ -384,6 +384,8 @@ async def system_status() -> StatusResponse:
     provider_status = await provider.status()
     return StatusResponse(
         version=settings.version,
+        model_provider=provider.name,
+        model_provider_online=provider_status.online,
         ollama_online=(provider.name == "ollama" and provider_status.online),
         installed_models=list(provider_status.installed_models),
         loaded_models=list(provider_status.loaded_models),
