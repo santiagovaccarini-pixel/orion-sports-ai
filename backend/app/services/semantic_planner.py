@@ -17,6 +17,7 @@ from backend.app.providers.ollama import (
     OllamaUnavailableError,
 )
 from backend.app.services.knowledge_base import _query_targets_data
+from backend.app.services.semantic_normalizer import normalize_semantic_plan
 from backend.app.services.web_research import is_web_request
 
 
@@ -151,7 +152,7 @@ def _fallback_plan(
 
     ambiguous_work = bool(
         local
-        and re.search(r"\b(trabajo|trabajo|trabaj[oó]|carga)\b", folded)
+        and re.search(r"\b(trabajo|trabaj[oó]|carga)\b", folded)
         and not any(
             marker in folded
             for marker in (
@@ -197,12 +198,18 @@ async def create_semantic_plan(
     *,
     has_local_documents: bool,
 ) -> SemanticPlan:
-    """Infer user intent with a short structured LLM pass.
+    """Infer user intent, then normalize high-confidence domain relationships.
 
-    The deterministic fallback is deliberately retained. A planning failure must
-    never make the main chat unavailable.
+    A planning failure must never make the main chat unavailable. The deterministic
+    normalizer is applied to both model and fallback plans, so basic sports semantics
+    remain stable even when the small local planner is uncertain.
     """
-    fallback = _fallback_plan(messages, has_local_documents=has_local_documents)
+    fallback = normalize_semantic_plan(
+        _fallback_plan(messages, has_local_documents=has_local_documents),
+        messages,
+        sport,
+        has_local_documents=has_local_documents,
+    )
     if not settings.semantic_planner_enabled:
         return fallback
 
@@ -235,9 +242,14 @@ async def create_semantic_plan(
     ):
         return fallback
 
-    # System facts override model guesses where Orion can know them deterministically.
-    if not has_local_documents:
-        plan.needs_local_data = False
+    plan = normalize_semantic_plan(
+        plan,
+        messages,
+        sport,
+        has_local_documents=has_local_documents,
+    )
+
+    # Current/external information is a system fact when the request says so.
     if is_web_request(messages[-1].content):
         plan.needs_web = True
     return plan
