@@ -151,6 +151,68 @@ class KnowledgeBaseTests(unittest.TestCase):
         self.assertIn("promedio", result)
         self.assertIn("200.00", result)
 
+    # -- Generalization beyond the GPS tracking schema (Fase 2) --------------
+
+    BASKETBALL_ROSTER = (
+        "Jugador,Equipo,Puntos,Rebotes,Fecha\n"
+        "Fede,Halcones,20,5,2024-01-10\n"
+        "Nico,Halcones,15,10,2024-01-10\n"
+        "Fede,Halcones,24,6,2024-01-17"
+    )
+
+    def test_csv_overview_detects_a_non_gps_multi_metric_schema(self) -> None:
+        overview = csv_overview(self.BASKETBALL_ROSTER, "roster.csv")
+
+        self.assertIn("Jugador", overview)
+        self.assertIn("Equipo", overview)
+        self.assertIn("Puntos", overview)
+        self.assertIn("Rebotes", overview)
+        self.assertIn("Fede", overview)
+        self.assertIn("Nico", overview)
+
+    def test_csv_tool_result_is_ambiguous_with_several_metrics_and_none_named(self) -> None:
+        result = csv_tool_result(self.BASKETBALL_ROSTER, "calculá el promedio", "roster.csv")
+
+        self.assertEqual(result, "")
+
+    def test_csv_tool_result_picks_the_metric_named_in_the_query(self) -> None:
+        points_average = csv_tool_result(self.BASKETBALL_ROSTER, "calculá el promedio de puntos", "roster.csv")
+        rebounds_average = csv_tool_result(self.BASKETBALL_ROSTER, "calculá el promedio de rebotes", "roster.csv")
+
+        self.assertIn("promedio de Puntos", points_average)
+        self.assertIn("19.67", points_average)
+        self.assertIn("promedio de Rebotes", rebounds_average)
+        self.assertIn("7.00", rebounds_average)
+
+    def test_csv_chart_generalizes_to_a_non_gps_schema(self) -> None:
+        chart = csv_chart(self.BASKETBALL_ROSTER, "graficá los puntos de Fede", "roster.csv")
+
+        self.assertIsNotNone(chart)
+        self.assertEqual(chart["metric"], "Puntos")
+        self.assertEqual(len(chart["points"]), 2)
+        self.assertEqual(chart["unit"], "")
+
+    def test_csv_calculation_generalizes_to_a_non_sports_spreadsheet(self) -> None:
+        content = "Empresa,Trimestre,Ingresos\nAcme,Q1,1000\nGlobex,Q1,1500\nAcme,Q2,1200"
+
+        result = csv_calculation(content, "sumá los ingresos de Acme")
+
+        self.assertIn("Empresa=Acme", result)
+        self.assertIn("Trimestre=Q1", result)
+        self.assertIn("Ingresos=1000", result)
+        self.assertIn("SUMA Ingresos de 2 períodos = 2200", result)
+        self.assertNotIn("sin duplicar", result)
+
+    def test_csv_overview_detects_header_without_any_identifier_keyword(self) -> None:
+        content = "Producto,Cantidad\nManzana,10\nBanana,20"
+
+        overview = csv_overview(content, "inventario.csv")
+
+        self.assertIn("Producto", overview)
+        self.assertIn("Cantidad", overview)
+        self.assertIn("Manzana", overview)
+        self.assertIn("Banana", overview)
+
 
 if __name__ == "__main__":
     unittest.main()

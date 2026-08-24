@@ -91,6 +91,31 @@ class KnowledgeDocumentResponse(BaseModel):
     characters: int
 
 
+class MemoryCategory(str, Enum):
+    PROTOCOL = "protocolo"
+    PREFERENCE = "preferencia"
+    DEFINITION = "definicion"
+    OTHER = "otro"
+
+
+class MemoryEntryRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=2_000)
+    category: MemoryCategory = MemoryCategory.OTHER
+
+
+class MemoryEntryUpdateRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=2_000)
+    category: MemoryCategory | None = None
+
+
+class MemoryEntryResponse(BaseModel):
+    id: str
+    content: str
+    category: MemoryCategory
+    created_at: str
+    updated_at: str
+
+
 class StatusResponse(BaseModel):
     service: Literal["online"] = "online"
     version: str
@@ -102,6 +127,6 @@ class StatusResponse(BaseModel):
     deep_threads: int
     loaded_models: list[str]
     snapshot: SystemSnapshotResponse
-    memory_enabled: Literal[False] = False
+    memory_enabled: bool = True
     web_enabled: bool = False
     web_minimum_sources: int = 4

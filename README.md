@@ -121,6 +121,13 @@ planner genera reformulaciones y conceptos canónicos; `semantic_retriever.py` c
 esas señales con el índice local. La próxima evolución prevista es sumar embeddings
 persistentes y reranking manteniendo el mismo contrato del retriever.
 
+Las herramientas de CSV (`csv_overview`, `csv_calculation`, `csv_chart`,
+`csv_tool_result`) ya no asumen la planilla de seguimiento GPS. Detectan la columna
+identificadora, las columnas numéricas y la columna de período de cualquier planilla
+tabular, primero por nombre de columna reconocible y, si no encuentran ninguno, por
+estructura. Cuando una planilla tiene varias columnas numéricas y la consulta no nombra
+cuál usar, Orion pide una aclaración en lugar de elegir una al azar.
+
 ## Web
 
 La búsqueda web controlada se activa con `ORION_WEB_ENABLED=true`, utiliza la allowlist
@@ -195,7 +202,7 @@ Backend:
 .\.venv\Scripts\python.exe -m unittest discover -s backend\tests -v
 ```
 
-La rama 1.4 incorpora además `.github/workflows/backend-tests.yml`, que ejecuta esta
+El módulo 1.4 incorpora además `.github/workflows/backend-tests.yml`, que ejecuta esta
 suite automáticamente en GitHub Actions.
 
 Interfaz:
@@ -214,6 +221,27 @@ Medición reproducible de rendimiento:
 
 ```powershell
 .\.venv\Scripts\python.exe -m backend.evals.run_performance_benchmark --mode quick --runs 2
+```
+
+Evaluación del planificador semántico, con Orion y Ollama iniciados (usa el modelo real,
+no el fallback determinista, y cada caso puede tardar hasta el timeout del planner si
+Ollama no responde):
+
+```powershell
+.\.venv\Scripts\python.exe -m backend.evals.run_semantic_intent_evaluation --dataset core
+.\.venv\Scripts\python.exe -m backend.evals.run_semantic_intent_evaluation --dataset generalization
+```
+
+`core` cubre los tipos de intención fundamentales (incluye continuidad conversacional
+encadenada y cambio de deporte a mitad de conversación); `generalization` evalúa robustez
+frente a paráfrasis, consultas largas, inglés/portugués y jerga coloquial. Es esperable
+que algunos casos de `generalization` sólo pasen con el modelo real: documentan el techo
+que el fallback determinista todavía no alcanza por diseño.
+
+Diagnóstico de Ollama (versión y si el modelo corre en CPU, GPU o mixto):
+
+```powershell
+.\.venv\Scripts\python.exe -m backend.evals.run_ollama_diagnostics
 ```
 
 Para validar 1.4 no alcanza con medir la respuesta final. También deben evaluarse:

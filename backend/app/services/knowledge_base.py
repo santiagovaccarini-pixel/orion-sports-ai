@@ -34,46 +34,216 @@ class KnowledgeChunk:
     content: str
 
 
+# Column-name hints used to generalize CSV schema detection beyond the original
+# GPS tracking export shape (Player Name / Total Distance / Period Name). The
+# identifier hints deliberately keep "player name" first so GPS files keep
+# resolving through the exact same path as before.
+_ID_HEADER_HINTS = (
+    "player name", "jugador", "jugadora", "player", "athlete", "atleta",
+    "nombre", "name", "entidad", "entity", "equipo", "team", "empresa",
+    "company", "código", "codigo", "id",
+)
+_PERIOD_HEADER_HINTS = (
+    "period name", "período", "periodo", "period", "fecha", "date", "session",
+    "sesión", "sesion", "semana", "week", "mes", "month", "jornada", "round",
+    "ronda", "trimestre", "quarter",
+)
+_UNIT_HINTS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("distance", "distancia", "metros", "meters"), "m"),
+    (("velocidad", "speed", "velocity"), "m/s"),
+    (("duracion", "duración", "duration", "tiempo", "time", "minutos", "minutes"), "min"),
+    (("porcentaje", "percent", "%"), "%"),
+    (("potencia", "power", "watts"), "W"),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class CsvSchema:
+    """Detected shape of a tabular CSV: which column identifies the entity,
+    which ones are numeric metrics, and which one (if any) is a period/date."""
+
+    header_index: int
+    headers: list[str]
+    id_index: int
+    metric_indices: tuple[int, ...]
+    period_index: int | None
+
+
+def _looks_numeric(value: str) -> bool:
+    try:
+        Decimal(value.strip())
+        return True
+    except (InvalidOperation, ValueError):
+        return False
+
+
+def _header_words(value: str) -> set[str]:
+    return set(re.findall(r"[a-záéíóúüñ0-9]+", value.lower()))
+
+
+def _matches_any_hint(value: str, hints: tuple[str, ...]) -> bool:
+    """Match column-name hints as whole words, not raw substrings.
+
+    Short single-word hints like "id" would otherwise false-positive inside
+    unrelated words (e.g. "Cantidad" contains "id"). Multi-word hints such as
+    "player name" are specific enough to keep matching as a substring.
+    """
+    lowered = value.lower()
+    words = _header_words(value)
+    for hint in hints:
+        if " " in hint:
+            if hint in lowered:
+                return True
+        elif hint in words:
+            return True
+    return False
+
+
+def _infer_unit(header: str) -> str:
+    folded = _fold(header)
+    for hints, unit in _UNIT_HINTS:
+        if any(hint in folded for hint in hints):
+            return unit
+    return ""
+
+
+def _find_header_row(rows: list[list[str]]) -> int | None:
+    keyword_match = next(
+        (
+            index
+            for index, row in enumerate(rows)
+            if any(_matches_any_hint(cell, _ID_HEADER_HINTS) for cell in row)
+        ),
+        None,
+    )
+    if keyword_match is not None:
+        return keyword_match
+    # Generic fallback for any other tabular CSV: the header row is text-only
+    # (no numeric cells) and is immediately followed by a row with at least
+    # one numeric value.
+    for index, row in enumerate(rows[:-1]):
+        cells = [cell.strip() for cell in row if cell.strip()]
+        if len(cells) < 2 or any(_looks_numeric(cell) for cell in cells):
+            continue
+        next_values = [cell.strip() for cell in rows[index + 1] if cell.strip()]
+        if next_values and any(_looks_numeric(cell) for cell in next_values):
+            return index
+    return None
+
+
+def _infer_id_index(rows: list[list[str]], header_index: int, headers: list[str]) -> int:
+    keyword_index = next(
+        (index for index, header in enumerate(headers) if _matches_any_hint(header, _ID_HEADER_HINTS)),
+        None,
+    )
+    if keyword_index is not None:
+        return keyword_index
+    data_rows = [row for row in rows[header_index + 1 :] if any(cell.strip() for cell in row)]
+    for index in range(len(headers)):
+        values = [row[index].strip() for row in data_rows if len(row) > index and row[index].strip()]
+        if values and not any(_looks_numeric(value) for value in values):
+            return index
+    return 0
+
+
+def _infer_period_index(headers: list[str]) -> int | None:
+    return next(
+        (index for index, header in enumerate(headers) if _matches_any_hint(header, _PERIOD_HEADER_HINTS)),
+        None,
+    )
+
+
+def _infer_metric_indices(
+    rows: list[list[str]], header_index: int, headers: list[str], *, exclude: set[int]
+) -> tuple[int, ...]:
+    data_rows = [row for row in rows[header_index + 1 :] if any(cell.strip() for cell in row)]
+    indices: list[int] = []
+    for index in range(len(headers)):
+        if index in exclude:
+            continue
+        values = [row[index].strip() for row in data_rows if len(row) > index and row[index].strip()]
+        if not values:
+            continue
+        numeric_ratio = sum(_looks_numeric(value) for value in values) / len(values)
+        if numeric_ratio >= 0.8:
+            indices.append(index)
+    return tuple(indices)
+
+
+def _detect_schema(rows: list[list[str]]) -> CsvSchema | None:
+    header_index = _find_header_row(rows)
+    if header_index is None:
+        return None
+    headers = [cell.strip() for cell in rows[header_index]]
+    if not any(headers):
+        return None
+    id_index = _infer_id_index(rows, header_index, headers)
+    period_index = _infer_period_index(headers)
+    metric_indices = _infer_metric_indices(
+        rows, header_index, headers, exclude={id_index, period_index} - {None}
+    )
+    return CsvSchema(header_index, headers, id_index, metric_indices, period_index)
+
+
+def _select_metric_index(schema: CsvSchema, query: str) -> int | None:
+    """Pick which numeric column the query refers to.
+
+    A single detected metric is always unambiguous. With several candidates,
+    the query must name one by its actual column header; otherwise Orion
+    should ask instead of guessing.
+    """
+    if not schema.metric_indices:
+        return None
+    if len(schema.metric_indices) == 1:
+        return schema.metric_indices[0]
+    query_terms = _terms(query)
+    scored = sorted(
+        ((len(query_terms & _terms(schema.headers[index])), index) for index in schema.metric_indices),
+        reverse=True,
+    )
+    best_score, best_index = scored[0]
+    return best_index if best_score > 0 else None
+
+
 def csv_chart(content: str, query: str, name: str) -> dict[str, object] | None:
     lowered_query = _fold(query)
     if not any(marker in lowered_query for marker in ("grafic", "fico", "visualiz", "chart")):
         return None
     rows = list(csv.reader(io.StringIO(content)))
-    header_index = next(
-        (index for index, row in enumerate(rows) if any("player name" in cell.lower() for cell in row)),
-        None,
-    )
-    if header_index is None:
+    schema = _detect_schema(rows)
+    if schema is None:
         return None
-    headers = [cell.strip() for cell in rows[header_index]]
-    player_index = next((index for index, header in enumerate(headers) if "player name" in header.lower()), None)
-    metric_index = next((index for index, header in enumerate(headers) if "total distance" in header.lower()), None)
-    period_index = next((index for index, header in enumerate(headers) if "period name" in header.lower()), None)
-    if player_index is None or metric_index is None:
+    metric_index = _select_metric_index(schema, query)
+    if metric_index is None:
         return None
     query_terms = _terms(query)
-    player_rows = [
-        row for row in rows[header_index + 1 :]
-        if len(row) > metric_index and query_terms & _terms(row[player_index])
+    entity_rows = [
+        row for row in rows[schema.header_index + 1 :]
+        if len(row) > metric_index and query_terms & _terms(row[schema.id_index])
     ]
-    if not player_rows:
+    if not entity_rows:
         return None
     points: list[dict[str, object]] = []
-    for row in player_rows:
+    for row in entity_rows:
         try:
             value = float(row[metric_index])
         except (ValueError, IndexError):
             continue
-        label = row[period_index].strip() if period_index is not None and len(row) > period_index else "Registro"
+        label = (
+            row[schema.period_index].strip()
+            if schema.period_index is not None and len(row) > schema.period_index
+            else "Registro"
+        )
         points.append({"label": label, "value": value})
     if not points:
         return None
+    metric_name = schema.headers[metric_index]
     return {
         "type": "bar",
-        "title": f"{headers[metric_index]} por período",
-        "unit": "m",
+        "title": f"{metric_name} por período",
+        "unit": _infer_unit(metric_name),
         "source": name,
-        "metric": headers[metric_index],
+        "metric": metric_name,
         "points": points,
     }
 
@@ -179,14 +349,7 @@ def _split_chunks(
 
 def _split_csv_rows(content: str, *, size: int) -> list[str]:
     rows = list(csv.reader(io.StringIO(content)))
-    header_index = next(
-        (
-            index
-            for index, row in enumerate(rows)
-            if any("player name" in cell.lower() for cell in row)
-        ),
-        None,
-    )
+    header_index = _find_header_row(rows)
     if header_index is None:
         return [line[:size] for line in content.splitlines() if line.strip()]
 
@@ -240,43 +403,36 @@ def csv_calculation(content: str, query: str) -> str:
     if not re.search(r"\b(sumá|suma|sumar|total|promedio|promediar)\b", query.lower()):
         return ""
     rows = list(csv.reader(io.StringIO(content)))
-    header_index = next(
-        (index for index, row in enumerate(rows) if any("player name" in cell.lower() for cell in row)),
-        None,
-    )
-    if header_index is None:
-        return ""
-    headers = [cell.strip() for cell in rows[header_index]]
-    player_index = next((index for index, header in enumerate(headers) if "player name" in header.lower()), None)
-    if player_index is None:
+    schema = _detect_schema(rows)
+    if schema is None:
         return ""
     query_terms = _terms(query)
     matching_rows = [
-        row for row in rows[header_index + 1 :]
-        if len(row) > player_index and query_terms & _terms(row[player_index])
+        row for row in rows[schema.header_index + 1 :]
+        if len(row) > schema.id_index and query_terms & _terms(row[schema.id_index])
     ]
     if not matching_rows:
         return ""
-    column_index = next(
-        (index for index, header in enumerate(headers) if "total distance" in header.lower()),
-        None,
-    )
-    if column_index is None:
+    metric_index = _select_metric_index(schema, query)
+    if metric_index is None:
         return ""
-    period_index = next(
-        (index for index, header in enumerate(headers) if "period name" in header.lower()),
-        None,
-    )
+    entity_label = schema.headers[schema.id_index]
+    period_label = schema.headers[schema.period_index] if schema.period_index is not None else "período"
+    metric_name = schema.headers[metric_index]
     parsed_rows: list[tuple[str, str, Decimal]] = []
     for row in matching_rows:
-        if len(row) <= column_index:
+        if len(row) <= metric_index:
             continue
         try:
-            value = Decimal(row[column_index].strip())
+            value = Decimal(row[metric_index].strip())
         except (InvalidOperation, ValueError):
             continue
-        period = row[period_index].strip() if period_index is not None and len(row) > period_index else "sin período"
-        parsed_rows.append((row[player_index].strip(), period, value))
+        period = (
+            row[schema.period_index].strip()
+            if schema.period_index is not None and len(row) > schema.period_index
+            else "sin período"
+        )
+        parsed_rows.append((row[schema.id_index].strip(), period, value))
     if not parsed_rows:
         return ""
     detailed_rows = [
@@ -286,7 +442,7 @@ def csv_calculation(content: str, query: str) -> str:
     ]
     rows_to_sum = detailed_rows or parsed_rows
     rows_detail = [
-        f"- jugador={player} | período={period} | Total Distance={value}"
+        f"- {entity_label}={player} | {period_label}={period} | {metric_name}={value}"
         for player, period, value in parsed_rows
     ]
     total = sum((value for _, _, value in rows_to_sum), Decimal(0))
@@ -295,7 +451,7 @@ def csv_calculation(content: str, query: str) -> str:
         "RESULTADO ESTRUCTURADO Y DETERMINISTA DE ORION. Estos valores provienen "
         "directamente de las filas CSV y deben prevalecer sobre cualquier suposición del modelo.\n"
         + "\n".join(rows_detail)
-        + f"\n- SUMA Total Distance de {len(rows_to_sum)} períodos{aggregate_note} = {total}\n"
+        + f"\n- SUMA {metric_name} de {len(rows_to_sum)} períodos{aggregate_note} = {total}\n"
     )
 
 
@@ -305,26 +461,22 @@ def csv_tool_result(content: str, query: str, name: str) -> str:
     if not any(marker in lowered for marker in ("promedio", "media", "compar", "filtr", "atip", "atíp")):
         return ""
     rows = list(csv.reader(io.StringIO(content)))
-    header_index = next(
-        (index for index, row in enumerate(rows) if any("player name" in cell.lower() for cell in row)),
-        None,
-    )
-    if header_index is None:
+    schema = _detect_schema(rows)
+    if schema is None:
         return ""
-    headers = [cell.strip() for cell in rows[header_index]]
-    player_index = next((index for index, header in enumerate(headers) if "player name" in header.lower()), None)
-    metric_index = next((index for index, header in enumerate(headers) if "total distance" in header.lower()), None)
-    if player_index is None or metric_index is None:
+    metric_index = _select_metric_index(schema, query)
+    if metric_index is None:
         return ""
+    headers = schema.headers
     data = []
-    for row in rows[header_index + 1 :]:
+    for row in rows[schema.header_index + 1 :]:
         if len(row) <= metric_index:
             continue
         try:
             value = Decimal(row[metric_index].strip())
         except (InvalidOperation, ValueError):
             continue
-        data.append((row[player_index].strip(), value))
+        data.append((row[schema.id_index].strip(), value))
     if not data:
         return ""
     if "promedio" in lowered or "media" in lowered:
@@ -347,20 +499,23 @@ def csv_tool_result(content: str, query: str, name: str) -> str:
 
 def csv_overview(content: str, name: str) -> str:
     rows = list(csv.reader(io.StringIO(content)))
-    header_index = next(
-        (index for index, row in enumerate(rows) if any("player name" in cell.lower() for cell in row)),
-        None,
-    )
-    if header_index is None:
+    schema = _detect_schema(rows)
+    if schema is None:
         return ""
-    headers = [cell.strip() for cell in rows[header_index] if cell.strip()]
-    data_rows = [row for row in rows[header_index + 1 :] if any(cell.strip() for cell in row)]
-    players = sorted({row[0].strip() for row in data_rows if row and row[0].strip()})
+    headers = [header for header in schema.headers if header]
+    data_rows = [row for row in rows[schema.header_index + 1 :] if any(cell.strip() for cell in row)]
+    entities = sorted(
+        {
+            row[schema.id_index].strip()
+            for row in data_rows
+            if len(row) > schema.id_index and row[schema.id_index].strip()
+        }
+    )
     return (
         f"ARCHIVO CSV RECIBIDO: {name}\n"
         f"Columnas detectadas: {', '.join(headers)}\n"
         f"Filas de datos: {len(data_rows)}\n"
-        f"Jugadores o entidades detectadas: {', '.join(players[:30]) or 'no identificadas'}\n"
+        f"Jugadores o entidades detectadas: {', '.join(entities[:30]) or 'no identificadas'}\n"
         "Si la petición no indica jugador, columna, período o cálculo, pedí una aclaración "
         "antes de responder. Ofrecé opciones basadas en estas columnas y no inventes un objetivo.\n"
     )
@@ -382,25 +537,16 @@ def csv_query_is_ambiguous(content: str, query: str) -> bool:
     if query_terms & meaningful_terms:
         return False
     rows = list(csv.reader(io.StringIO(content)))
-    header_index = next(
-        (index for index, row in enumerate(rows) if any("player name" in cell.lower() for cell in row)),
-        None,
-    )
-    if header_index is None:
+    schema = _detect_schema(rows)
+    if schema is None:
         return False
-    player_index = next(
-        (index for index, cell in enumerate(rows[header_index]) if "player name" in cell.lower()),
-        None,
-    )
-    if player_index is None:
-        return False
-    players = {
+    entities = {
         term
-        for row in rows[header_index + 1 :]
-        if len(row) > player_index
-        for term in _terms(row[player_index])
+        for row in rows[schema.header_index + 1 :]
+        if len(row) > schema.id_index
+        for term in _terms(row[schema.id_index])
     }
-    return not query_terms.intersection(players)
+    return not query_terms.intersection(entities)
 
 
 def _query_targets_data(query: str) -> bool:

@@ -23,6 +23,13 @@ Ejemplo: `Graficá Total Distance de Ruan por Period Name en metros y mostrá la
 
 Si la consulta no define esos elementos, Orion debe pedir una aclaración.
 
+Desde el Módulo 1.4, un planificador semántico interpreta el objetivo real antes de
+responder: puede resolver una paráfrasis, una referencia conversacional ("eso", "como
+antes") o una pregunta en otro idioma sin que el usuario repita literalmente esos cinco
+elementos. Eso reduce la fricción, pero no reemplaza la regla anterior: si falta una
+variable indispensable (por ejemplo, qué métrica comparar), el plan semántico marca
+`requires_clarification` y Orion sigue debiendo preguntar en lugar de adivinar.
+
 ## 3. Cómo convertir un error en mejora
 
 Cuando una respuesta sea incorrecta, guardá un caso con:
@@ -44,12 +51,27 @@ Ese caso debe convertirse en un test o una evaluación antes de cambiar el promp
 
 ## Orden recomendado
 
-1. CSV estructurado y cálculos deterministas.
-2. Pruebas de exactitud y casos de error.
-3. Herramientas de filtros, promedios, comparaciones y gráficos.
-4. Embeddings locales para recuperar conceptos relacionados.
-5. Memoria editable y opcional.
-6. Búsqueda web con citas, fecha y fuente verificable.
+1. ✅ CSV estructurado y cálculos deterministas.
+2. ✅ Pruebas de exactitud y casos de error.
+3. ✅ Herramientas de filtros, promedios, comparaciones y gráficos.
+4. ✅ Interpretación semántica de la intención (Módulo 1.4): planificador previo a la
+   respuesta, retrieval expandido por conceptos y fallback determinista si el modelo
+   local no responde a tiempo.
+5. ⏳ Embeddings locales para recuperar conceptos relacionados. `semantic_retriever.py`
+   ya pondera por objetivo del usuario y conceptos inferidos, pero todavía busca por
+   superposición de términos, no por similitud vectorial: es el siguiente paso natural.
+6. ⏳ Memoria editable y opcional. El plan semántico ya distingue `needs_private_memory`
+   de `needs_global_knowledge`, pero ningún dato persiste todavía entre sesiones.
+7. ✅ Búsqueda web con citas, fecha y fuente verificable.
+
+Los CSV ya no están limitados a la planilla de seguimiento GPS. `knowledge_base.py`
+detecta el esquema de cualquier planilla tabular: columna identificadora, columnas
+métricas numéricas y columna de período/fecha opcional, primero por nombre de columna
+conocido y, si no encuentra ninguno, por estructura (fila de encabezado seguida de una
+fila con valores numéricos). El caso GPS original sigue funcionando igual que antes; se
+suman básquet, planillas de negocio o cualquier CSV con encabezados propios. Cuando hay
+más de una columna numérica y la consulta no nombra cuál usar, Orion no adivina: lo trata
+como ambiguo, igual que antes hacía con el jugador o la entidad.
 
 ## Búsqueda web controlada
 

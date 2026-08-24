@@ -65,6 +65,7 @@ class Settings:
     request_timeout_seconds: int = 300
     api_key: str | None = None
     knowledge_path: str = ".orion-runtime/knowledge/documents.json"
+    memory_path: str = ".orion-runtime/memory/entries.json"
     web_enabled: bool = True
     web_minimum_sources: int = 4
     web_allowed_domains: tuple[str, ...] = DEFAULT_ALLOWED_DOMAINS
@@ -108,6 +109,9 @@ def get_settings() -> Settings:
         api_key=os.getenv("ORION_API_KEY") or None,
         knowledge_path=os.getenv(
             "ORION_KNOWLEDGE_PATH", ".orion-runtime/knowledge/documents.json"
+        ),
+        memory_path=os.getenv(
+            "ORION_MEMORY_PATH", ".orion-runtime/memory/entries.json"
         ),
         web_enabled=_read_bool("ORION_WEB_ENABLED", True),
         web_minimum_sources=_read_positive_int("ORION_WEB_MINIMUM_SOURCES", 4),

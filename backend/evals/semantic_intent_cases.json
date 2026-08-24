@@ -136,5 +136,38 @@
       "causal_claim_risk": false,
       "concepts_any": ["RPE", "rating of perceived exertion", "esfuerzo percibido"]
     }
+  },
+  {
+    "id": "sport_switch_mid_conversation",
+    "sport": "basketball",
+    "messages": [
+      {"role": "user", "content": "Estuvimos viendo la distancia total y el HSR de Lucas en el partido pasado de fútbol."},
+      {"role": "assistant", "content": "Son medidas de demanda externa; no equivalen por sí solas a rendimiento."},
+      {"role": "user", "content": "¿Y en básquet cuál sería el equivalente a eso que hablamos?"}
+    ],
+    "has_local_documents": false,
+    "expect": {
+      "referenced_previous_context": true,
+      "domain_contains": ["physical", "performance", "basketball"],
+      "concepts_any": ["player load", "carga externa", "external load", "physical demand", "demanda física"]
+    }
+  },
+  {
+    "id": "chained_conversational_reference",
+    "sport": "football",
+    "messages": [
+      {"role": "user", "content": "Analicemos el bloque medio del equipo."},
+      {"role": "assistant", "content": "Hay que ver alturas, disparadores y comportamiento colectivo."},
+      {"role": "user", "content": "¿Y eso cambia si el rival sale en corto?"},
+      {"role": "assistant", "content": "Sí, cambia las referencias de presión."},
+      {"role": "user", "content": "¿Y eso se combina con lo que hablamos antes de la salida larga?"}
+    ],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "interpretation",
+      "referenced_previous_context": true,
+      "domain_contains": ["tactical", "táctic"],
+      "concepts_all": [["mid block", "bloque medio"], ["long ball", "build-up", "salida larga", "juego largo"]]
+    }
   }
 ]

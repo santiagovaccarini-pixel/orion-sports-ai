@@ -240,5 +240,42 @@
       "domain_contains": ["physical", "performance"],
       "concepts_all": [["HSR", "high-speed running"], ["provider", "proveedor", "device", "dispositivo"], ["threshold", "umbral", "definition", "definición"]]
     }
+  },
+  {
+    "id": "long_verbose_query_readiness",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "Venimos de una semana rara: lunes regenerativo suave, martes táctico con poco volumen, miércoles algo más de intensidad con sprints cortos, jueves activación y hoy partido. Lucas viene de una lesión hace un mes y recién esta semana volvió a entrenar con el grupo completo, mientras que Nacho no paró en todo el mes y jugó los últimos tres partidos completos. Hoy Lucas corrió casi 2 km menos que Nacho en total y su HSR fue bastante más bajo. ¿Puedo decir que Lucas todavía no está tan preparado físicamente como Nacho?"}],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "interpretation",
+      "comparison": true,
+      "causal_claim_risk": true,
+      "domain_contains": ["physical", "performance"],
+      "concepts_any": ["external load", "carga externa", "HSR", "readiness", "preparación física"],
+      "complexity_min": 0.5
+    }
+  },
+  {
+    "id": "english_hsr_fitness_question",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "Is more high-speed running always the same as being fitter or in better shape?"}],
+    "has_local_documents": false,
+    "expect": {
+      "causal_claim_risk": true,
+      "domain_contains": ["physical", "performance"],
+      "concepts_any": ["HSR", "high-speed running", "external load", "physical performance"]
+    }
+  },
+  {
+    "id": "colloquial_slang_fatigue_not_fitness",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "Quedó reventado y corrió como loco todo el segundo tiempo. ¿Eso quiere decir que está más en forma que el resto?"}],
+    "has_local_documents": false,
+    "expect": {
+      "comparison": true,
+      "causal_claim_risk": true,
+      "domain_contains": ["physical", "performance"],
+      "concepts_any": ["external load", "carga externa"]
+    }
   }
 ]
