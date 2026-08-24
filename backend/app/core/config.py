@@ -44,7 +44,7 @@ def _read_bool(name: str, default: bool) -> bool:
 @dataclass(frozen=True, slots=True)
 class Settings:
     app_name: str = "Orion Local Core"
-    version: str = "0.1.4"
+    version: str = "0.1.5"
     host: str = "127.0.0.1"
     port: int = 8765
     ollama_base_url: str = "http://127.0.0.1:11434"
@@ -59,7 +59,7 @@ class Settings:
     quick_history_characters: int = 12_000
     deep_history_characters: int = 30_000
     semantic_planner_enabled: bool = True
-    semantic_planner_max_tokens: int = 384
+    semantic_planner_max_tokens: int = 192
     deep_thinking_enabled: bool = True
     keep_alive: str = "10m"
     request_timeout_seconds: int = 300
@@ -100,7 +100,7 @@ def get_settings() -> Settings:
         ),
         semantic_planner_enabled=_read_bool("ORION_SEMANTIC_PLANNER_ENABLED", True),
         semantic_planner_max_tokens=_read_positive_int(
-            "ORION_SEMANTIC_PLANNER_MAX_TOKENS", 384
+            "ORION_SEMANTIC_PLANNER_MAX_TOKENS", 192
         ),
         deep_thinking_enabled=_read_bool("ORION_DEEP_THINKING_ENABLED", True),
         keep_alive=os.getenv("ORION_KEEP_ALIVE", "10m"),
