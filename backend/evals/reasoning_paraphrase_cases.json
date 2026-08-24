@@ -1,0 +1,62 @@
+[
+  {
+    "id": "external_load_vs_performance",
+    "sport": "football",
+    "required_concepts": ["external_load", "physical_performance"],
+    "variants": [
+      "Corrió bastante menos metros que el otro día. ¿Eso demuestra que físicamente rindió peor?",
+      "El volumen locomotor del jugador cayó mucho respecto del partido anterior. ¿Alcanza para concluir que su rendimiento físico fue peor?",
+      "Ele fez bem menos distância do que no jogo anterior. Isso prova um desempenho físico pior?"
+    ]
+  },
+  {
+    "id": "hsr_provider_comparability",
+    "sport": "football",
+    "required_concepts": ["hsr", "gps_comparability"],
+    "variants": [
+      "Catapult me da un valor de HSR y otro GPS también. ¿Los puedo comparar directo?",
+      "Dos sistemas distintos llaman igual a la carrera de alta velocidad. ¿Eso garantiza que el número sea comparable?",
+      "Se dois fornecedores reportam HSR com o mesmo nome, posso tratar os valores como equivalentes?"
+    ]
+  },
+  {
+    "id": "transition_vs_counterattack",
+    "sport": "football",
+    "required_concepts": ["offensive_transition", "counterattack"],
+    "variants": [
+      "Recuperamos y atacamos enseguida. ¿Toda transición ofensiva es un contraataque?",
+      "Después de recuperar la pelota progresamos rápido. ¿Eso convierte automáticamente la acción en contraataque?",
+      "Recuperamos a posse e aceleramos o ataque. Toda transição ofensiva deve ser chamada de contra-ataque?"
+    ]
+  },
+  {
+    "id": "possession_vs_match_performance",
+    "sport": "football",
+    "required_concepts": ["possession", "match_performance"],
+    "variants": [
+      "Tuvimos mucha más posesión. ¿Eso prueba que jugamos mejor?",
+      "Controlamos la pelota durante casi todo el partido. ¿Puedo usar eso solo para afirmar superioridad en el rendimiento?",
+      "Ficamos muito mais tempo com a bola. Isso é suficiente para concluir que jogamos melhor?"
+    ]
+  },
+  {
+    "id": "return_to_play_readiness",
+    "sport": "football",
+    "required_concepts": ["return_to_play_readiness", "total_distance"],
+    "variants": [
+      "En rehabilitación ya hizo la misma distancia que antes de lesionarse. ¿Con eso sé que está listo para competir?",
+      "Igualó su volumen de carrera previo a la lesión. ¿Ese dato por sí solo demuestra readiness para volver?",
+      "Na reabilitação ele já repetiu a distância que fazia antes da lesão. Isso basta para liberar o retorno à competição?"
+    ]
+  },
+  {
+    "id": "private_sprint_definition",
+    "sport": "football",
+    "required_concepts": ["sprint_threshold", "private_operational_definition"],
+    "variants": [
+      "En nuestro club definimos sprint desde 25 km/h. Quiero que uses ese criterio para nosotros.",
+      "Nuestra metodología interna toma 25 km/h como inicio de sprint; tratá eso como definición del club, no universal.",
+      "No nosso clube o sprint começa em 25 km/h. Use esse critério como definição interna, não como regra universal."
+    ]
+  }
+]
