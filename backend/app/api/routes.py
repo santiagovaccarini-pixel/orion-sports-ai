@@ -37,6 +37,10 @@ from backend.app.services.resource_guard import (
     read_snapshot,
 )
 from backend.app.services.resource_policy import evaluate_resources
+from backend.app.services.response_policy import (
+    response_style_instruction,
+    response_token_budget,
+)
 from backend.app.services.knowledge_base import (
     KnowledgeBase,
     KnowledgeDocument,
@@ -135,6 +139,11 @@ def _knowledge_prompt(
     max_context = 2_000 if prepared.selected_mode is SelectedMode.QUICK else 5_000
     formatted = format_context(context, max_characters=max_context)
     semantic_context = format_semantic_context(prepared.semantic_plan)
+    response_instruction = response_style_instruction(
+        prepared.selected_mode,
+        prepared.semantic_plan,
+        query,
+    )
     calculations = ""
     tool_results = ""
     overviews = ""
@@ -168,6 +177,7 @@ def _knowledge_prompt(
         item
         for item in (
             semantic_context,
+            response_instruction,
             web_context,
             overviews,
             tool_results,
@@ -373,6 +383,12 @@ async def chat(request: ChatRequest) -> ChatResponse:
     settings = get_settings()
     prepared = await _prepare_chat(request, preflight_model=False)
     web_context = await _web_context(request, prepared)
+    generation_budget = response_token_budget(
+        settings,
+        prepared.selected_mode,
+        prepared.semantic_plan,
+        request.messages[-1].content,
+    )
     if _web_is_insufficient(web_context):
         return ChatResponse(
             content=_insufficient_web_response(web_context),
@@ -404,6 +420,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
                     mode=prepared.selected_mode,
                     messages=request.messages,
                     system_prompt=_knowledge_prompt(request, prepared, web_context),
+                    max_tokens_override=generation_budget,
                 )
             finally:
                 priority_stop.set()
@@ -449,6 +466,12 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
     settings = get_settings()
     prepared = await _prepare_chat(request, preflight_model=True)
     web_context = await _web_context(request, prepared)
+    generation_budget = response_token_budget(
+        settings,
+        prepared.selected_mode,
+        prepared.semantic_plan,
+        request.messages[-1].content,
+    )
 
     async def generate() -> AsyncIterator[bytes]:
         yield _ndjson(
@@ -495,6 +518,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                         mode=prepared.selected_mode,
                         messages=request.messages,
                         system_prompt=_knowledge_prompt(request, prepared, web_context),
+                        max_tokens_override=generation_budget,
                     ):
                         if event.content:
                             yield _ndjson(
