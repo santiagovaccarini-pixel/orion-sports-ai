@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from backend.app.domain.intent import SemanticPlan
 from backend.app.services.knowledge_base import _query_targets_data
 from backend.app.services.web_research import is_web_request
 
@@ -31,7 +32,50 @@ def _fold(query: str) -> str:
     return query.lower().replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
 
 
-def create_plan(query: str, *, has_local_documents: bool) -> OrchestrationPlan:
+def create_plan(
+    query: str,
+    *,
+    has_local_documents: bool,
+    semantic_plan: SemanticPlan | None = None,
+) -> OrchestrationPlan:
+    """Create an execution plan.
+
+    Semantic intent is authoritative when available. The lexical router remains as
+    a compatibility fallback so a planner outage never blocks Orion.
+    """
+    if semantic_plan is not None:
+        use_web = semantic_plan.needs_web or is_web_request(query)
+        use_local = has_local_documents and semantic_plan.needs_local_data
+        use_chart = semantic_plan.task_type == "chart"
+        use_calculator = use_local and semantic_plan.task_type == "calculation"
+        needs_clarification = semantic_plan.requires_clarification
+
+        if needs_clarification:
+            intent = Intent.CLARIFICATION
+        elif use_web:
+            intent = Intent.WEB_RESEARCH
+        elif use_chart:
+            intent = Intent.CHART
+        elif use_calculator:
+            intent = Intent.CALCULATION
+        elif use_local:
+            intent = Intent.LOCAL_DATA
+        else:
+            intent = Intent.GENERAL
+
+        return OrchestrationPlan(
+            intent=intent,
+            use_web=use_web,
+            use_local_data=use_local,
+            use_calculator=use_calculator,
+            use_chart=use_chart,
+            needs_clarification=needs_clarification,
+            reason=(
+                "Plan construido desde la intención semántica: "
+                f"{semantic_plan.user_goal}"
+            ),
+        )
+
     folded = _fold(query)
     chart = any(marker in folded for marker in ("grafic", "visualiz", "chart"))
     calculation = any(
