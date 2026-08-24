@@ -189,6 +189,69 @@ class OllamaClient:
         )
         return OllamaStatus(True, installed, loaded)
 
+    async def structured_json(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        schema: dict[str, Any],
+        max_tokens: int = 384,
+    ) -> dict[str, Any]:
+        """Run a short, deterministic structured inference for routing/planning.
+
+        This intentionally does not unload another model first. The planner is a
+        lightweight pre-pass and the main chat request remains responsible for the
+        final resource policy. If planning fails, callers can safely fall back to
+        deterministic routing.
+        """
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "stream": False,
+            "format": schema,
+            "think": False,
+            "keep_alive": self.settings.keep_alive,
+            "options": {
+                "num_ctx": min(self.settings.quick_context, 4096),
+                "num_thread": self.settings.quick_threads,
+                "num_predict": max_tokens,
+                "temperature": 0.0,
+            },
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f"{self.settings.ollama_base_url}/api/chat",
+                    json=payload,
+                )
+                if response.status_code == 404:
+                    raise ModelNotInstalledError(model)
+                response.raise_for_status()
+                data = response.json()
+        except ModelNotInstalledError:
+            raise
+        except (httpx.HTTPError, ValueError) as exc:
+            raise OllamaUnavailableError(
+                "No se pudo completar la planificación estructurada con Ollama."
+            ) from exc
+
+        content = str(data.get("message", {}).get("content", "")).strip()
+        if not content:
+            raise OllamaUnavailableError("El planificador devolvió una respuesta vacía.")
+        try:
+            parsed = json.loads(content)
+        except ValueError as exc:
+            raise OllamaUnavailableError(
+                "El planificador devolvió JSON inválido."
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise OllamaUnavailableError("El planificador no devolvió un objeto JSON.")
+        return parsed
+
     async def chat(
         self,
         *,
@@ -249,9 +312,9 @@ class OllamaClient:
                 ],
             ],
             "stream": True,
-            # Both modes avoid hidden reasoning tokens. Profundo gains quality from
-            # the larger model, context and answer budget instead.
-            "think": False,
+            # Quick stays fast. Deep uses Qwen's internal thinking channel; only the
+            # final answer content is streamed to the UI by parse_stream_payload().
+            "think": mode is SelectedMode.DEEP,
             "keep_alive": self.settings.keep_alive,
             "options": options,
         }
