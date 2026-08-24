@@ -1,5 +1,6 @@
 export type RequestedMode = "auto" | "quick" | "deep";
 export type SelectedMode = "quick" | "deep";
+export type ModelProvider = "ollama" | "cloudflare";
 export type Sport =
   | "general"
   | "football"
@@ -27,6 +28,8 @@ export type SystemSnapshot = {
 export type OrionStatus = {
   service: "online";
   version: string;
+  model_provider: ModelProvider;
+  model_provider_online: boolean;
   ollama_online: boolean;
   installed_models: string[];
   quick_model: string;
@@ -161,7 +164,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     throw new OrionApiError(
       response.status,
-      payload?.detail ?? "Respuesta inválida del núcleo local.",
+      payload?.detail ?? "Respuesta inválida del núcleo de Orion.",
     );
   }
   return payload as T;
@@ -250,7 +253,7 @@ export async function sendChatStream(
     try {
       event = JSON.parse(line) as ChatStreamEvent;
     } catch {
-      throw new Error("Orion recibió un fragmento inválido del núcleo local.");
+      throw new Error("Orion recibió un fragmento inválido del núcleo.");
     }
 
     if (event.type === "meta") {
