@@ -33,12 +33,13 @@ InferenceType = Literal[
 class ReasoningDecision(BaseModel):
     """Small pre-answer reasoning contract produced by the local planner.
 
-    This schema intentionally contains decisions, not retrieval paraphrases. Orion's
-    understanding should be expressed as a goal, an inference type and ontology IDs;
-    textual similarity is not part of the reasoning contract.
+    This schema contains semantic decisions, not retrieval paraphrases. Orion expresses
+    what the user wants, which claim must be evaluated, the inference type and ontology
+    IDs. Textual similarity is not part of this reasoning contract.
     """
 
     user_goal: str = Field(min_length=1, max_length=420)
+    claim_to_evaluate: str = Field(default="", max_length=360)
     task_type: TaskType = "direct_answer"
     inference_type: InferenceType = "descriptive"
     concept_ids: list[str] = Field(default_factory=list, max_length=8)
@@ -69,6 +70,7 @@ class SemanticPlan(BaseModel):
 
     literal_request: str = Field(min_length=1, max_length=400)
     user_goal: str = Field(min_length=1, max_length=500)
+    claim_to_evaluate: str = Field(default="", max_length=360)
     domain: str = Field(default="general", min_length=1, max_length=120)
     task_type: TaskType = "direct_answer"
     inference_type: InferenceType = "descriptive"
