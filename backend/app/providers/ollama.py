@@ -312,9 +312,11 @@ class OllamaClient:
                 ],
             ],
             "stream": True,
-            # Quick stays fast. Deep uses Qwen's internal thinking channel; only the
+            # Quick stays fast. Deep may use Qwen's internal thinking channel; only
             # final answer content is streamed to the UI by parse_stream_payload().
-            "think": mode is SelectedMode.DEEP,
+            "think": (
+                mode is SelectedMode.DEEP and self.settings.deep_thinking_enabled
+            ),
             "keep_alive": self.settings.keep_alive,
             "options": options,
         }
