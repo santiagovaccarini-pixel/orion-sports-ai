@@ -1,0 +1,52 @@
+name: Orion frontend tests
+
+on:
+  pull_request:
+    paths:
+      - "app/**"
+      - "tests/**"
+      - "scripts/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.json"
+      - "eslint.config.mjs"
+      - ".github/workflows/frontend-tests.yml"
+  push:
+    branches:
+      - cloud-prototype
+    paths:
+      - "app/**"
+      - "tests/**"
+      - "scripts/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.json"
+      - "eslint.config.mjs"
+      - ".github/workflows/frontend-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test-frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.19.0"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build and run frontend tests
+        run: npm test
