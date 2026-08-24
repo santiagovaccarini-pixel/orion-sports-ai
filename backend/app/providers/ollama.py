@@ -214,7 +214,7 @@ class OllamaClient:
             "think": False,
             "keep_alive": self.settings.keep_alive,
             "options": {
-                "num_ctx": min(self.settings.quick_context, 2048),
+                "num_ctx": min(self.settings.quick_context, 4096),
                 "num_thread": self.settings.quick_threads,
                 "num_predict": max_tokens,
                 "temperature": 0.0,
