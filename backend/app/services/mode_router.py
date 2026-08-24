@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from unicodedata import normalize
 from typing import Protocol, Sequence
 
+from backend.app.domain.intent import SemanticPlan
 from backend.app.domain.models import SelectedMode
 
 
@@ -21,7 +22,6 @@ DEEP_MARKERS = (
     "estrateg",
     "riesgo",
     "valid",
-    "explica paso",
     "explica paso",
     "fuentes",
     "evidencia",
@@ -45,7 +45,50 @@ class ModeRecommendation:
     reason: str
 
 
-def recommend_mode(messages: Sequence[MessageLike]) -> ModeRecommendation:
+def recommend_mode(
+    messages: Sequence[MessageLike],
+    semantic_plan: SemanticPlan | None = None,
+) -> ModeRecommendation:
+    if semantic_plan is not None:
+        semantic_reasons: list[str] = []
+        semantic_score = 0
+
+        if semantic_plan.complexity >= 0.65:
+            semantic_score += 2
+            semantic_reasons.append("la intención requiere razonamiento complejo")
+        elif semantic_plan.complexity >= 0.45:
+            semantic_score += 1
+            semantic_reasons.append("la consulta requiere interpretación")
+
+        if semantic_plan.causal_claim_risk:
+            semantic_score += 2
+            semantic_reasons.append("hay una inferencia causal que conviene revisar")
+        if semantic_plan.ambiguity >= 0.6:
+            semantic_score += 1
+            semantic_reasons.append("hay ambigüedad relevante")
+        if semantic_plan.task_type in {
+            "interpretation",
+            "planning",
+            "research",
+            "debugging",
+        }:
+            semantic_score += 1
+            semantic_reasons.append("el tipo de tarea se beneficia de análisis")
+
+        if semantic_score >= 2:
+            return ModeRecommendation(
+                mode=SelectedMode.DEEP,
+                reason="Orion recomienda Profundo porque "
+                + " y ".join(dict.fromkeys(semantic_reasons))
+                + ".",
+            )
+        if semantic_plan.confidence >= 0.65 and semantic_plan.complexity <= 0.35:
+            return ModeRecommendation(
+                mode=SelectedMode.QUICK,
+                reason="Orion recomienda Rápido porque la intención fue identificada como directa y de baja complejidad.",
+            )
+
+    # Deterministic compatibility fallback for planning failures or uncertain plans.
     prompt = _fold_text(messages[-1].content)
     word_count = len(prompt.split())
     marker_count = sum(marker in prompt for marker in DEEP_MARKERS)
