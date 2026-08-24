@@ -50,6 +50,12 @@ def normalize_semantic_plan(
     prior_text = _fold(" ".join(message.content for message in prior_messages[-5:]))
     conversation = f"{prior_text} {folded}".strip()
 
+    current_markers = (
+        "actual", "actuales", "reciente", "recientes", "ultimo", "ultima",
+        "hoy", "ayer", "esta temporada", "busca fuentes", "busca estudios",
+        "internet", "web",
+    )
+
     # References to prior conversation or private operating conventions.
     if prior_messages and re.search(
         r"\b(eso|esto|esa|ese|aquello|lo mismo|como antes|anterior)\b", folded
@@ -68,15 +74,22 @@ def normalize_semantic_plan(
             plan.referenced_previous_context = True
 
     # Explicit task forms are deterministic and should not drift between runs.
-    if re.search(r"^\s*¿?\s*(que es|que significa|define|definime)\b", folded):
+    explicit_definition = bool(
+        re.search(r"^\s*¿?\s*(que es|que significa|define|definime)\b", folded)
+    )
+    if explicit_definition:
         plan.task_type = "definition"
         plan.requires_clarification = False
         plan.ambiguity = min(plan.ambiguity, 0.25)
         plan.complexity = min(plan.complexity, 0.35)
+        if not _has_any(folded, current_markers):
+            plan.needs_web = False
 
     if _has_any(folded, ("grafic", "visualiz", "chart")):
         plan.task_type = "chart"
         plan.needs_local_data = has_local_documents
+        if not _has_any(folded, current_markers):
+            plan.needs_web = False
 
     if _has_any(
         folded,
@@ -116,6 +129,10 @@ def normalize_semantic_plan(
         if plan.task_type not in {"research", "planning", "debugging"}:
             plan.task_type = "interpretation"
         plan.complexity = max(plan.complexity, 0.6)
+
+    if plan.referenced_previous_context and _has_any(folded, ("cambia", "cambio", "afecta", "modifica")):
+        if plan.task_type not in {"research", "planning", "debugging", "chart", "calculation"}:
+            plan.task_type = "interpretation"
 
     # "Who worked more?" is not answerable until work/load is operationally defined.
     if _has_any(folded, ("quien trabajo mas", "quien trabajó mas", "quien tuvo mas carga")):
@@ -157,6 +174,11 @@ def _normalize_football(plan: SemanticPlan, folded: str, conversation: str) -> N
             plan.domain = "physical_performance"
         _add_unique(plan.concepts, "external load", "match exposure")
 
+    if "distancia total" in conversation or "total distance" in conversation:
+        _add_unique(plan.concepts, "total distance")
+    if _has_any(folded, ("periodo", "por periodo", "period")):
+        _add_unique(plan.concepts, "period")
+
     if "hsr" in conversation or "high-speed running" in conversation or "high speed running" in conversation:
         _add_unique(plan.concepts, "HSR", "high-speed running", "match exposure")
 
@@ -172,6 +194,14 @@ def _normalize_football(plan: SemanticPlan, folded: str, conversation: str) -> N
         if plan.domain in {"general", "sports", "football"}:
             plan.domain = "internal_load"
         _add_unique(plan.concepts, "RPE", "rating of perceived exertion", "internal load")
+
+    if _has_any(
+        conversation,
+        ("monitoreo de carga", "monitorizacion de carga", "monitoring load", "load monitoring"),
+    ):
+        if plan.domain in {"general", "sports", "football"}:
+            plan.domain = "training_load_monitoring"
+        _add_unique(plan.concepts, "training load", "load monitoring")
 
     tactical_markers = (
         "presion alta", "high press", "bloque alto", "linea alta", "salir largo",
