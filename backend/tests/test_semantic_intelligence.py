@@ -32,6 +32,20 @@ class SemanticPlannerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(plan.referenced_previous_context)
         self.assertGreaterEqual(plan.complexity, 0.4)
 
+    async def test_fallback_detects_ambiguous_workload_comparison(self) -> None:
+        settings = Settings(semantic_planner_enabled=False)
+        plan = await create_semantic_plan(
+            settings,
+            [ChatMessage(role="user", content="¿Quién trabajó más?")],
+            SportContext.FOOTBALL,
+            has_local_documents=True,
+        )
+
+        self.assertTrue(plan.comparison)
+        self.assertTrue(plan.needs_local_data)
+        self.assertTrue(plan.requires_clarification)
+        self.assertIn("métrica", " ".join(plan.missing_variables))
+
     async def test_structured_planner_can_infer_goal_beyond_literal_words(self) -> None:
         settings = Settings(semantic_planner_enabled=True)
         messages = [
