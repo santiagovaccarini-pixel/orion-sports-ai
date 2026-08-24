@@ -10,10 +10,18 @@ def ontology_index(sport: SportContext) -> dict[str, OntologyConcept]:
     return {concept.concept_id: concept for concept in ontology_for(sport)}
 
 
+def _all_ontology_index() -> dict[str, OntologyConcept]:
+    result: dict[str, OntologyConcept] = {}
+    for sport in SportContext:
+        for concept in ontology_for(sport):
+            result.setdefault(concept.concept_id, concept)
+    return result
+
+
 def planner_ontology_context(sport: SportContext) -> str:
     """Compact concept graph exposed to the planner.
 
-    The planner receives concept identities and meanings, not phrase examples to match.
+    The planner receives identities and meanings, not phrase examples to match.
     It must select IDs by interpreting the user's goal and inference structure.
     """
     concepts = ontology_for(sport)
@@ -33,6 +41,8 @@ def planner_ontology_context(sport: SportContext) -> str:
 
 def selected_concept_context(sport: SportContext, concept_ids: list[str]) -> str:
     index = ontology_index(sport)
+    if any(item not in index for item in concept_ids):
+        index = {**_all_ontology_index(), **index}
     lines: list[str] = []
     for concept_id in concept_ids:
         concept = index.get(concept_id)
