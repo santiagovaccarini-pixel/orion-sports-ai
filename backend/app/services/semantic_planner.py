@@ -29,10 +29,16 @@ Principios obligatorios:
 - Interpretá significado, relaciones y contexto conversacional; no clasifiques por
   parecido de palabras ni por cantidad de términos coincidentes.
 - Separá la observación mencionada de la conclusión que el usuario quiere evaluar.
+- En claim_to_evaluate escribí la afirmación concreta que debe ponerse a prueba cuando
+  la consulta sea interpretativa, comparativa, causal, diagnóstica o predictiva. Para
+  definiciones o pedidos puramente descriptivos puede quedar vacío.
 - Determiná el tipo de inferencia: descriptiva, interpretativa, comparativa, causal,
   diagnóstica, predictiva o de planificación.
 - Seleccioná solamente IDs existentes en la ontología suministrada y hacelo por el
   significado del concepto. No inventes IDs.
+- Usá las relaciones de la ontología: not_equivalent_to impide tratar dos constructos
+  como sinónimos; contextualized_by/depends_on indica contexto necesario; not_proven_by
+  impide convertir un evento aislado en prueba del comportamiento relacionado.
 - Si la pregunta compara una métrica con rendimiento, estado, fatiga, riesgo o
   preparación, representá ambos conceptos cuando existan en la ontología.
 - Para inferencias causales, diagnósticas o predictivas identificá variables que falten
@@ -72,6 +78,7 @@ def _fallback_plan(
     plan = SemanticPlan(
         literal_request=query[:400],
         user_goal=query[:500],
+        claim_to_evaluate="",
         domain="general",
         task_type="direct_answer",
         inference_type="descriptive",
@@ -110,6 +117,7 @@ def _decision_to_plan(
     plan = SemanticPlan(
         literal_request=query[:400],
         user_goal=decision.user_goal,
+        claim_to_evaluate=decision.claim_to_evaluate,
         domain="general",
         task_type=decision.task_type,
         inference_type=decision.inference_type,
@@ -202,6 +210,7 @@ def format_semantic_context(
     """Compact reasoning contract injected into the answer model."""
     payload = {
         "objetivo": plan.user_goal,
+        "afirmacion_a_evaluar": plan.claim_to_evaluate,
         "tipo_tarea": plan.task_type,
         "tipo_inferencia": plan.inference_type,
         "concept_ids": plan.concept_ids,
@@ -212,9 +221,10 @@ def format_semantic_context(
     }
     concept_context = selected_concept_context(sport, plan.concept_ids)
     reasoning_rule = (
-        "Antes de concluir, contrastá la conclusión pedida con explicaciones alternativas "
-        "y con las variables faltantes del marco. No muestres razonamiento interno; "
-        "entregá sólo la conclusión, evidencia/supuestos necesarios y límites relevantes."
+        "Evaluá explícitamente la afirmación indicada antes de aceptarla. Contrastala con "
+        "las relaciones del grafo, explicaciones alternativas y variables faltantes. "
+        "No muestres razonamiento interno; entregá sólo conclusión, evidencia/supuestos "
+        "necesarios y límites relevantes."
     )
     parts = [
         "MARCO DE RAZONAMIENTO VALIDADO DE ORION:\n"
