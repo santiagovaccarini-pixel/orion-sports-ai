@@ -14,6 +14,14 @@ from backend.app.services.semantic_retriever import search_with_intent
 
 
 class SemanticPlannerTests(unittest.IsolatedAsyncioTestCase):
+    async def _fallback(self, text: str, *, local: bool = False) -> SemanticPlan:
+        return await create_semantic_plan(
+            Settings(semantic_planner_enabled=False),
+            [ChatMessage(role="user", content=text)],
+            SportContext.FOOTBALL,
+            has_local_documents=local,
+        )
+
     async def test_fallback_resolves_reference_to_previous_context_without_network(self) -> None:
         settings = Settings(semantic_planner_enabled=False)
         messages = [
@@ -30,21 +38,81 @@ class SemanticPlannerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertTrue(plan.referenced_previous_context)
+        self.assertEqual(plan.domain, "physical_performance")
+        self.assertIn("HSR", plan.concepts)
+        self.assertIn("match exposure", plan.concepts)
         self.assertGreaterEqual(plan.complexity, 0.4)
 
     async def test_fallback_detects_ambiguous_workload_comparison(self) -> None:
-        settings = Settings(semantic_planner_enabled=False)
-        plan = await create_semantic_plan(
-            settings,
-            [ChatMessage(role="user", content="¿Quién trabajó más?")],
-            SportContext.FOOTBALL,
-            has_local_documents=True,
-        )
+        plan = await self._fallback("¿Quién trabajó más?", local=True)
 
         self.assertTrue(plan.comparison)
         self.assertTrue(plan.needs_local_data)
         self.assertTrue(plan.requires_clarification)
+        self.assertGreaterEqual(plan.ambiguity, 0.75)
+        self.assertIn("training load", plan.concepts)
         self.assertIn("métrica", " ".join(plan.missing_variables))
+
+    async def test_physical_metric_is_not_silently_equated_with_performance(self) -> None:
+        plan = await self._fallback("Martín corrió bastante menos que Lucas. ¿Estuvo peor?")
+
+        self.assertEqual(plan.task_type, "interpretation")
+        self.assertEqual(plan.domain, "physical_performance")
+        self.assertTrue(plan.comparison)
+        self.assertTrue(plan.causal_claim_risk)
+        self.assertIn("external load", plan.concepts)
+        self.assertIn("physical performance", plan.concepts)
+        self.assertIn("match exposure", plan.concepts)
+
+    async def test_private_protocol_reference_routes_to_private_memory(self) -> None:
+        plan = await self._fallback(
+            "Nosotros usamos sprint por encima de 25 km/h. ¿Cómo lo veníamos interpretando?"
+        )
+
+        self.assertTrue(plan.needs_private_memory)
+        self.assertTrue(plan.referenced_previous_context)
+        self.assertIn("sprint", plan.concepts)
+        self.assertIn("speed threshold", plan.concepts)
+
+    async def test_tactical_reference_uses_conversation_not_only_last_words(self) -> None:
+        settings = Settings(semantic_planner_enabled=False)
+        messages = [
+            ChatMessage(role="user", content="Estamos analizando la presión alta del equipo."),
+            ChatMessage(role="assistant", content="La presión alta depende del comportamiento colectivo."),
+            ChatMessage(role="user", content="¿Y eso cambia si el rival empieza a salir largo?"),
+        ]
+        plan = await create_semantic_plan(
+            settings,
+            messages,
+            SportContext.FOOTBALL,
+            has_local_documents=False,
+        )
+
+        self.assertTrue(plan.referenced_previous_context)
+        self.assertEqual(plan.domain, "tactical_analysis")
+        self.assertIn("high press", plan.concepts)
+        self.assertIn("long ball", plan.concepts)
+
+    async def test_simple_definition_is_normalized_and_kept_simple(self) -> None:
+        plan = await self._fallback("¿Qué significa RPE?")
+
+        self.assertEqual(plan.task_type, "definition")
+        self.assertEqual(plan.domain, "internal_load")
+        self.assertFalse(plan.causal_claim_risk)
+        self.assertLessEqual(plan.complexity, 0.35)
+        self.assertIn("RPE", plan.concepts)
+        self.assertIn("rating of perceived exertion", plan.concepts)
+
+    async def test_injury_load_question_is_marked_as_causal_inference(self) -> None:
+        plan = await self._fallback(
+            "Las lesiones aumentaron justo cuando subimos la carga. ¿La carga causó las lesiones?"
+        )
+
+        self.assertEqual(plan.task_type, "interpretation")
+        self.assertTrue(plan.causal_claim_risk)
+        self.assertIn("injury", plan.concepts)
+        self.assertIn("training load", plan.concepts)
+        self.assertIn("causality", plan.concepts)
 
     async def test_structured_planner_can_infer_goal_beyond_literal_words(self) -> None:
         settings = Settings(semantic_planner_enabled=True)
@@ -57,25 +125,22 @@ class SemanticPlannerTests(unittest.IsolatedAsyncioTestCase):
         structured = {
             "literal_request": "comparar a Martín y Lucas",
             "user_goal": "determinar si menor demanda externa implica peor rendimiento",
-            "domain": "physical_performance",
-            "task_type": "interpretation",
-            "concepts": ["external load", "match exposure", "physical performance"],
-            "retrieval_queries": [
-                "interpretación de carga externa según exposición y contexto",
-                "distancia total no equivale a rendimiento físico",
-            ],
-            "missing_variables": ["minutos jugados", "posición", "contexto táctico"],
+            "domain": "general",
+            "task_type": "comparison",
+            "concepts": [],
+            "retrieval_queries": [],
+            "missing_variables": [],
             "needs_global_knowledge": True,
             "needs_private_memory": False,
             "needs_local_data": False,
             "needs_web": False,
             "comparison": True,
-            "causal_claim_risk": True,
+            "causal_claim_risk": False,
             "requires_clarification": False,
             "referenced_previous_context": False,
             "ambiguity": 0.35,
-            "complexity": 0.78,
-            "confidence": 0.93,
+            "complexity": 0.5,
+            "confidence": 0.7,
         }
 
         with patch(
@@ -89,11 +154,13 @@ class SemanticPlannerTests(unittest.IsolatedAsyncioTestCase):
                 has_local_documents=False,
             )
 
+        # The normalizer repairs obvious omissions from the small planner model.
         self.assertEqual(plan.domain, "physical_performance")
         self.assertEqual(plan.task_type, "interpretation")
         self.assertTrue(plan.causal_claim_risk)
         self.assertIn("external load", plan.concepts)
-        self.assertIn("minutos jugados", plan.missing_variables)
+        self.assertIn("match exposure", plan.concepts)
+        self.assertIn("physical performance", plan.concepts)
 
 
 class SemanticRetrieverTests(unittest.TestCase):
