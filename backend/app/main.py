@@ -15,14 +15,17 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    lower_process_priority()
+    # Process-priority protection exists to protect the user's Windows machine while
+    # Ollama is doing local inference. It must not throttle a cloud-hosted Core.
+    if settings.model_provider == "ollama":
+        lower_process_priority()
     yield
 
 
 app = FastAPI(
     title=settings.app_name,
     version=settings.version,
-    description="Núcleo local y privado de Orion.",
+    description="Núcleo central de Orion con proveedor de IA intercambiable.",
     lifespan=lifespan,
 )
 
@@ -41,5 +44,6 @@ async def root() -> dict[str, str]:
     return {
         "service": settings.app_name,
         "version": settings.version,
-        "privacy": "local-no-persistent-memory",
+        "model_provider": settings.model_provider,
+        "persistent_memory": "disabled",
     }
