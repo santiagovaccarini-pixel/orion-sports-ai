@@ -50,7 +50,6 @@ def normalize_semantic_plan(
     prior_text = _fold(" ".join(message.content for message in prior_messages[-5:]))
     conversation = f"{prior_text} {folded}".strip()
 
-    # References to prior conversation or private operating conventions.
     if prior_messages and re.search(
         r"\b(eso|esto|esa|ese|aquello|lo mismo|como antes|anterior)\b", folded
     ):
@@ -67,7 +66,6 @@ def normalize_semantic_plan(
         if _has_any(folded, ("veniamos", "como antes", "anterior")):
             plan.referenced_previous_context = True
 
-    # Explicit task forms are deterministic and should not drift between runs.
     explicit_definition = bool(
         re.search(r"^\s*¿?\s*(que es|que significa|define|definime)\b", folded)
         or re.search(r"^\s*(explica|explicame|explica en|explicame en).*\bque es\b", folded)
@@ -93,8 +91,6 @@ def normalize_semantic_plan(
         plan.needs_web = True
         plan.needs_global_knowledge = True
 
-    # Comparison and causal-inference cues are conceptually important even when the
-    # user never uses the words "comparar" or "causalidad".
     if _has_any(
         folded,
         (
@@ -121,7 +117,6 @@ def normalize_semantic_plan(
             plan.task_type = "interpretation"
         plan.complexity = max(plan.complexity, 0.6)
 
-    # "Who worked more?" is not answerable until work/load is operationally defined.
     if _has_any(folded, ("quien trabajo mas", "quien trabajó mas", "quien tuvo mas carga")):
         plan.comparison = True
         plan.needs_local_data = has_local_documents
@@ -135,12 +130,19 @@ def normalize_semantic_plan(
     if sport is SportContext.FOOTBALL:
         _normalize_football(plan, folded, conversation)
 
-    # Orion cannot require local data if none exists. Private memory is a separate
-    # future store and therefore is intentionally not tied to local documents.
+    # A resolved conversational reference is usually an interpretation of prior
+    # context, not an isolated direct answer. Keep explicit tasks untouched.
+    if (
+        plan.referenced_previous_context
+        and plan.task_type == "direct_answer"
+        and plan.domain != "general"
+    ):
+        plan.task_type = "interpretation"
+        plan.complexity = max(plan.complexity, 0.4)
+
     if not has_local_documents:
         plan.needs_local_data = False
 
-    # Canonical concepts also become retrieval reformulations without another LLM call.
     if plan.concepts:
         canonical_query = " ".join(plan.concepts[:8])
         _add_unique(plan.retrieval_queries, canonical_query)
@@ -161,6 +163,11 @@ def _normalize_football(plan: SemanticPlan, folded: str, conversation: str) -> N
             plan.domain = "physical_performance"
         _add_unique(plan.concepts, "external load", "match exposure")
 
+    if "distancia total" in conversation or "total distance" in conversation:
+        _add_unique(plan.concepts, "total distance")
+    if _has_any(folded, ("por periodo", "por período", "periodo", "período")):
+        _add_unique(plan.concepts, "period")
+
     if "hsr" in conversation or "high-speed running" in conversation or "high speed running" in conversation:
         _add_unique(plan.concepts, "HSR", "high-speed running", "match exposure")
 
@@ -177,16 +184,26 @@ def _normalize_football(plan: SemanticPlan, folded: str, conversation: str) -> N
             plan.domain = "internal_load"
         _add_unique(plan.concepts, "RPE", "rating of perceived exertion", "internal load")
 
+    if _has_any(
+        conversation,
+        ("monitoreo de carga", "monitorizacion de carga", "monitoramento de carga", "load monitoring"),
+    ):
+        _add_unique(plan.concepts, "training load", "load monitoring")
+        if plan.domain in {"general", "sports", "football"}:
+            plan.domain = "physical_performance"
+
     tactical_markers = (
-        "presion alta", "high press", "bloque alto", "linea alta", "salir largo",
-        "salida larga", "juego largo", "build up", "build-up", "transicion ofensiva",
-        "contraataque", "posesion",
+        "presion alta", "high press", "bloque alto", "bloque medio", "linea alta",
+        "salir largo", "salida larga", "juego largo", "build up", "build-up",
+        "transicion ofensiva", "contraataque", "posesion",
     )
     if _has_any(conversation, tactical_markers):
         plan.domain = "tactical_analysis"
 
     if _has_any(conversation, ("presion alta", "high press")):
         _add_unique(plan.concepts, "high press", "pressing")
+    if "bloque medio" in conversation:
+        _add_unique(plan.concepts, "mid block")
     if _has_any(folded, ("salir largo", "salida larga", "juego largo")):
         _add_unique(plan.concepts, "long ball", "build-up")
     if "transicion ofensiva" in conversation:
