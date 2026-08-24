@@ -25,15 +25,17 @@ def search_with_intent(
     *,
     limit: int = 12,
 ) -> list[KnowledgeChunk]:
-    """Retrieve by resolved intent instead of relying only on literal wording.
+    """Search local documents only after intent has already been resolved.
 
-    The semantic planner expands the user's wording into canonical concepts and
-    retrieval queries. This keeps retrieval fast and local while making it robust
-    to paraphrases. A vector index can later be layered on top without changing
-    the calling contract.
+    Lexical overlap is permitted here as a retrieval implementation detail, but it is
+    never allowed to decide what the user means. If the reasoning plan does not require
+    local data/documents, retrieval is skipped entirely so unrelated files cannot steer
+    the answer.
     """
     if semantic_plan is None:
-        return knowledge.search(original_query, limit=limit)
+        return []
+    if not semantic_plan.needs_local_data:
+        return []
 
     queries = semantic_plan.retrieval_texts(original_query)
     query_terms = [_terms(query) for query in queries]
@@ -54,7 +56,6 @@ def search_with_intent(
                     continue
                 overlap = len(terms & terms_for_query)
                 if overlap:
-                    # The original wording and inferred user goal matter most.
                     weight = 3.0 if query_index == 0 else 2.0 if query_index == 1 else 1.25
                     score += weight * overlap / max(len(terms_for_query), 1)
 
@@ -78,10 +79,6 @@ def search_with_intent(
                 )
 
     ranked.sort(
-        key=lambda item: (
-            -item.score,
-            item.chunk.document_name,
-            item.chunk.index,
-        )
+        key=lambda item: (-item.score, item.chunk.document_name, item.chunk.index)
     )
     return [item.chunk for item in ranked[:limit]]
