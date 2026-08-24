@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: orion-core-prototype
+    runtime: python
+    plan: free
+    region: virginia
+    branch: cloud-prototype
+    autoDeployTrigger: checksPass
+    buildCommand: python -m pip install -r backend/requirements.txt
+    startCommand: python -m uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: ORION_MODEL_PROVIDER
+        value: cloudflare
+      - key: ORION_CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: ORION_CLOUDFLARE_API_TOKEN
+        sync: false
+      - key: ORION_API_KEY
+        sync: false
+      - key: ORION_CLOUDFLARE_QUICK_MODEL
+        value: "@cf/openai/gpt-oss-20b"
+      - key: ORION_CLOUDFLARE_DEEP_MODEL
+        value: "@cf/openai/gpt-oss-20b"
+      - key: ORION_WEB_ENABLED
+        value: "false"
