@@ -3,7 +3,7 @@
 Agente personal de inteligencia deportiva con modelo local, control de recursos
 y memoria privada por consentimiento.
 
-## Estado actual: Módulo 1.3
+## Estado actual: Módulo 1.4 — Semantic Intelligence
 
 Este módulo incorpora:
 
@@ -15,95 +15,157 @@ Este módulo incorpora:
 - el mismo botón del cuadro de escritura permite enviar o detener una generación;
 - selector de contexto local para General, Fútbol, Básquet, Vóley, Rugby,
   Tenis, Atletismo, Natación y Ciclismo;
-- recomendación transparente del modo de respuesta;
-- advertencia antes de una operación pesada cuando la PC está exigida;
-- prioridad reducida continua para los procesos de Ollama;
 - `qwen3:4b-instruct` para Rápido y `qwen3:8b` para Profundo;
 - presupuesto configurable de 8 hilos físicos en ambos modos;
 - contexto, historial y salida acotados por modo para evitar trabajo innecesario;
 - servidor Python oculto, con verificación de arranque y registros de errores;
 - conversación con desplazamiento independiente, lectura libre durante la
   generación y un control para volver al final;
-- reconstrucción final en Markdown seguro, fórmulas legibles sin LaTeX crudo y
-  métricas de primer texto, carga, tiempo total, velocidad,
-  tokens y pico de CPU por respuesta;
-- reglas de prudencia científica y una batería reproducible de calidad deportiva;
+- reconstrucción final en Markdown seguro y métricas de rendimiento por respuesta;
+- reglas de prudencia científica y baterías reproducibles de calidad deportiva;
 - modelo activo en memoria durante diez minutos para acelerar preguntas seguidas;
-- atajos de túnel desactivados en el iniciador local;
-- cero memoria permanente y cero proveedores externos.
 - base de conocimiento local opcional para importar TXT, Markdown, CSV y JSON;
-  los fragmentos relevantes se incorporan como fuentes identificables en cada respuesta.
-- composición visual adaptativa: Orion elige entre texto, ejemplo, tabla o gráfico
-  según la tarea, con diseño orientado a comprensión y evidencia.
-- orquestador de intención: separa conocimiento general, datos locales, cálculo,
-  gráficos y búsqueda web antes de construir la respuesta.
+- composición visual adaptativa para texto, ejemplo, tabla o gráfico;
+- búsqueda web controlada por allowlist y mínimo de fuentes;
+- **planificador semántico previo a la respuesta**: separa pedido literal, objetivo
+  real, dominio, tipo de tarea, conceptos, variables faltantes, ambigüedad,
+  complejidad y riesgo causal;
+- **routing por intención**: web, datos locales, cálculo, gráficos y conocimiento
+  general se eligen después de interpretar la pregunta, no sólo por palabras clave;
+- **retrieval expandido por intención**: Orion reformula la necesidad del usuario en
+  conceptos técnicos y consultas canónicas antes de buscar fragmentos relevantes;
+- **contexto conversacional para el planner**: referencias como "eso", "lo mismo" o
+  "como antes" pueden resolverse usando los turnos recientes;
+- guía semántica deportiva con foco inicial en fútbol para separar rendimiento físico,
+  técnico, táctico y contextual y evitar inferencias inválidas desde una métrica aislada;
+- thinking de Qwen3 opcional en modo Profundo mediante `ORION_DEEP_THINKING_ENABLED`;
+- fallbacks deterministas: si el planner semántico falla, Orion conserva el routing
+  anterior en lugar de bloquear el chat;
+- CI de backend en GitHub Actions para ejecutar la suite de regresión en cada PR/push.
 
-El deporte seleccionado especializa el vocabulario, las variables y los
-ejemplos del modelo local, pero no reemplaza la pregunta central ni activa una
-búsqueda en Internet. Si una consulta depende de información reciente, Orion
-debe reconocer esa limitación. La búsqueda web controlada ya está disponible de
-forma opcional: activala con `ORION_WEB_ENABLED=true`, mantené una allowlist en
-`ORION_WEB_ALLOWED_DOMAINS` y exigí al menos `ORION_WEB_MINIMUM_SOURCES` fuentes
-permitidas. El valor predeterminado es cuatro y la búsqueda permanece
-desactivada en local.
+### Qué cambió conceptualmente en 1.4
 
-Con una a tres fuentes, Orion muestra directamente los extractos y enlaces como
-información preliminar, sin pedirle al modelo que invente una síntesis. Con cuatro
-o más dominios independientes, el modelo puede sintetizar y citar el resultado.
+Antes, gran parte del routing se resolvía buscando marcadores como `promedio`,
+`comparar`, `gráfico` o términos presentes en los documentos. Eso sigue existiendo
+como fallback, pero ya no es la vía principal cuando el planner está disponible.
 
-La memoria con Supabase se implementará en el Módulo 2. Hasta entonces, la
-conversación existe únicamente en la pestaña abierta.
+El flujo actual es:
 
-La base de conocimiento local no es memoria conversacional: guarda únicamente
-los documentos que importes de forma explícita en `.orion-runtime/knowledge`.
-Desde la interfaz podés usar `Documento` para agregar archivos de texto, CSV,
-Markdown o JSON. Orion solo recupera fragmentos relacionados con la pregunta y
-los marca como `Fuente local`; si no encuentra coincidencias, no agrega contexto.
+```text
+Mensaje + conversación reciente
+        |
+        v
+Semantic Planner (Structured Output)
+        |
+        +-> objetivo real
+        +-> dominio
+        +-> conceptos
+        +-> variables faltantes
+        +-> ambigüedad / complejidad
+        +-> riesgo causal
+        +-> fuentes necesarias
+        |
+        v
+Orquestación por intención
+        |
+        v
+Retrieval expandido + herramientas
+        |
+        v
+Context Builder
+        |
+        v
+Qwen3 Rápido / Profundo
+        |
+        v
+Respuesta
+```
 
-Antes de responder, el orquestador clasifica la consulta. Las preguntas actuales
-priorizan web; las preguntas sobre archivos priorizan las herramientas locales;
-las preguntas generales no reciben el CSV cargado por accidente. Los cálculos y
-gráficos se ejecutan con código y el modelo se limita a explicarlos.
+El planner utiliza Structured Outputs de Ollama con temperatura 0 y un timeout
+corto. No responde al usuario: produce un objeto validado que guía las etapas
+posteriores. Si Ollama no puede completar ese pre-pass, Orion vuelve al plan
+determinista anterior.
 
-El currículo de fundamentos deportivos de diez preguntas está en
-`backend/evals/sports_foundations_cases.json`. Se puede ejecutar con
-`--dataset foundations`; los fallos muestran la corrección esperada para convertir
-cada error en un caso de regresión.
+La guía semántica de fútbol incluye relaciones que ayudan a evitar errores comunes:
+HSR, sprint, distancia, aceleraciones y desaceleraciones describen demanda externa y
+no equivalen por sí solas a rendimiento; RPE y frecuencia cardíaca representan
+respuestas internas diferentes; exposición, posición, rol, marcador, rival, modelo de
+juego y definición operacional pueden cambiar una comparación. También evita tratar
+como sinónimos conceptos tácticos relacionados, por ejemplo transición ofensiva y
+contraataque, o presión alta y línea defensiva alta.
+
+## Conocimiento y memoria
+
+La memoria persistente todavía no está implementada. La conversación existe únicamente
+en la sesión actual y la base de conocimiento local contiene sólo los documentos que
+se importan de forma explícita.
+
+La arquitectura de intención ya prepara la separación futura entre:
+
+1. **memoria/conocimiento privado por usuario o club**, con protocolos, definiciones,
+   archivos, decisiones y metodologías propias;
+2. **Orion Sports Core**, conocimiento deportivo global validado y versionado que podrá
+   compartirse entre instalaciones sin exponer datos privados de un club.
+
+`needs_private_memory` y `needs_global_knowledge` ya forman parte del plan semántico,
+pero este módulo no persiste ni comparte memoria todavía.
+
+## Base de conocimiento local
+
+La base local guarda documentos en `.orion-runtime/knowledge`. Desde la interfaz se
+pueden agregar TXT, Markdown, CSV o JSON. Los fragmentos se incorporan como fuentes
+identificables.
+
+En 1.4 la recuperación no depende exclusivamente del texto literal de la pregunta. El
+planner genera reformulaciones y conceptos canónicos; `semantic_retriever.py` combina
+esas señales con el índice local. La próxima evolución prevista es sumar embeddings
+persistentes y reranking manteniendo el mismo contrato del retriever.
+
+## Web
+
+La búsqueda web controlada se activa con `ORION_WEB_ENABLED=true`, utiliza la allowlist
+`ORION_WEB_ALLOWED_DOMAINS` y exige al menos `ORION_WEB_MINIMUM_SOURCES` fuentes para
+una síntesis confirmada. Con menos respaldo, Orion devuelve la evidencia como
+preliminar y evita convertirla en un hecho confirmado.
+
+El planner semántico puede detectar que una pregunta requiere información actual, pero
+la búsqueda sigue estando gobernada por la configuración y las reglas de fuentes.
 
 ## Arquitectura
 
 ```text
-Interfaz React/Vinext <- NDJSON progresivo <- FastAPI <- Ollama local
+Interfaz React/Vinext <- NDJSON progresivo <- FastAPI
                                                 |
+                                                +-> Semantic Planner
+                                                +-> Intent Router
+                                                +-> Knowledge Retriever
+                                                +-> Web Research
+                                                +-> CSV tools
+                                                +-> Ollama local
                                                 +-> Monitor de CPU y RAM
 ```
 
-Todo el núcleo escucha únicamente en `127.0.0.1`. No queda expuesto a otros
-equipos de la red durante este módulo.
+Todo el núcleo escucha únicamente en `127.0.0.1` durante el prototipo local.
 
 ## Uso de recursos
 
-Generar texto localmente requiere cálculo. Un aumento temporal de CPU mientras
-Orion responde es normal; no significa por sí solo que exista un problema. El
-modo Rápido usa un modelo de 4B, contexto de 4096 tokens y un máximo de 384
-tokens de salida. Profundo reutiliza el modelo 8B ya instalado, con más contexto
-y una salida mayor. Ambos usan ocho hilos físicos y los procesos de Ollama se
-mantienen con prioridad reducida para que Windows y las demás aplicaciones
-tengan preferencia.
+Generar texto localmente requiere cálculo. Un aumento temporal de CPU mientras Orion
+responde es normal. Rápido usa el modelo 4B y Profundo el 8B; ambos tienen presupuestos
+de contexto, salida e hilos independientes.
 
-La interfaz ya no espera la respuesta completa: muestra cada fragmento apenas
-llega y renderiza Markdown progresivamente. Esto reduce mucho el tiempo
-percibido, aunque el tiempo total seguirá dependiendo del modelo, la longitud
-de la respuesta y la carga del equipo.
+El planificador semántico agrega una inferencia corta antes de la respuesta y utiliza
+el modelo Rápido, Structured Outputs, temperatura 0 y un máximo configurable mediante
+`ORION_SEMANTIC_PLANNER_MAX_TOKENS`. Si el planner no responde dentro del timeout corto,
+se usa el fallback determinista.
 
-El modo Rápido permite hasta 768 tokens de salida y Profundo hasta 1536 por
-defecto. Estos límites pueden ajustarse con `ORION_QUICK_MAX_TOKENS` y
-`ORION_DEEP_MAX_TOKENS`. Markdown admite negrita, tablas, listas y emojis;
-HTML y estilos de color generados por el modelo no se ejecutan por seguridad.
+El modo Profundo puede activar el canal de thinking de Qwen3. Se controla con:
 
-El presupuesto de hilos reduce el impacto, pero no constituye un límite rígido
-de porcentaje: controladores, GPU integrada y tareas auxiliares también pueden
-usar CPU. Puede ajustarse con `ORION_QUICK_THREADS` y `ORION_DEEP_THREADS`.
+```text
+ORION_DEEP_THINKING_ENABLED=true
+```
+
+Si la prioridad es latencia en una máquina local, puede desactivarse sin perder la capa
+semántica previa.
 
 ## Preparación en Windows
 
@@ -114,15 +176,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\windows\Setup-Orion.ps1 -InstallOllama -DownloadQuickModel -DownloadDeepModel
 ```
 
-El script crea un entorno Python aislado, instala las dependencias de Orion,
-prepara la interfaz y, solamente cuando se incluyen esos parámetros, instala
-Ollama y descarga `qwen3:4b-instruct` para Rápido y `qwen3:8b` para Profundo.
-
-Si `qwen3:8b` ya está instalado, alcanza con ejecutar:
-
-```powershell
-.\scripts\windows\Setup-Orion.ps1 -DownloadQuickModel
-```
+El script crea un entorno Python aislado, instala las dependencias, prepara la interfaz
+y descarga modelos sólo cuando se solicitan esos parámetros.
 
 Para iniciar Orion:
 
@@ -130,27 +185,18 @@ Para iniciar Orion:
 .\scripts\windows\Start-Orion.ps1
 ```
 
-El núcleo Python se ejecuta oculto y sus registros quedan en
-`.orion-runtime`. La terminal desde la que se inicia Orion sigue siendo el
-controlador temporal del prototipo: al detenerla, el núcleo local se cierra de
-forma ordenada. El iniciador también desactiva los atajos interactivos que
-podrían abrir un túnel de Cloudflare al pegar texto accidentalmente.
-
-## Dirección del producto
-
-El iniciador actual es transitorio. El objetivo de la siguiente etapa es
-empaquetar Orion como una aplicación liviana para Windows, con acceso directo e
-icono propio en la barra de tareas, sin necesitar VS Code. La aplicación deberá
-iniciar y detener de forma segura el núcleo local y mantener el mismo control
-de privacidad y recursos.
+El núcleo Python se ejecuta oculto y los registros quedan en `.orion-runtime`.
 
 ## Pruebas
 
 Backend:
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s backend\tests
+.\.venv\Scripts\python.exe -m unittest discover -s backend\tests -v
 ```
+
+La rama 1.4 incorpora además `.github/workflows/backend-tests.yml`, que ejecuta esta
+suite automáticamente en GitHub Actions.
 
 Interfaz:
 
@@ -164,24 +210,27 @@ Evaluación deportiva local, con Orion iniciado:
 .\.venv\Scripts\python.exe -m backend.evals.run_local_evaluation --limit 3
 ```
 
-La batería completa contiene ocho casos y se ejecuta con `--limit 8`. El
-prechequeo por conceptos no reemplaza la revisión humana de las respuestas.
-
-Medición reproducible de rendimiento, con Orion iniciado:
+Medición reproducible de rendimiento:
 
 ```powershell
 .\.venv\Scripts\python.exe -m backend.evals.run_performance_benchmark --mode quick --runs 2
 ```
 
-La primera ejecución incluye la carga del modelo; la segunda representa una
-consulta con el modelo ya caliente. La interfaz muestra las mismas métricas por
-respuesta para poder comparar cambios sin depender de una impresión subjetiva.
+Para validar 1.4 no alcanza con medir la respuesta final. También deben evaluarse:
+
+- precisión de intención;
+- dominio detectado;
+- conceptos recuperados;
+- variables faltantes;
+- detección de causalidad;
+- aclaraciones innecesarias vs. necesarias;
+- calidad del retrieval;
+- latencia adicional del planner;
+- diferencia de calidad y costo entre thinking activado/desactivado.
 
 ## Configuración
 
-Los valores disponibles están documentados en `backend/.env.example`. En el
-prototipo se mantienen los puertos y direcciones locales predeterminados para
-reducir exposición accidental. Para un despliegue remoto, definí `ORION_API_KEY`
-en el backend y la misma clave en `NEXT_PUBLIC_ORION_API_KEY` para la interfaz.
-La clave protege el estado y el chat; `/api/v1/health` queda disponible para
+Los valores disponibles están documentados en `backend/.env.example`. Para un
+despliegue remoto, definí `ORION_API_KEY` en el backend y la misma clave en
+`NEXT_PUBLIC_ORION_API_KEY` para la interfaz. `/api/v1/health` queda disponible para
 comprobaciones de disponibilidad.

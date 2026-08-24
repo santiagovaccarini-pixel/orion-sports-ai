@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from unicodedata import normalize
 from typing import Protocol, Sequence
 
+from backend.app.domain.intent import SemanticPlan
 from backend.app.domain.models import SelectedMode
 
 
@@ -21,7 +22,6 @@ DEEP_MARKERS = (
     "estrateg",
     "riesgo",
     "valid",
-    "explica paso",
     "explica paso",
     "fuentes",
     "evidencia",
@@ -45,7 +45,55 @@ class ModeRecommendation:
     reason: str
 
 
-def recommend_mode(messages: Sequence[MessageLike]) -> ModeRecommendation:
+def recommend_mode(
+    messages: Sequence[MessageLike],
+    semantic_plan: SemanticPlan | None = None,
+) -> ModeRecommendation:
+    """Choose the expensive 8B path only when its expected value justifies latency.
+
+    When a semantic plan exists, ordinary interpretation and comparison stay on Quick
+    unless complexity justifies 8B compute. If planning is unavailable, Orion preserves
+    its previous deterministic selector for compatibility and safe degradation.
+    """
+    if semantic_plan is not None:
+        deep_reasons: list[str] = []
+
+        if semantic_plan.complexity >= 0.82:
+            deep_reasons.append("la intención requiere razonamiento de alta complejidad")
+
+        if semantic_plan.causal_claim_risk and semantic_plan.complexity >= 0.68:
+            deep_reasons.append("hay una inferencia causal compleja que conviene revisar")
+
+        if (
+            semantic_plan.task_type in {"research", "planning", "debugging"}
+            and semantic_plan.complexity >= 0.58
+        ):
+            deep_reasons.append("el tipo de tarea necesita análisis más profundo")
+
+        # Ambiguity alone is not a reason to spend 8B compute. If clarification is
+        # required, Quick should ask the missing variable instead of reasoning longer.
+        if deep_reasons and not semantic_plan.requires_clarification:
+            return ModeRecommendation(
+                mode=SelectedMode.DEEP,
+                reason="Orion recomienda Profundo porque "
+                + " y ".join(dict.fromkeys(deep_reasons))
+                + ".",
+            )
+
+        quick_reason = "la intención puede resolverse con el planner semántico y el modelo rápido"
+        if semantic_plan.requires_clarification:
+            quick_reason = "falta una variable concreta y conviene pedirla sin ejecutar el modelo pesado"
+        elif semantic_plan.task_type in {"definition", "direct_answer", "calculation", "data_query", "chart"}:
+            quick_reason = "la tarea es directa y no justifica el costo del modelo profundo"
+        elif semantic_plan.task_type in {"interpretation", "comparison"}:
+            quick_reason = "la interpretación está acotada y la ontología semántica aporta el contexto necesario"
+
+        return ModeRecommendation(
+            mode=SelectedMode.QUICK,
+            reason=f"Orion recomienda Rápido porque {quick_reason}.",
+        )
+
+    # Legacy deterministic fallback retained intentionally.
     prompt = _fold_text(messages[-1].content)
     word_count = len(prompt.split())
     marker_count = sum(marker in prompt for marker in DEEP_MARKERS)

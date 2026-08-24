@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 
 from backend.app.core.config import get_settings
 from backend.app.core.prompt import build_system_prompt
+from backend.app.domain.intent import SemanticPlan
 from backend.app.domain.schemas import (
     ChatRequest,
     ChatResponse,
@@ -36,6 +37,10 @@ from backend.app.services.resource_guard import (
     read_snapshot,
 )
 from backend.app.services.resource_policy import evaluate_resources
+from backend.app.services.response_policy import (
+    response_style_instruction,
+    response_token_budget,
+)
 from backend.app.services.knowledge_base import (
     KnowledgeBase,
     KnowledgeDocument,
@@ -47,7 +52,12 @@ from backend.app.services.knowledge_base import (
     csv_tool_result,
     format_context,
 )
-from backend.app.services.web_research import format_sources, is_web_request, research
+from backend.app.services.semantic_planner import (
+    create_semantic_plan,
+    format_semantic_context,
+)
+from backend.app.services.semantic_retriever import search_with_intent
+from backend.app.services.web_research import format_sources, research
 from backend.app.services.orchestrator import OrchestrationPlan, create_plan
 
 
@@ -71,6 +81,7 @@ class PreparedChat:
     recommendation_reason: str
     model: str
     sport: SportContext
+    semantic_plan: SemanticPlan
 
 
 def _ndjson(payload: dict[str, object]) -> bytes:
@@ -101,33 +112,52 @@ def _knowledge_prompt(
     knowledge = KnowledgeBase(Path(get_settings().knowledge_path))
     query = request.messages[-1].content
     web_requested = bool(web_context)
-    plan = _create_orchestration_plan(query, web_requested=web_requested)
+    plan = _create_orchestration_plan(
+        query,
+        semantic_plan=prepared.semantic_plan,
+        web_requested=web_requested,
+    )
     csv_documents = [
         document
         for document in knowledge.list_documents()
         if document.name.lower().endswith(".csv")
     ]
-    ambiguous_csv = plan.use_local_data and any(
-        csv_query_is_ambiguous(document.content, query) for document in csv_documents
+    ambiguous_csv = plan.use_local_data and (
+        prepared.semantic_plan.requires_clarification
+        or any(csv_query_is_ambiguous(document.content, query) for document in csv_documents)
     )
-    context = [] if ambiguous_csv else knowledge.search(query)
+    context = (
+        []
+        if ambiguous_csv
+        else search_with_intent(
+            knowledge,
+            query,
+            prepared.semantic_plan,
+            limit=12,
+        )
+    )
     max_context = 2_000 if prepared.selected_mode is SelectedMode.QUICK else 5_000
     formatted = format_context(context, max_characters=max_context)
+    semantic_context = format_semantic_context(prepared.semantic_plan)
+    response_instruction = response_style_instruction(
+        prepared.selected_mode,
+        prepared.semantic_plan,
+        query,
+    )
     calculations = ""
     tool_results = ""
     overviews = ""
     for document in csv_documents:
-        if document.name.lower().endswith(".csv"):
-            if plan.use_local_data:
-                overviews += csv_overview(document.content, document.name)
-            if plan.use_local_data and not ambiguous_csv:
-                calculations += csv_calculation(document.content, query)
-                tool_results += csv_tool_result(document.content, query, document.name)
+        if plan.use_local_data:
+            overviews += csv_overview(document.content, document.name)
+        if plan.use_local_data and not ambiguous_csv:
+            calculations += csv_calculation(document.content, query)
+            tool_results += csv_tool_result(document.content, query, document.name)
     if ambiguous_csv:
         overviews += (
-            "ACLARACIÓN OBLIGATORIA: la petición no define qué jugador, columna, "
-            "período o cálculo necesita el usuario. No analices ni resumas todavía. "
-            "Preguntá qué dato desea consultar y ofrecé ejemplos usando las columnas detectadas.\n"
+            "ACLARACIÓN OBLIGATORIA: la intención requiere datos locales pero falta "
+            "definir una variable indispensable (jugador, columna, período, métrica o "
+            "cálculo). No inventes la selección. Pedí únicamente el dato que falta.\n"
         )
     if plan.use_chart and any(csv_chart_is_ambiguous(document.content, query) for document in csv_documents):
         overviews += (
@@ -144,14 +174,33 @@ def _knowledge_prompt(
             f"{json.dumps(chart, ensure_ascii=False)}\n"
         )
     extra = "\n".join(
-        item for item in (web_context, overviews, tool_results, calculations, formatted) if item
+        item
+        for item in (
+            semantic_context,
+            response_instruction,
+            web_context,
+            overviews,
+            tool_results,
+            calculations,
+            formatted,
+        )
+        if item
     )
     return f"{base_prompt}\n\n{extra}" if extra else base_prompt
 
 
-def _create_orchestration_plan(query: str, *, web_requested: bool = False) -> OrchestrationPlan:
+def _create_orchestration_plan(
+    query: str,
+    *,
+    semantic_plan: SemanticPlan | None = None,
+    web_requested: bool = False,
+) -> OrchestrationPlan:
     documents = KnowledgeBase(Path(get_settings().knowledge_path)).list_documents()
-    plan = create_plan(query, has_local_documents=bool(documents))
+    plan = create_plan(
+        query,
+        has_local_documents=bool(documents),
+        semantic_plan=semantic_plan,
+    )
     if web_requested and not plan.use_web:
         return OrchestrationPlan(
             plan.intent,
@@ -165,22 +214,31 @@ def _create_orchestration_plan(query: str, *, web_requested: bool = False) -> Or
     return plan
 
 
-async def _web_context(request: ChatRequest) -> str:
+async def _web_context(request: ChatRequest, prepared: PreparedChat) -> str:
     settings = get_settings()
     query = request.messages[-1].content
-    plan = _create_orchestration_plan(query)
+    plan = _create_orchestration_plan(query, semantic_plan=prepared.semantic_plan)
     if not settings.web_enabled or not plan.use_web:
         return ""
+
+    research_query = query
+    if prepared.semantic_plan.referenced_previous_context:
+        research_query = (
+            prepared.semantic_plan.retrieval_queries[0]
+            if prepared.semantic_plan.retrieval_queries
+            else prepared.semantic_plan.user_goal
+        )
     sources = await research(
-        query,
+        research_query,
         allowed_domains=settings.web_allowed_domains,
         minimum_sources=settings.web_minimum_sources,
     )
-    formatted_sources = format_sources(sources, minimum_sources=settings.web_minimum_sources)
-    return formatted_sources
+    return format_sources(sources, minimum_sources=settings.web_minimum_sources)
+
 
 def _web_is_insufficient(context: str) -> bool:
     return context.startswith("INVESTIGACIÓN WEB INSUFICIENTE:")
+
 
 def _insufficient_web_response(context: str) -> str:
     return (
@@ -207,7 +265,14 @@ def _knowledge_chart(request: ChatRequest) -> dict[str, object] | None:
 
 async def _prepare_chat(request: ChatRequest, *, preflight_model: bool) -> PreparedChat:
     settings = get_settings()
-    recommendation = recommend_mode(request.messages)
+    documents = KnowledgeBase(Path(settings.knowledge_path)).list_documents()
+    semantic_plan = await create_semantic_plan(
+        settings,
+        request.messages,
+        request.sport,
+        has_local_documents=bool(documents),
+    )
+    recommendation = recommend_mode(request.messages, semantic_plan)
     selected_mode = (
         recommendation.mode
         if request.mode is RequestedMode.AUTO
@@ -265,6 +330,7 @@ async def _prepare_chat(request: ChatRequest, *, preflight_model: bool) -> Prepa
         recommendation_reason=recommendation.reason,
         model=model,
         sport=request.sport,
+        semantic_plan=semantic_plan,
     )
 
 
@@ -316,7 +382,13 @@ async def system_status() -> StatusResponse:
 async def chat(request: ChatRequest) -> ChatResponse:
     settings = get_settings()
     prepared = await _prepare_chat(request, preflight_model=False)
-    web_context = await _web_context(request)
+    web_context = await _web_context(request, prepared)
+    generation_budget = response_token_budget(
+        settings,
+        prepared.selected_mode,
+        prepared.semantic_plan,
+        request.messages[-1].content,
+    )
     if _web_is_insufficient(web_context):
         return ChatResponse(
             content=_insufficient_web_response(web_context),
@@ -348,6 +420,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
                     mode=prepared.selected_mode,
                     messages=request.messages,
                     system_prompt=_knowledge_prompt(request, prepared, web_context),
+                    max_tokens_override=generation_budget,
                 )
             finally:
                 priority_stop.set()
@@ -392,7 +465,13 @@ async def chat(request: ChatRequest) -> ChatResponse:
 async def chat_stream(request: ChatRequest) -> StreamingResponse:
     settings = get_settings()
     prepared = await _prepare_chat(request, preflight_model=True)
-    web_context = await _web_context(request)
+    web_context = await _web_context(request, prepared)
+    generation_budget = response_token_budget(
+        settings,
+        prepared.selected_mode,
+        prepared.semantic_plan,
+        request.messages[-1].content,
+    )
 
     async def generate() -> AsyncIterator[bytes]:
         yield _ndjson(
@@ -439,6 +518,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                         mode=prepared.selected_mode,
                         messages=request.messages,
                         system_prompt=_knowledge_prompt(request, prepared, web_context),
+                        max_tokens_override=generation_budget,
                     ):
                         if event.content:
                             yield _ndjson(

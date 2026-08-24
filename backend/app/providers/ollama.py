@@ -83,13 +83,9 @@ def parse_stream_payload(
     return OllamaStreamEvent(
         content=str(payload.get("message", {}).get("content", "")),
         done=bool(payload.get("done", False)),
-        total_duration_ms=_nanoseconds_to_milliseconds(
-            payload.get("total_duration")
-        ),
+        total_duration_ms=_nanoseconds_to_milliseconds(payload.get("total_duration")),
         load_duration_ms=_nanoseconds_to_milliseconds(payload.get("load_duration")),
-        prompt_eval_duration_ms=_nanoseconds_to_milliseconds(
-            payload.get("prompt_eval_duration")
-        ),
+        prompt_eval_duration_ms=_nanoseconds_to_milliseconds(payload.get("prompt_eval_duration")),
         eval_duration_ms=_nanoseconds_to_milliseconds(eval_duration),
         prompt_tokens=(
             payload.get("prompt_eval_count")
@@ -104,21 +100,21 @@ def parse_stream_payload(
     )
 
 
-def runtime_options(settings: Settings, mode: SelectedMode) -> dict[str, int | float]:
-    context = (
-        settings.quick_context
-        if mode is SelectedMode.QUICK
-        else settings.deep_context
-    )
-    thread_limit = (
-        settings.quick_threads
-        if mode is SelectedMode.QUICK
-        else settings.deep_threads
+def runtime_options(
+    settings: Settings,
+    mode: SelectedMode,
+    *,
+    max_tokens_override: int | None = None,
+) -> dict[str, int | float]:
+    context = settings.quick_context if mode is SelectedMode.QUICK else settings.deep_context
+    thread_limit = settings.quick_threads if mode is SelectedMode.QUICK else settings.deep_threads
+    configured_max_tokens = (
+        settings.quick_max_tokens if mode is SelectedMode.QUICK else settings.deep_max_tokens
     )
     max_tokens = (
-        settings.quick_max_tokens
-        if mode is SelectedMode.QUICK
-        else settings.deep_max_tokens
+        max(1, min(configured_max_tokens, max_tokens_override))
+        if max_tokens_override is not None
+        else configured_max_tokens
     )
     return {
         "num_ctx": context,
@@ -189,6 +185,70 @@ class OllamaClient:
         )
         return OllamaStatus(True, installed, loaded)
 
+    async def structured_json(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        schema: dict[str, Any],
+        max_tokens: int = 192,
+    ) -> dict[str, Any]:
+        """Run one compact deterministic inference for pre-answer reasoning.
+
+        Ollama already receives the JSON Schema through ``format``. Repeating the full
+        schema inside the user prompt wastes prompt-evaluation time, so the prompt only
+        carries the reasoning task and ontology context.
+        """
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": user_prompt + "\n\nDevolvé exclusivamente el objeto JSON solicitado.",
+                },
+            ],
+            "stream": False,
+            "format": schema,
+            "think": False,
+            "keep_alive": self.settings.keep_alive,
+            "options": {
+                "num_ctx": min(self.settings.quick_context, 4096),
+                "num_thread": self.settings.quick_threads,
+                "num_predict": max_tokens,
+                "temperature": 0.0,
+            },
+        }
+        planner_timeout = httpx.Timeout(min(float(self.settings.request_timeout_seconds), 20.0))
+        try:
+            async with httpx.AsyncClient(timeout=planner_timeout) as client:
+                response = await client.post(
+                    f"{self.settings.ollama_base_url}/api/chat",
+                    json=payload,
+                )
+                if response.status_code == 404:
+                    raise ModelNotInstalledError(model)
+                response.raise_for_status()
+                data = response.json()
+        except ModelNotInstalledError:
+            raise
+        except (httpx.HTTPError, ValueError) as exc:
+            raise OllamaUnavailableError(
+                "No se pudo completar la planificación estructurada con Ollama."
+            ) from exc
+
+        content = str(data.get("message", {}).get("content", "")).strip()
+        if not content:
+            raise OllamaUnavailableError("El planificador devolvió una respuesta vacía.")
+        try:
+            parsed = json.loads(content)
+        except ValueError as exc:
+            raise OllamaUnavailableError("El planificador devolvió JSON inválido.") from exc
+        if not isinstance(parsed, dict):
+            raise OllamaUnavailableError("El planificador no devolvió un objeto JSON.")
+        return parsed
+
     async def chat(
         self,
         *,
@@ -196,6 +256,7 @@ class OllamaClient:
         mode: SelectedMode,
         messages: list[ChatMessage],
         system_prompt: str,
+        max_tokens_override: int | None = None,
     ) -> OllamaResult:
         content_parts: list[str] = []
         final_event: OllamaStreamEvent | None = None
@@ -204,6 +265,7 @@ class OllamaClient:
             mode=mode,
             messages=messages,
             system_prompt=system_prompt,
+            max_tokens_override=max_tokens_override,
         ):
             if event.content:
                 content_parts.append(event.content)
@@ -235,8 +297,13 @@ class OllamaClient:
         mode: SelectedMode,
         messages: list[ChatMessage],
         system_prompt: str,
+        max_tokens_override: int | None = None,
     ) -> AsyncIterator[OllamaStreamEvent]:
-        options = runtime_options(self.settings, mode)
+        options = runtime_options(
+            self.settings,
+            mode,
+            max_tokens_override=max_tokens_override,
+        )
         thread_limit = int(options["num_thread"])
         selected_messages = select_history(self.settings, mode, messages)
         payload: dict[str, Any] = {
@@ -249,9 +316,7 @@ class OllamaClient:
                 ],
             ],
             "stream": True,
-            # Both modes avoid hidden reasoning tokens. Profundo gains quality from
-            # the larger model, context and answer budget instead.
-            "think": False,
+            "think": mode is SelectedMode.DEEP and self.settings.deep_thinking_enabled,
             "keep_alive": self.settings.keep_alive,
             "options": options,
         }
@@ -318,5 +383,4 @@ class OllamaClient:
                     json={"model": loaded_model, "keep_alive": 0},
                 )
         except (httpx.HTTPError, ValueError):
-            # The main chat request will still provide the authoritative error.
             return

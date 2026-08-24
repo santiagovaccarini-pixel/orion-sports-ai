@@ -11,10 +11,36 @@ from fastapi.testclient import TestClient
 from backend.app.api.routes import PreparedChat, require_api_key
 from backend.app.api.routes import _insufficient_web_response, _web_is_insufficient
 from backend.app.core.config import Settings
+from backend.app.domain.intent import SemanticPlan
 from backend.app.domain.models import SelectedMode
 from backend.app.domain.schemas import ChatRequest, SportContext
 from backend.app.main import app
 from backend.app.providers.ollama import OllamaStreamEvent
+
+
+def fake_semantic_plan(**overrides) -> SemanticPlan:
+    payload = {
+        "literal_request": "Consulta de prueba",
+        "user_goal": "Resolver una consulta de prueba",
+        "domain": "general",
+        "task_type": "direct_answer",
+        "concepts": [],
+        "retrieval_queries": ["consulta de prueba"],
+        "missing_variables": [],
+        "needs_global_knowledge": True,
+        "needs_private_memory": False,
+        "needs_local_data": False,
+        "needs_web": False,
+        "comparison": False,
+        "causal_claim_risk": False,
+        "requires_clarification": False,
+        "referenced_previous_context": False,
+        "ambiguity": 0.1,
+        "complexity": 0.2,
+        "confidence": 0.9,
+    }
+    payload.update(overrides)
+    return SemanticPlan(**payload)
 
 
 async def fake_prepare_chat(*_args, **_kwargs) -> PreparedChat:
@@ -24,6 +50,7 @@ async def fake_prepare_chat(*_args, **_kwargs) -> PreparedChat:
         recommendation_reason="Consulta directa.",
         model="qwen3:4b-instruct",
         sport=SportContext.FOOTBALL,
+        semantic_plan=fake_semantic_plan(),
     )
 
 
@@ -68,6 +95,7 @@ class StreamRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("información preliminar", events[1]["content"])
         model.assert_not_called()
+
     def test_api_key_is_required_when_configured(self) -> None:
         with patch(
             "backend.app.api.routes.get_settings",
@@ -156,6 +184,18 @@ class StreamRouteTests(unittest.TestCase):
         self.assertEqual(events[1]["chart"], chart)
 
     def test_web_research_context_is_passed_to_prompt_when_enabled(self) -> None:
+        prepared = PreparedChat(
+            selected_mode=SelectedMode.QUICK,
+            recommended_mode=SelectedMode.QUICK,
+            recommendation_reason="Consulta actual.",
+            model="qwen3:4b-instruct",
+            sport=SportContext.FOOTBALL,
+            semantic_plan=fake_semantic_plan(
+                task_type="research",
+                needs_web=True,
+                user_goal="Buscar fuentes actuales sobre fuera de juego",
+            ),
+        )
         with patch(
             "backend.app.api.routes.build_system_prompt",
             return_value="PROMPT DE PRUEBA",
@@ -170,7 +210,11 @@ class StreamRouteTests(unittest.TestCase):
             request = ChatRequest(
                 messages=[{"role": "user", "content": "Buscá fuentes actuales sobre fuera de juego"}],
             )
-            context = asyncio.run(__import__("backend.app.api.routes", fromlist=["_web_context"])._web_context(request))
+            context = asyncio.run(
+                __import__("backend.app.api.routes", fromlist=["_web_context"])._web_context(
+                    request, prepared
+                )
+            )
 
         self.assertIn("INVESTIGACIÓN WEB INSUFICIENTE", context)
 
