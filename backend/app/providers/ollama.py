@@ -104,7 +104,12 @@ def parse_stream_payload(
     )
 
 
-def runtime_options(settings: Settings, mode: SelectedMode) -> dict[str, int | float]:
+def runtime_options(
+    settings: Settings,
+    mode: SelectedMode,
+    *,
+    max_tokens_override: int | None = None,
+) -> dict[str, int | float]:
     context = (
         settings.quick_context
         if mode is SelectedMode.QUICK
@@ -115,10 +120,15 @@ def runtime_options(settings: Settings, mode: SelectedMode) -> dict[str, int | f
         if mode is SelectedMode.QUICK
         else settings.deep_threads
     )
-    max_tokens = (
+    configured_max_tokens = (
         settings.quick_max_tokens
         if mode is SelectedMode.QUICK
         else settings.deep_max_tokens
+    )
+    max_tokens = (
+        max(1, min(configured_max_tokens, max_tokens_override))
+        if max_tokens_override is not None
+        else configured_max_tokens
     )
     return {
         "num_ctx": context,
@@ -266,6 +276,7 @@ class OllamaClient:
         mode: SelectedMode,
         messages: list[ChatMessage],
         system_prompt: str,
+        max_tokens_override: int | None = None,
     ) -> OllamaResult:
         content_parts: list[str] = []
         final_event: OllamaStreamEvent | None = None
@@ -274,6 +285,7 @@ class OllamaClient:
             mode=mode,
             messages=messages,
             system_prompt=system_prompt,
+            max_tokens_override=max_tokens_override,
         ):
             if event.content:
                 content_parts.append(event.content)
@@ -305,8 +317,13 @@ class OllamaClient:
         mode: SelectedMode,
         messages: list[ChatMessage],
         system_prompt: str,
+        max_tokens_override: int | None = None,
     ) -> AsyncIterator[OllamaStreamEvent]:
-        options = runtime_options(self.settings, mode)
+        options = runtime_options(
+            self.settings,
+            mode,
+            max_tokens_override=max_tokens_override,
+        )
         thread_limit = int(options["num_thread"])
         selected_messages = select_history(self.settings, mode, messages)
         payload: dict[str, Any] = {
