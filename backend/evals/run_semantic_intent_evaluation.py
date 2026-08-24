@@ -39,6 +39,7 @@ def _score(plan: Any, expected: dict[str, Any]) -> tuple[int, int, list[str]]:
 
     for field in (
         "task_type",
+        "inference_type",
         "comparison",
         "causal_claim_risk",
         "needs_private_memory",
@@ -66,7 +67,12 @@ def _score(plan: Any, expected: dict[str, Any]) -> tuple[int, int, list[str]]:
                 f"domain: esperado alguno de {expected_domains!r}, actual={plan.domain!r}"
             )
 
-    semantic_values = [*plan.concepts, *plan.retrieval_queries, plan.user_goal]
+    semantic_values = [
+        *plan.concept_ids,
+        *plan.concepts,
+        *plan.retrieval_queries,
+        plan.user_goal,
+    ]
     if expected_concepts := expected.get("concepts_any"):
         total += 1
         if _contains_any(semantic_values, expected_concepts):
@@ -74,7 +80,7 @@ def _score(plan: Any, expected: dict[str, Any]) -> tuple[int, int, list[str]]:
         else:
             failures.append(
                 "concepts_any: no apareció ninguno de "
-                f"{expected_concepts!r}; actual={plan.concepts!r}"
+                f"{expected_concepts!r}; ids={plan.concept_ids!r}; labels={plan.concepts!r}"
             )
 
     if concept_groups := expected.get("concepts_all"):
@@ -84,7 +90,7 @@ def _score(plan: Any, expected: dict[str, Any]) -> tuple[int, int, list[str]]:
         else:
             failures.append(
                 "concepts_all: no se cubrieron todos los grupos "
-                f"{concept_groups!r}; actual={plan.concepts!r}"
+                f"{concept_groups!r}; ids={plan.concept_ids!r}; labels={plan.concepts!r}"
             )
 
     if minimum := expected.get("complexity_min"):
@@ -138,13 +144,14 @@ async def run(dataset: str = "core", limit: int | None = None) -> int:
 
         print(
             f"[{status}] {case['id']}: {passed}/{checks} | "
-            f"task={plan.task_type} domain={plan.domain} "
+            f"task={plan.task_type} inference={plan.inference_type} domain={plan.domain} "
             f"complexity={plan.complexity:.2f} ambiguity={plan.ambiguity:.2f} "
             f"confidence={plan.confidence:.2f}"
         )
         for failure in failures:
             print(f"    - {failure}")
         print(f"    objetivo: {plan.user_goal}")
+        print(f"    concept_ids: {', '.join(plan.concept_ids) or '-'}")
         print(f"    conceptos: {', '.join(plan.concepts) or '-'}")
 
     accuracy = (total_passed / total_checks * 100.0) if total_checks else 0.0
@@ -157,7 +164,7 @@ async def run(dataset: str = "core", limit: int | None = None) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Evalúa si el Semantic Planner de Orion entiende la intención deportiva."
+        description="Evalúa intención, inferencia y selección conceptual de Orion."
     )
     parser.add_argument("--dataset", choices=tuple(DATASETS), default="core")
     parser.add_argument("--limit", type=int, default=None)
