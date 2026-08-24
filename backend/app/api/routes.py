@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from dataclasses import asdict
-from dataclasses import dataclass
+from contextlib import asynccontextmanager
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 
 from backend.app.core.config import get_settings
 from backend.app.core.prompt import build_system_prompt
+from backend.app.domain.models import SelectedMode
 from backend.app.domain.schemas import (
     ChatRequest,
     ChatResponse,
@@ -23,19 +24,13 @@ from backend.app.domain.schemas import (
     StatusResponse,
     SystemSnapshotResponse,
 )
-from backend.app.domain.models import SelectedMode
-from backend.app.providers.ollama import (
-    ModelNotInstalledError,
-    OllamaClient,
-    OllamaUnavailableError,
+from backend.app.providers.model_provider import (
+    ModelProvider,
+    ModelProviderConfigurationError,
+    ModelProviderModelError,
+    ModelProviderUnavailableError,
+    create_model_provider,
 )
-from backend.app.services.mode_router import recommend_mode
-from backend.app.services.resource_guard import (
-    lower_ollama_priority,
-    maintain_ollama_priority,
-    read_snapshot,
-)
-from backend.app.services.resource_policy import evaluate_resources
 from backend.app.services.knowledge_base import (
     KnowledgeBase,
     KnowledgeDocument,
@@ -47,20 +42,32 @@ from backend.app.services.knowledge_base import (
     csv_tool_result,
     format_context,
 )
-from backend.app.services.web_research import format_sources, is_web_request, research
+from backend.app.services.mode_router import recommend_mode
 from backend.app.services.orchestrator import OrchestrationPlan, create_plan
+from backend.app.services.resource_guard import (
+    lower_ollama_priority,
+    maintain_ollama_priority,
+    read_snapshot,
+)
+from backend.app.services.resource_policy import evaluate_resources
+from backend.app.services.web_research import format_sources, research
 
 
 router = APIRouter()
 chat_lock = asyncio.Lock()
 
 
-def require_api_key(api_key: str | None = Header(default=None, alias="X-Orion-Api-Key")) -> None:
+def require_api_key(
+    api_key: str | None = Header(default=None, alias="X-Orion-Api-Key"),
+) -> None:
     configured_key = get_settings().api_key
     if configured_key is not None and api_key != configured_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "invalid_api_key", "message": "La clave de Orion no es válida."},
+            detail={
+                "code": "invalid_api_key",
+                "message": "La clave de Orion no es válida.",
+            },
         )
 
 
@@ -79,13 +86,66 @@ def _ndjson(payload: dict[str, object]) -> bytes:
     ).encode("utf-8")
 
 
-def _model_is_installed(model: str, installed_models: tuple[str, ...]) -> bool:
-    return any(
-        installed == model
-        or installed.startswith(f"{model}:")
-        or model.startswith(f"{installed}:")
-        for installed in installed_models
+def _provider_or_http_error() -> ModelProvider:
+    try:
+        return create_model_provider(get_settings())
+    except ModelProviderConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "provider_configuration_error",
+                "message": str(exc),
+            },
+        ) from exc
+
+
+def _provider_http_exception(exc: Exception) -> HTTPException:
+    if isinstance(exc, ModelProviderModelError):
+        return HTTPException(
+            status_code=status.HTTP_424_FAILED_DEPENDENCY,
+            detail={
+                "code": "model_not_installed",
+                "message": (
+                    f"Falta instalar o habilitar {exc.model}. "
+                    "Orion no descargará ni contratará modelos sin autorización."
+                ),
+                "model": exc.model,
+            },
+        )
+    if isinstance(exc, ModelProviderConfigurationError):
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "provider_configuration_error",
+                "message": str(exc),
+            },
+        )
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={
+            "code": "model_provider_unavailable",
+            "message": str(exc),
+        },
     )
+
+
+@asynccontextmanager
+async def _provider_runtime(provider: ModelProvider) -> AsyncIterator[None]:
+    """Apply PC protection only when inference is actually running locally."""
+
+    if not provider.uses_local_resources:
+        yield
+        return
+
+    async with chat_lock:
+        lower_ollama_priority()
+        priority_stop = asyncio.Event()
+        priority_task = asyncio.create_task(maintain_ollama_priority(priority_stop))
+        try:
+            yield
+        finally:
+            priority_stop.set()
+            await priority_task
 
 
 def _knowledge_prompt(
@@ -117,19 +177,20 @@ def _knowledge_prompt(
     tool_results = ""
     overviews = ""
     for document in csv_documents:
-        if document.name.lower().endswith(".csv"):
-            if plan.use_local_data:
-                overviews += csv_overview(document.content, document.name)
-            if plan.use_local_data and not ambiguous_csv:
-                calculations += csv_calculation(document.content, query)
-                tool_results += csv_tool_result(document.content, query, document.name)
+        if plan.use_local_data:
+            overviews += csv_overview(document.content, document.name)
+        if plan.use_local_data and not ambiguous_csv:
+            calculations += csv_calculation(document.content, query)
+            tool_results += csv_tool_result(document.content, query, document.name)
     if ambiguous_csv:
         overviews += (
             "ACLARACIÓN OBLIGATORIA: la petición no define qué jugador, columna, "
             "período o cálculo necesita el usuario. No analices ni resumas todavía. "
             "Preguntá qué dato desea consultar y ofrecé ejemplos usando las columnas detectadas.\n"
         )
-    if plan.use_chart and any(csv_chart_is_ambiguous(document.content, query) for document in csv_documents):
+    if plan.use_chart and any(
+        csv_chart_is_ambiguous(document.content, query) for document in csv_documents
+    ):
         overviews += (
             "ACLARACIÓN PARA EL GRÁFICO: indicá qué jugador o entidad, qué columna "
             "y qué período querés visualizar. Orion puede generar un gráfico local "
@@ -144,12 +205,18 @@ def _knowledge_prompt(
             f"{json.dumps(chart, ensure_ascii=False)}\n"
         )
     extra = "\n".join(
-        item for item in (web_context, overviews, tool_results, calculations, formatted) if item
+        item
+        for item in (web_context, overviews, tool_results, calculations, formatted)
+        if item
     )
     return f"{base_prompt}\n\n{extra}" if extra else base_prompt
 
 
-def _create_orchestration_plan(query: str, *, web_requested: bool = False) -> OrchestrationPlan:
+def _create_orchestration_plan(
+    query: str,
+    *,
+    web_requested: bool = False,
+) -> OrchestrationPlan:
     documents = KnowledgeBase(Path(get_settings().knowledge_path)).list_documents()
     plan = create_plan(query, has_local_documents=bool(documents))
     if web_requested and not plan.use_web:
@@ -176,11 +243,12 @@ async def _web_context(request: ChatRequest) -> str:
         allowed_domains=settings.web_allowed_domains,
         minimum_sources=settings.web_minimum_sources,
     )
-    formatted_sources = format_sources(sources, minimum_sources=settings.web_minimum_sources)
-    return formatted_sources
+    return format_sources(sources, minimum_sources=settings.web_minimum_sources)
+
 
 def _web_is_insufficient(context: str) -> bool:
     return context.startswith("INVESTIGACIÓN WEB INSUFICIENTE:")
+
 
 def _insufficient_web_response(context: str) -> str:
     return (
@@ -205,65 +273,56 @@ def _knowledge_chart(request: ChatRequest) -> dict[str, object] | None:
     return None
 
 
-async def _prepare_chat(request: ChatRequest, *, preflight_model: bool) -> PreparedChat:
-    settings = get_settings()
+async def _prepare_chat(
+    request: ChatRequest,
+    *,
+    preflight_model: bool,
+    provider: ModelProvider | None = None,
+) -> PreparedChat:
     recommendation = recommend_mode(request.messages)
     selected_mode = (
         recommendation.mode
         if request.mode is RequestedMode.AUTO
         else SelectedMode(request.mode.value)
     )
-    snapshot = read_snapshot()
-    resource_decision = evaluate_resources(selected_mode, snapshot)
+    provider = provider or _provider_or_http_error()
 
-    if resource_decision.requires_confirmation and not request.allow_busy:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "resource_confirmation_required",
-                "message": (
-                    "Orion recomienda esperar o utilizar el modo Rápido para no afectar "
-                    "las demás aplicaciones."
-                ),
-                "reasons": list(resource_decision.reasons),
-                "selected_mode": selected_mode.value,
-                "recommended_mode": recommendation.mode.value,
-                "snapshot": asdict(snapshot),
-            },
-        )
-
-    model = (
-        settings.quick_model
-        if selected_mode is SelectedMode.QUICK
-        else settings.deep_model
-    )
-    if preflight_model:
-        ollama = await OllamaClient(settings).status()
-        if not ollama.online:
+    # A cloud model does not consume the user's CPU/RAM, so local resource pressure
+    # must never block a cloud request.
+    if provider.uses_local_resources:
+        snapshot = read_snapshot()
+        resource_decision = evaluate_resources(selected_mode, snapshot)
+        if resource_decision.requires_confirmation and not request.allow_busy:
             raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                status_code=status.HTTP_409_CONFLICT,
                 detail={
-                    "code": "ollama_unavailable",
-                    "message": "No se pudo conectar con Ollama en esta computadora.",
-                },
-            )
-        if not _model_is_installed(model, ollama.installed_models):
-            raise HTTPException(
-                status_code=status.HTTP_424_FAILED_DEPENDENCY,
-                detail={
-                    "code": "model_not_installed",
+                    "code": "resource_confirmation_required",
                     "message": (
-                        f"Falta instalar {model}. Orion no descargará modelos sin tu autorización."
+                        "Orion recomienda esperar o utilizar el modo Rápido para no afectar "
+                        "las demás aplicaciones."
                     ),
-                    "model": model,
+                    "reasons": list(resource_decision.reasons),
+                    "selected_mode": selected_mode.value,
+                    "recommended_mode": recommendation.mode.value,
+                    "snapshot": asdict(snapshot),
                 },
             )
+
+    if preflight_model:
+        try:
+            await provider.preflight(selected_mode)
+        except (
+            ModelProviderConfigurationError,
+            ModelProviderModelError,
+            ModelProviderUnavailableError,
+        ) as exc:
+            raise _provider_http_exception(exc) from exc
 
     return PreparedChat(
         selected_mode=selected_mode,
         recommended_mode=recommendation.mode,
         recommendation_reason=recommendation.reason,
-        model=model,
+        model=provider.model_for(selected_mode),
         sport=request.sport,
     )
 
@@ -273,35 +332,65 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@router.get("/knowledge/documents", response_model=list[KnowledgeDocumentResponse], dependencies=[Depends(require_api_key)])
+@router.get(
+    "/knowledge/documents",
+    response_model=list[KnowledgeDocumentResponse],
+    dependencies=[Depends(require_api_key)],
+)
 async def list_knowledge_documents() -> list[KnowledgeDocumentResponse]:
     documents = KnowledgeBase(Path(get_settings().knowledge_path)).list_documents()
-    return [KnowledgeDocumentResponse(id=item.id, name=item.name, characters=len(item.content)) for item in documents]
+    return [
+        KnowledgeDocumentResponse(
+            id=item.id,
+            name=item.name,
+            characters=len(item.content),
+        )
+        for item in documents
+    ]
 
 
-@router.post("/knowledge/documents", response_model=KnowledgeDocumentResponse, dependencies=[Depends(require_api_key)])
-async def add_knowledge_document(request: KnowledgeDocumentRequest) -> KnowledgeDocumentResponse:
+@router.post(
+    "/knowledge/documents",
+    response_model=KnowledgeDocumentResponse,
+    dependencies=[Depends(require_api_key)],
+)
+async def add_knowledge_document(
+    request: KnowledgeDocumentRequest,
+) -> KnowledgeDocumentResponse:
     document_id = hashlib.sha256(
         f"{request.name}\0{request.content}".encode("utf-8")
     ).hexdigest()[:16]
-    document = KnowledgeDocument(document_id, request.name.strip(), request.content.strip())
+    document = KnowledgeDocument(
+        document_id,
+        request.name.strip(),
+        request.content.strip(),
+    )
     KnowledgeBase(Path(get_settings().knowledge_path)).add_document(document)
-    return KnowledgeDocumentResponse(id=document.id, name=document.name, characters=len(document.content))
+    return KnowledgeDocumentResponse(
+        id=document.id,
+        name=document.name,
+        characters=len(document.content),
+    )
 
 
-@router.get("/status", response_model=StatusResponse, dependencies=[Depends(require_api_key)])
+@router.get(
+    "/status",
+    response_model=StatusResponse,
+    dependencies=[Depends(require_api_key)],
+)
 async def system_status() -> StatusResponse:
     settings = get_settings()
-    ollama = await OllamaClient(settings).status()
+    provider = _provider_or_http_error()
+    provider_status = await provider.status()
     return StatusResponse(
         version=settings.version,
-        ollama_online=ollama.online,
-        installed_models=list(ollama.installed_models),
-        loaded_models=list(ollama.loaded_models),
-        quick_model=settings.quick_model,
-        deep_model=settings.deep_model,
-        quick_threads=settings.quick_threads,
-        deep_threads=settings.deep_threads,
+        ollama_online=(provider.name == "ollama" and provider_status.online),
+        installed_models=list(provider_status.installed_models),
+        loaded_models=list(provider_status.loaded_models),
+        quick_model=provider.model_for(SelectedMode.QUICK),
+        deep_model=provider.model_for(SelectedMode.DEEP),
+        quick_threads=settings.quick_threads if provider.uses_local_resources else 0,
+        deep_threads=settings.deep_threads if provider.uses_local_resources else 0,
         snapshot=SystemSnapshotResponse(**asdict(read_snapshot())),
         web_enabled=settings.web_enabled,
         web_minimum_sources=settings.web_minimum_sources,
@@ -314,8 +403,12 @@ async def system_status() -> StatusResponse:
     dependencies=[Depends(require_api_key)],
 )
 async def chat(request: ChatRequest) -> ChatResponse:
-    settings = get_settings()
-    prepared = await _prepare_chat(request, preflight_model=False)
+    provider = _provider_or_http_error()
+    prepared = await _prepare_chat(
+        request,
+        preflight_model=False,
+        provider=provider,
+    )
     web_context = await _web_context(request)
     if _web_is_insufficient(web_context):
         return ChatResponse(
@@ -336,36 +429,18 @@ async def chat(request: ChatRequest) -> ChatResponse:
         )
 
     try:
-        async with chat_lock:
-            lower_ollama_priority()
-            priority_stop = asyncio.Event()
-            priority_task = asyncio.create_task(
-                maintain_ollama_priority(priority_stop)
+        async with _provider_runtime(provider):
+            result = await provider.chat(
+                mode=prepared.selected_mode,
+                messages=request.messages,
+                system_prompt=_knowledge_prompt(request, prepared, web_context),
             )
-            try:
-                result = await OllamaClient(settings).chat(
-                    model=prepared.model,
-                    mode=prepared.selected_mode,
-                    messages=request.messages,
-                    system_prompt=_knowledge_prompt(request, prepared, web_context),
-                )
-            finally:
-                priority_stop.set()
-                await priority_task
-    except ModelNotInstalledError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_424_FAILED_DEPENDENCY,
-            detail={
-                "code": "model_not_installed",
-                "message": f"Falta instalar {exc.model}. Orion no descargará modelos sin tu autorización.",
-                "model": exc.model,
-            },
-        ) from exc
-    except OllamaUnavailableError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "ollama_unavailable", "message": str(exc)},
-        ) from exc
+    except (
+        ModelProviderConfigurationError,
+        ModelProviderModelError,
+        ModelProviderUnavailableError,
+    ) as exc:
+        raise _provider_http_exception(exc) from exc
 
     return ChatResponse(
         content=result.content,
@@ -373,7 +448,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
         selected_mode=prepared.selected_mode,
         recommended_mode=prepared.recommended_mode,
         recommendation_reason=prepared.recommendation_reason,
-        model=prepared.model,
+        model=result.model,
         total_duration_ms=result.total_duration_ms,
         load_duration_ms=result.load_duration_ms,
         prompt_eval_duration_ms=result.prompt_eval_duration_ms,
@@ -390,8 +465,12 @@ async def chat(request: ChatRequest) -> ChatResponse:
     dependencies=[Depends(require_api_key)],
 )
 async def chat_stream(request: ChatRequest) -> StreamingResponse:
-    settings = get_settings()
-    prepared = await _prepare_chat(request, preflight_model=True)
+    provider = _provider_or_http_error()
+    prepared = await _prepare_chat(
+        request,
+        preflight_model=True,
+        provider=provider,
+    )
     web_context = await _web_context(request)
 
     async def generate() -> AsyncIterator[bytes]:
@@ -409,7 +488,10 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
             yield _ndjson({"type": "chart", "chart": chart})
         if _web_is_insufficient(web_context):
             yield _ndjson(
-                {"type": "content", "content": _insufficient_web_response(web_context)}
+                {
+                    "type": "content",
+                    "content": _insufficient_web_response(web_context),
+                }
             )
             yield _ndjson(
                 {
@@ -427,57 +509,55 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
             return
 
         try:
-            async with chat_lock:
-                lower_ollama_priority()
-                priority_stop = asyncio.Event()
-                priority_task = asyncio.create_task(
-                    maintain_ollama_priority(priority_stop)
-                )
-                try:
-                    async for event in OllamaClient(settings).chat_stream(
-                        model=prepared.model,
-                        mode=prepared.selected_mode,
-                        messages=request.messages,
-                        system_prompt=_knowledge_prompt(request, prepared, web_context),
-                    ):
-                        if event.content:
-                            yield _ndjson(
-                                {"type": "content", "content": event.content}
-                            )
-                        if event.done:
-                            yield _ndjson(
-                                {
-                                    "type": "done",
-                                    "total_duration_ms": event.total_duration_ms,
-                                    "load_duration_ms": event.load_duration_ms,
-                                    "prompt_eval_duration_ms": (
-                                        event.prompt_eval_duration_ms
-                                    ),
-                                    "eval_duration_ms": event.eval_duration_ms,
-                                    "prompt_tokens": event.prompt_tokens,
-                                    "completion_tokens": event.completion_tokens,
-                                    "tokens_per_second": event.tokens_per_second,
-                                    "thread_limit": event.thread_limit,
-                                }
-                            )
-                finally:
-                    priority_stop.set()
-                    await priority_task
+            async with _provider_runtime(provider):
+                async for event in provider.chat_stream(
+                    mode=prepared.selected_mode,
+                    messages=request.messages,
+                    system_prompt=_knowledge_prompt(request, prepared, web_context),
+                ):
+                    if event.content:
+                        yield _ndjson(
+                            {"type": "content", "content": event.content}
+                        )
+                    if event.done:
+                        yield _ndjson(
+                            {
+                                "type": "done",
+                                "total_duration_ms": event.total_duration_ms,
+                                "load_duration_ms": event.load_duration_ms,
+                                "prompt_eval_duration_ms": (
+                                    event.prompt_eval_duration_ms
+                                ),
+                                "eval_duration_ms": event.eval_duration_ms,
+                                "prompt_tokens": event.prompt_tokens,
+                                "completion_tokens": event.completion_tokens,
+                                "tokens_per_second": event.tokens_per_second,
+                                "thread_limit": event.thread_limit,
+                            }
+                        )
         except asyncio.CancelledError:
             raise
-        except ModelNotInstalledError as exc:
+        except ModelProviderModelError as exc:
             yield _ndjson(
                 {
                     "type": "error",
                     "code": "model_not_installed",
-                    "message": f"Falta instalar {exc.model}.",
+                    "message": f"Falta instalar o habilitar {exc.model}.",
                 }
             )
-        except OllamaUnavailableError as exc:
+        except ModelProviderConfigurationError as exc:
             yield _ndjson(
                 {
                     "type": "error",
-                    "code": "ollama_unavailable",
+                    "code": "provider_configuration_error",
+                    "message": str(exc),
+                }
+            )
+        except ModelProviderUnavailableError as exc:
+            yield _ndjson(
+                {
+                    "type": "error",
+                    "code": "model_provider_unavailable",
                     "message": str(exc),
                 }
             )
