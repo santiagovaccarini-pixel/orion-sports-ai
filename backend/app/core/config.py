@@ -59,7 +59,7 @@ class Settings:
     quick_history_characters: int = 12_000
     deep_history_characters: int = 30_000
     semantic_planner_enabled: bool = True
-    semantic_planner_max_tokens: int = 192
+    semantic_planner_max_tokens: int = 256
     deep_thinking_enabled: bool = True
     keep_alive: str = "10m"
     request_timeout_seconds: int = 300
@@ -100,7 +100,7 @@ def get_settings() -> Settings:
         ),
         semantic_planner_enabled=_read_bool("ORION_SEMANTIC_PLANNER_ENABLED", True),
         semantic_planner_max_tokens=_read_positive_int(
-            "ORION_SEMANTIC_PLANNER_MAX_TOKENS", 192
+            "ORION_SEMANTIC_PLANNER_MAX_TOKENS", 256
         ),
         deep_thinking_enabled=_read_bool("ORION_DEEP_THINKING_ENABLED", True),
         keep_alive=os.getenv("ORION_KEEP_ALIVE", "10m"),
