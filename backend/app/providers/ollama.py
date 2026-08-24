@@ -200,16 +200,20 @@ class OllamaClient:
     ) -> dict[str, Any]:
         """Run a short, deterministic structured inference for routing/planning.
 
-        This intentionally does not unload another model first. The planner is a
-        lightweight pre-pass and the main chat request remains responsible for the
-        final resource policy. If planning fails, callers can safely fall back to
-        deterministic routing.
+        Planning is intentionally bounded: a planner failure must not block the main
+        chat, and callers can safely fall back to deterministic routing.
         """
+        schema_text = json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
+        grounded_prompt = (
+            f"{user_prompt}\n\n"
+            "Respondé exclusivamente con un JSON que cumpla este esquema:\n"
+            f"{schema_text}"
+        )
         payload: dict[str, Any] = {
             "model": model,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
+                {"role": "user", "content": grounded_prompt},
             ],
             "stream": False,
             "format": schema,
@@ -222,8 +226,11 @@ class OllamaClient:
                 "temperature": 0.0,
             },
         }
+        planner_timeout = httpx.Timeout(
+            min(float(self.settings.request_timeout_seconds), 20.0)
+        )
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=planner_timeout) as client:
                 response = await client.post(
                     f"{self.settings.ollama_base_url}/api/chat",
                     json=payload,
