@@ -39,6 +39,7 @@ class SemanticPlannerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(plan.referenced_previous_context)
         self.assertEqual(plan.domain, "physical_performance")
+        self.assertEqual(plan.task_type, "interpretation")
         self.assertIn("HSR", plan.concepts)
         self.assertIn("match exposure", plan.concepts)
         self.assertGreaterEqual(plan.complexity, 0.4)
@@ -89,6 +90,7 @@ class SemanticPlannerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertTrue(plan.referenced_previous_context)
+        self.assertEqual(plan.task_type, "interpretation")
         self.assertEqual(plan.domain, "tactical_analysis")
         self.assertIn("high press", plan.concepts)
         self.assertIn("long ball", plan.concepts)
@@ -98,10 +100,33 @@ class SemanticPlannerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(plan.task_type, "definition")
         self.assertEqual(plan.domain, "internal_load")
+        self.assertFalse(plan.needs_web)
         self.assertFalse(plan.causal_claim_risk)
         self.assertLessEqual(plan.complexity, 0.35)
         self.assertIn("RPE", plan.concepts)
         self.assertIn("rating of perceived exertion", plan.concepts)
+
+    async def test_current_load_research_maps_to_monitoring_concepts(self) -> None:
+        plan = await self._fallback(
+            "Buscá fuentes actuales y estudios recientes sobre monitoreo de carga en fútbol."
+        )
+
+        self.assertEqual(plan.task_type, "research")
+        self.assertTrue(plan.needs_web)
+        self.assertTrue(plan.needs_global_knowledge)
+        self.assertIn("training load", plan.concepts)
+        self.assertIn("load monitoring", plan.concepts)
+
+    async def test_local_distance_chart_keeps_metric_and_period_semantics(self) -> None:
+        plan = await self._fallback(
+            "Graficame la distancia total de este jugador por período en el archivo.",
+            local=True,
+        )
+
+        self.assertEqual(plan.task_type, "chart")
+        self.assertTrue(plan.needs_local_data)
+        self.assertIn("total distance", plan.concepts)
+        self.assertIn("period", plan.concepts)
 
     async def test_injury_load_question_is_marked_as_causal_inference(self) -> None:
         plan = await self._fallback(
