@@ -34,10 +34,17 @@ def _read_positive_int(name: str, default: int) -> int:
     return value
 
 
+def _read_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on", "si", "sí"}
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     app_name: str = "Orion Local Core"
-    version: str = "0.1.3"
+    version: str = "0.1.4"
     host: str = "127.0.0.1"
     port: int = 8765
     ollama_base_url: str = "http://127.0.0.1:11434"
@@ -51,6 +58,9 @@ class Settings:
     deep_max_tokens: int = 1536
     quick_history_characters: int = 12_000
     deep_history_characters: int = 30_000
+    semantic_planner_enabled: bool = True
+    semantic_planner_max_tokens: int = 384
+    deep_thinking_enabled: bool = True
     keep_alive: str = "10m"
     request_timeout_seconds: int = 300
     api_key: str | None = None
@@ -88,13 +98,18 @@ def get_settings() -> Settings:
         deep_history_characters=_read_positive_int(
             "ORION_DEEP_HISTORY_CHARACTERS", 30_000
         ),
+        semantic_planner_enabled=_read_bool("ORION_SEMANTIC_PLANNER_ENABLED", True),
+        semantic_planner_max_tokens=_read_positive_int(
+            "ORION_SEMANTIC_PLANNER_MAX_TOKENS", 384
+        ),
+        deep_thinking_enabled=_read_bool("ORION_DEEP_THINKING_ENABLED", True),
         keep_alive=os.getenv("ORION_KEEP_ALIVE", "10m"),
         request_timeout_seconds=_read_int("ORION_REQUEST_TIMEOUT", 300),
         api_key=os.getenv("ORION_API_KEY") or None,
         knowledge_path=os.getenv(
             "ORION_KNOWLEDGE_PATH", ".orion-runtime/knowledge/documents.json"
         ),
-        web_enabled=os.getenv("ORION_WEB_ENABLED", "true").lower() in {"1", "true", "yes"},
+        web_enabled=_read_bool("ORION_WEB_ENABLED", True),
         web_minimum_sources=_read_positive_int("ORION_WEB_MINIMUM_SOURCES", 4),
         web_allowed_domains=tuple(
             item.strip().lower().removeprefix("www.")
