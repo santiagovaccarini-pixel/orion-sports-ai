@@ -83,13 +83,9 @@ def parse_stream_payload(
     return OllamaStreamEvent(
         content=str(payload.get("message", {}).get("content", "")),
         done=bool(payload.get("done", False)),
-        total_duration_ms=_nanoseconds_to_milliseconds(
-            payload.get("total_duration")
-        ),
+        total_duration_ms=_nanoseconds_to_milliseconds(payload.get("total_duration")),
         load_duration_ms=_nanoseconds_to_milliseconds(payload.get("load_duration")),
-        prompt_eval_duration_ms=_nanoseconds_to_milliseconds(
-            payload.get("prompt_eval_duration")
-        ),
+        prompt_eval_duration_ms=_nanoseconds_to_milliseconds(payload.get("prompt_eval_duration")),
         eval_duration_ms=_nanoseconds_to_milliseconds(eval_duration),
         prompt_tokens=(
             payload.get("prompt_eval_count")
@@ -110,20 +106,10 @@ def runtime_options(
     *,
     max_tokens_override: int | None = None,
 ) -> dict[str, int | float]:
-    context = (
-        settings.quick_context
-        if mode is SelectedMode.QUICK
-        else settings.deep_context
-    )
-    thread_limit = (
-        settings.quick_threads
-        if mode is SelectedMode.QUICK
-        else settings.deep_threads
-    )
+    context = settings.quick_context if mode is SelectedMode.QUICK else settings.deep_context
+    thread_limit = settings.quick_threads if mode is SelectedMode.QUICK else settings.deep_threads
     configured_max_tokens = (
-        settings.quick_max_tokens
-        if mode is SelectedMode.QUICK
-        else settings.deep_max_tokens
+        settings.quick_max_tokens if mode is SelectedMode.QUICK else settings.deep_max_tokens
     )
     max_tokens = (
         max(1, min(configured_max_tokens, max_tokens_override))
@@ -206,39 +192,35 @@ class OllamaClient:
         system_prompt: str,
         user_prompt: str,
         schema: dict[str, Any],
-        max_tokens: int = 384,
+        max_tokens: int = 192,
     ) -> dict[str, Any]:
-        """Run a short, deterministic structured inference for routing/planning.
+        """Run one compact deterministic inference for pre-answer reasoning.
 
-        Planning is intentionally bounded: a planner failure must not block the main
-        chat, and callers can safely fall back to deterministic routing.
+        Ollama already receives the JSON Schema through ``format``. Repeating the full
+        schema inside the user prompt wastes prompt-evaluation time, so the prompt only
+        carries the reasoning task and ontology context.
         """
-        schema_text = json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
-        grounded_prompt = (
-            f"{user_prompt}\n\n"
-            "Respondé exclusivamente con un JSON que cumpla este esquema:\n"
-            f"{schema_text}"
-        )
         payload: dict[str, Any] = {
             "model": model,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": grounded_prompt},
+                {
+                    "role": "user",
+                    "content": user_prompt + "\n\nDevolvé exclusivamente el objeto JSON solicitado.",
+                },
             ],
             "stream": False,
             "format": schema,
             "think": False,
             "keep_alive": self.settings.keep_alive,
             "options": {
-                "num_ctx": min(self.settings.quick_context, 4096),
+                "num_ctx": min(self.settings.quick_context, 2048),
                 "num_thread": self.settings.quick_threads,
                 "num_predict": max_tokens,
                 "temperature": 0.0,
             },
         }
-        planner_timeout = httpx.Timeout(
-            min(float(self.settings.request_timeout_seconds), 20.0)
-        )
+        planner_timeout = httpx.Timeout(min(float(self.settings.request_timeout_seconds), 20.0))
         try:
             async with httpx.AsyncClient(timeout=planner_timeout) as client:
                 response = await client.post(
@@ -262,9 +244,7 @@ class OllamaClient:
         try:
             parsed = json.loads(content)
         except ValueError as exc:
-            raise OllamaUnavailableError(
-                "El planificador devolvió JSON inválido."
-            ) from exc
+            raise OllamaUnavailableError("El planificador devolvió JSON inválido.") from exc
         if not isinstance(parsed, dict):
             raise OllamaUnavailableError("El planificador no devolvió un objeto JSON.")
         return parsed
@@ -336,11 +316,7 @@ class OllamaClient:
                 ],
             ],
             "stream": True,
-            # Quick stays fast. Deep may use Qwen's internal thinking channel; only
-            # final answer content is streamed to the UI by parse_stream_payload().
-            "think": (
-                mode is SelectedMode.DEEP and self.settings.deep_thinking_enabled
-            ),
+            "think": mode is SelectedMode.DEEP and self.settings.deep_thinking_enabled,
             "keep_alive": self.settings.keep_alive,
             "options": options,
         }
@@ -407,5 +383,4 @@ class OllamaClient:
                     json={"model": loaded_model, "keep_alive": 0},
                 )
         except (httpx.HTTPError, ValueError):
-            # The main chat request will still provide the authoritative error.
             return
