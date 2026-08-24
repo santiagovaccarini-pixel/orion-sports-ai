@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import unicodedata
 from pathlib import Path
 
@@ -9,6 +10,8 @@ import httpx
 
 
 CASES_PATH = Path(__file__).with_name("sports_quality_cases.json")
+FOUNDATIONS_PATH = Path(__file__).with_name("sports_foundations_cases.json")
+FOOTBALL_PATH = Path(__file__).with_name("football_cases.json")
 
 
 def normalize(value: str) -> str:
@@ -17,6 +20,8 @@ def normalize(value: str) -> str:
 
 
 def precheck(answer: str, case: dict[str, object]) -> tuple[list[list[str]], list[str]]:
+    if not answer.strip():
+        return [["respuesta con contenido"]], []
     normalized_answer = normalize(answer)
     missing_groups: list[list[str]] = []
     for raw_group in case["required_any"]:  # type: ignore[index]
@@ -47,16 +52,31 @@ def main() -> int:
         default=3,
         help="Cantidad de casos a ejecutar. Usá 8 para la batería completa.",
     )
+    parser.add_argument(
+        "--dataset",
+        choices=("quality", "foundations", "football"),
+        default="quality",
+        help="Batería a ejecutar. Usá foundations para las 10 preguntas básicas.",
+    )
     args = parser.parse_args()
 
-    cases = json.loads(CASES_PATH.read_text(encoding="utf-8"))
+    cases_path = {
+        "quality": CASES_PATH,
+        "foundations": FOUNDATIONS_PATH,
+        "football": FOOTBALL_PATH,
+    }[args.dataset]
+    cases = json.loads(cases_path.read_text(encoding="utf-8"))
     selected_cases = cases[: max(1, min(args.limit, len(cases)))]
     passed = 0
 
     print("Evaluación local de Orion · prechequeo automático")
     print("Cada respuesta requiere revisión humana aunque el prechequeo apruebe.\n")
 
-    with httpx.Client(timeout=300.0) as client:
+    headers = {}
+    if api_key := os.getenv("ORION_API_KEY"):
+        headers["X-Orion-Api-Key"] = api_key
+
+    with httpx.Client(timeout=300.0, headers=headers) as client:
         for index, case in enumerate(selected_cases, start=1):
             print(f"[{index}/{len(selected_cases)}] {case['id']}")
             response = client.post(
@@ -82,6 +102,8 @@ def main() -> int:
                     print(f"  Conceptos no detectados: {missing_groups}")
                 if forbidden_hits:
                     print(f"  Afirmaciones riesgosas detectadas: {forbidden_hits}")
+                if correction := case.get("correction"):
+                    print(f"  Corrección esperada: {correction}")
             print(f"  Respuesta: {answer}\n")
 
     print(f"Resultado preliminar: {passed}/{len(selected_cases)} casos.")

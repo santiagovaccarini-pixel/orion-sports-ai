@@ -1,0 +1,92 @@
+[
+  {
+    "id": "foundation_01_external_internal_load",
+    "category": "sports_science",
+    "mode": "quick",
+    "prompt": "¿Cuál es la diferencia entre carga externa y carga interna?",
+    "required_any": [["trabajo realizado", "trabajo prescripto", "trabajo prescrito", "trabajo prescrip", "trabajo externo", "demanda externa"], ["respuesta del organismo", "respuesta individual", "respuesta fisiológica", "respuesta fisiologica", "cómo responde", "como responde"], ["frecuencia cardíaca", "frecuencia cardiaca", "rpe"]],
+    "forbidden": ["la carga interna es solo subjetiva", "son lo mismo"],
+    "correction": "La carga externa describe el trabajo realizado o prescripto; la carga interna describe la respuesta individual a ese trabajo y puede medirse con indicadores objetivos y subjetivos."
+  },
+  {
+    "id": "foundation_02_warmup",
+    "category": "training",
+    "mode": "quick",
+    "prompt": "¿Para qué sirve un calentamiento antes de entrenar?",
+    "required_any": [["preparar", "prepara"], ["temperatura", "movilidad", "activación", "activacion"], ["rendimiento", "transición", "transicion"]],
+    "forbidden": ["garantiza que no haya lesiones", "evita todas las lesiones"],
+    "correction": "El calentamiento prepara progresivamente al organismo y la tarea: eleva la activación, mejora la movilidad específica y ayuda a entrar en el esfuerzo. No garantiza prevenir lesiones."
+  },
+  {
+    "id": "foundation_03_recovery",
+    "category": "training",
+    "mode": "quick",
+    "prompt": "¿Por qué es importante la recuperación después de entrenar?",
+    "required_any": [["adaptación", "adaptacion", "adaptarse", "recuperar"], ["fatiga"], ["sueño", "nutrición", "nutricion", "descanso", "dormir"]],
+    "forbidden": ["la recuperación no importa", "recuperarse garantiza"],
+    "correction": "La recuperación permite gestionar la fatiga y favorecer la adaptación. Incluye sueño, nutrición, hidratación y una carga posterior adecuada."
+  },
+  {
+    "id": "foundation_04_rpe",
+    "category": "monitoring",
+    "mode": "quick",
+    "prompt": "¿Qué mide el RPE?",
+    "required_any": [["percepción del esfuerzo", "percepcion del esfuerzo", "esfuerzo percibido", "esfuerzo que percibe", "percibe el esfuerzo"], ["subjetiv", "escala"]],
+    "forbidden": ["mide directamente el lactato", "es una medida objetiva de la frecuencia cardíaca"],
+    "correction": "El RPE es una valoración subjetiva de cuánto esfuerzo percibe la persona, normalmente registrada en una escala. No mide directamente lactato ni frecuencia cardíaca."
+  },
+  {
+    "id": "foundation_05_frequency_heart",
+    "category": "monitoring",
+    "mode": "quick",
+    "prompt": "¿Qué información aporta la frecuencia cardíaca durante el ejercicio?",
+    "required_any": [["respuesta cardiovascular", "respuesta del corazón", "intensidad interna", "respuesta fisiológica", "respuesta fisiologica"], ["contexto", "individual", "zona"]],
+    "forbidden": ["indica exactamente toda la carga", "mide directamente la fatiga mental"],
+    "correction": "La frecuencia cardíaca aporta información sobre la respuesta cardiovascular y puede ayudar a estimar la intensidad interna, siempre interpretada según contexto, persona y método."
+  },
+  {
+    "id": "foundation_06_external_volume",
+    "category": "sports_science",
+    "mode": "quick",
+    "prompt": "¿La carga externa es solamente el volumen?",
+    "required_any": [["no"], ["intensidad"], ["distancia", "velocidad", "potencia", "repeticiones"]],
+    "forbidden": ["sí, siempre", "la carga externa solo es volumen"],
+    "correction": "No. La carga externa puede incluir volumen e intensidad, por ejemplo distancia, velocidad, aceleraciones, potencia, repeticiones o tiempo, según la disciplina."
+  },
+  {
+    "id": "foundation_07_rest_between_sets",
+    "category": "training",
+    "mode": "quick",
+    "prompt": "¿Qué puede cambiar si reduzco mucho el descanso entre series?",
+    "required_any": [["fatiga", "cansancio"], ["rendimiento", "calidad", "repeticiones"], ["objetivo", "intensidad", "descanso"]],
+    "forbidden": ["no cambia nada", "siempre mejora el rendimiento"],
+    "correction": "Reducir mucho el descanso puede aumentar la fatiga y disminuir la calidad o cantidad de repeticiones. El efecto depende del objetivo, la intensidad y la persona."
+  },
+  {
+    "id": "foundation_08_overtraining",
+    "category": "training",
+    "mode": "quick",
+    "prompt": "¿Estar cansado después de entrenar significa sobreentrenamiento?",
+    "required_any": [["no", "no necesariamente"], ["fatiga"], ["persistente", "duración", "duracion", "rendimiento"]],
+    "forbidden": ["sí, siempre", "cualquier cansancio es sobreentrenamiento"],
+    "correction": "No necesariamente. El cansancio agudo puede ser normal; el sobreentrenamiento requiere un cuadro persistente, con deterioro del rendimiento y otros signos, y debe evaluarse profesionalmente."
+  },
+  {
+    "id": "foundation_09_data_units",
+    "category": "data_quality",
+    "mode": "quick",
+    "prompt": "¿Por qué hay que revisar las unidades antes de comparar dos métricas deportivas?",
+    "required_any": [["unidad", "unidades"], ["comparar", "interpretar"], ["metros", "kilómetros", "segundos", "minutos"]],
+    "forbidden": ["las unidades no importan", "se pueden mezclar sin convertir"],
+    "correction": "Porque dos valores solo son comparables si representan la misma magnitud, unidad y exposición. Hay que detectar y convertir, por ejemplo, metros y kilómetros o segundos y minutos."
+  },
+  {
+    "id": "foundation_10_correlation",
+    "category": "statistics",
+    "mode": "quick",
+    "prompt": "Si dos variables se mueven juntas, ¿eso prueba que una causa la otra?",
+    "required_any": [["no", "no necesariamente"], ["correlación", "correlacion", "asociación", "asociacion"], ["causalidad", "confusor", "experimento"]],
+    "forbidden": ["sí, prueba causalidad", "siempre significa causalidad"],
+    "correction": "No. Puede haber correlación o asociación sin causalidad; hay que considerar confusores, temporalidad y un diseño adecuado antes de sostener una explicación causal."
+  }
+]

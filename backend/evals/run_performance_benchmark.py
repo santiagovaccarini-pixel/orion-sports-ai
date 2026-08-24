@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import statistics
 import time
 
@@ -72,7 +73,11 @@ def main() -> int:
     args = parser.parse_args()
 
     results: list[dict[str, float | int | None]] = []
-    with httpx.Client(timeout=600.0) as client:
+    headers = {}
+    if api_key := os.getenv("ORION_API_KEY"):
+        headers["X-Orion-Api-Key"] = api_key
+
+    with httpx.Client(timeout=600.0, headers=headers) as client:
         for index in range(max(1, args.runs)):
             result = run_once(
                 client,

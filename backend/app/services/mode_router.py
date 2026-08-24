@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from unicodedata import normalize
 from typing import Protocol, Sequence
 
 from backend.app.domain.models import SelectedMode
@@ -15,13 +16,12 @@ DEEP_MARKERS = (
     "argument",
     "compar",
     "investig",
-    "hipótesis",
     "hipotesis",
     "modelo",
     "estrateg",
     "riesgo",
     "valid",
-    "explicá paso",
+    "explica paso",
     "explica paso",
     "fuentes",
     "evidencia",
@@ -31,6 +31,14 @@ DEEP_MARKERS = (
 )
 
 
+def _fold_text(value: str) -> str:
+    return "".join(
+        character
+        for character in normalize("NFD", value.lower())
+        if character.isalnum() or character.isspace() or character in "¿?"
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ModeRecommendation:
     mode: SelectedMode
@@ -38,7 +46,7 @@ class ModeRecommendation:
 
 
 def recommend_mode(messages: Sequence[MessageLike]) -> ModeRecommendation:
-    prompt = messages[-1].content.lower()
+    prompt = _fold_text(messages[-1].content)
     word_count = len(prompt.split())
     marker_count = sum(marker in prompt for marker in DEEP_MARKERS)
     question_count = prompt.count("?")

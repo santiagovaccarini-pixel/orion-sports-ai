@@ -80,6 +80,17 @@ class ChatResponse(BaseModel):
     thread_limit: int
 
 
+class KnowledgeDocumentRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=240)
+    content: str = Field(min_length=1, max_length=500_000)
+
+
+class KnowledgeDocumentResponse(BaseModel):
+    id: str
+    name: str
+    characters: int
+
+
 class StatusResponse(BaseModel):
     service: Literal["online"] = "online"
     version: str
@@ -92,3 +103,5 @@ class StatusResponse(BaseModel):
     loaded_models: list[str]
     snapshot: SystemSnapshotResponse
     memory_enabled: Literal[False] = False
+    web_enabled: bool = False
+    web_minimum_sources: int = 4

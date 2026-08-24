@@ -26,6 +26,19 @@ class ModeRouterTests(unittest.TestCase):
         )
         self.assertEqual(result.mode, SelectedMode.DEEP)
 
+    def test_accented_analysis_terms_use_deep_mode(self) -> None:
+        result = recommend_mode(
+            [
+                ConversationMessage(
+                    content=(
+                        "¿Podés analizá cómo validar la hipótesis y explicá paso "
+                        "a paso los riesgos?"
+                    ),
+                )
+            ]
+        )
+        self.assertEqual(result.mode, SelectedMode.DEEP)
+
 
 if __name__ == "__main__":
     unittest.main()

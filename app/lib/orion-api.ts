@@ -38,6 +38,22 @@ export type OrionStatus = {
   memory_enabled: false;
 };
 
+export type KnowledgeDocument = {
+  id: string;
+  name: string;
+  characters: number;
+};
+
+export type ChartPoint = { label: string; value: number };
+export type OrionChart = {
+  type: "bar";
+  title: string;
+  unit: string;
+  source: string;
+  metric: string;
+  points: ChartPoint[];
+};
+
 export type ChatResult = {
   content: string;
   sport: Sport;
@@ -87,10 +103,13 @@ type ChatStreamError = {
   message: string;
 };
 
+type ChatStreamChart = { type: "chart"; chart: OrionChart };
+
 type ChatStreamEvent =
   | ChatStreamMeta
   | ChatStreamContent
   | ChatStreamDone
+  | ChatStreamChart
   | ChatStreamError;
 
 export type ChatStreamResult = {
@@ -130,6 +149,13 @@ const API_BASE = (
   "http://127.0.0.1:8765/api/v1"
 ).replace(/\/$/, "");
 
+const API_HEADERS = {
+  "Content-Type": "application/json",
+  ...(process.env.NEXT_PUBLIC_ORION_API_KEY
+    ? { "X-Orion-Api-Key": process.env.NEXT_PUBLIC_ORION_API_KEY }
+    : {}),
+};
+
 async function parseResponse<T>(response: Response): Promise<T> {
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
@@ -145,6 +171,7 @@ export async function getOrionStatus(signal?: AbortSignal): Promise<OrionStatus>
   const response = await fetch(`${API_BASE}/status`, {
     cache: "no-store",
     signal,
+    headers: API_HEADERS,
   });
   return parseResponse<OrionStatus>(response);
 }
@@ -157,7 +184,7 @@ export async function sendChat(input: {
 }): Promise<ChatResult> {
   const response = await fetch(`${API_BASE}/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: API_HEADERS,
     body: JSON.stringify({
       messages: input.messages,
       mode: input.mode,
@@ -166,6 +193,16 @@ export async function sendChat(input: {
     }),
   });
   return parseResponse<ChatResult>(response);
+}
+
+export async function uploadKnowledgeDocument(file: File): Promise<KnowledgeDocument> {
+  const content = await file.text();
+  const response = await fetch(`${API_BASE}/knowledge/documents`, {
+    method: "POST",
+    headers: API_HEADERS,
+    body: JSON.stringify({ name: file.name, content }),
+  });
+  return parseResponse<KnowledgeDocument>(response);
 }
 
 export async function sendChatStream(
@@ -178,12 +215,13 @@ export async function sendChatStream(
   handlers: {
     onMeta: (event: ChatStreamMeta) => void;
     onContent: (content: string) => void;
+    onChart: (chart: OrionChart) => void;
   },
   signal?: AbortSignal,
 ): Promise<ChatStreamResult> {
   const response = await fetch(`${API_BASE}/chat/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: API_HEADERS,
     body: JSON.stringify({
       messages: input.messages,
       mode: input.mode,
@@ -222,6 +260,8 @@ export async function sendChatStream(
       handlers.onContent(event.content);
     } else if (event.type === "done") {
       done = event;
+    } else if (event.type === "chart") {
+      handlers.onChart(event.chart);
     } else if (event.type === "error") {
       throw new OrionApiError(503, event);
     }

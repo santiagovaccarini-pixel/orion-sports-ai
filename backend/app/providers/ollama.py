@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Sequence
 
@@ -165,11 +166,11 @@ class OllamaClient:
     async def status(self) -> OllamaStatus:
         try:
             async with httpx.AsyncClient(timeout=4.0) as client:
-                tags_response = await client.get(
-                    f"{self.settings.ollama_base_url}/api/tags"
+                tags_response, ps_response = await asyncio.gather(
+                    client.get(f"{self.settings.ollama_base_url}/api/tags"),
+                    client.get(f"{self.settings.ollama_base_url}/api/ps"),
                 )
                 tags_response.raise_for_status()
-                ps_response = await client.get(f"{self.settings.ollama_base_url}/api/ps")
                 ps_response.raise_for_status()
                 tags_data = tags_response.json()
                 ps_data = ps_response.json()
@@ -278,6 +279,8 @@ class OllamaClient:
                             raise OllamaUnavailableError(
                                 "Ollama envió una respuesta progresiva inválida."
                             ) from exc
+                        if error_message := data.get("error"):
+                            raise OllamaUnavailableError(str(error_message))
                         event = parse_stream_payload(data, thread_limit=thread_limit)
                         saw_done = saw_done or event.done
                         yield event

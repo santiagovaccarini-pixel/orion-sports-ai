@@ -11,6 +11,10 @@ test("keeps the shell fixed and scrolls only the conversation", async () => {
   assert.match(css, /\.messages\s*\{[^}]*overflow-y:\s*auto/s);
   assert.match(css, /\.orion-sidebar\s*\{[^}]*overflow:\s*hidden/s);
   assert.match(css, /\.composer-wrap\s*\{[^}]*flex:\s*0 0 auto/s);
+  assert.match(css, /\.composer textarea\s*\{[^}]*min-height:\s*3\.75rem/s);
+  assert.match(css, /\.chat-stage\s*\{[^}]*width:\s*min\(100%,\s*76rem\)/s);
+  assert.match(css, /\.message\s*\{[^}]*max-width:\s*100%/s);
+  assert.match(css, /\.composer:focus-within\s*\{/s);
 });
 
 test("renders safe Markdown and visible performance metrics", async () => {
@@ -21,6 +25,11 @@ test("renders safe Markdown and visible performance metrics", async () => {
   assert.match(component, /ReactMarkdown/);
   assert.match(component, /remarkGfm/);
   assert.match(component, /normalizeCompletedMarkdown/);
+  assert.match(component, /renderMarkdown/);
+  assert.match(component, /replace\(\/```\(\?:text\|txt\)\?/);
+  assert.match(component, /cells\[0\]\.map/);
+  assert.match(component, /ChartPreview/);
+  assert.match(component, /onChart/);
   assert.match(component, /message\.streaming/);
   assert.match(component, /pico CPU/);
   assert.match(component, /tokensPerSecond/);
@@ -38,7 +47,12 @@ test("lets the reader leave auto-scroll and return to the latest message", async
   );
   assert.match(component, /shouldFollowRef/);
   assert.match(component, /distanceFromBottom <= 96/);
+  assert.match(component, /movedUp = container\.scrollTop < previousScrollTopRef\.current/);
+  assert.match(component, /container\.scrollTop = container\.scrollHeight/);
+  assert.match(component, /if \(!shouldFollowRef\.current\)/);
+  assert.match(component, /autoScrollFrameRef/);
   assert.match(component, /onScroll=\{handleConversationScroll\}/);
+  assert.match(component, /onWheel=\{handleConversationWheel\}/);
   assert.match(component, /Volver al final/);
 });
 
@@ -63,6 +77,12 @@ test("sends the selected local sport context to the core", async () => {
   }
   assert.match(component, /sport-picker/);
   assert.match(client, /sport:\s*input\.sport/);
+  assert.match(component, /uploadKnowledgeDocument/);
+  assert.match(component, /accept="\.txt,\.md,\.csv,\.json/);
+  assert.match(component, /knowledge-attachment/);
+  assert.match(component, /knowledge-remove/);
+  assert.match(component, /attachmentName/);
+  assert.match(component, /message-attachment/);
 });
 
 test("streams chat fragments instead of waiting for one large JSON response", async () => {
@@ -71,4 +91,15 @@ test("streams chat fragments instead of waiting for one large JSON response", as
   assert.match(client, /response\.body\.getReader\(\)/);
   assert.match(client, /TextDecoder/);
   assert.match(client, /onContent/);
+});
+
+test("keeps browser scroll anchoring disabled while messages grow", async () => {
+  const css = await readFile(new URL("app/globals.css", root), "utf8");
+  assert.match(css, /overflow-anchor:\s*none/);
+});
+
+test("wraps response content and table cells inside the message width", async () => {
+  const css = await readFile(new URL("app/globals.css", root), "utf8");
+  assert.match(css, /\.message-content,[\s\S]*overflow-wrap:\s*anywhere/);
+  assert.match(css, /\.markdown-content th,[\s\S]*white-space:\s*normal/);
 });

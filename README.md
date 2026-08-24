@@ -31,15 +31,44 @@ Este módulo incorpora:
 - modelo activo en memoria durante diez minutos para acelerar preguntas seguidas;
 - atajos de túnel desactivados en el iniciador local;
 - cero memoria permanente y cero proveedores externos.
+- base de conocimiento local opcional para importar TXT, Markdown, CSV y JSON;
+  los fragmentos relevantes se incorporan como fuentes identificables en cada respuesta.
+- composición visual adaptativa: Orion elige entre texto, ejemplo, tabla o gráfico
+  según la tarea, con diseño orientado a comprensión y evidencia.
+- orquestador de intención: separa conocimiento general, datos locales, cálculo,
+  gráficos y búsqueda web antes de construir la respuesta.
 
 El deporte seleccionado especializa el vocabulario, las variables y los
 ejemplos del modelo local, pero no reemplaza la pregunta central ni activa una
 búsqueda en Internet. Si una consulta depende de información reciente, Orion
-debe reconocer esa limitación. Las fuentes web verificables se incorporarán en
-un módulo posterior con controles explícitos de privacidad.
+debe reconocer esa limitación. La búsqueda web controlada ya está disponible de
+forma opcional: activala con `ORION_WEB_ENABLED=true`, mantené una allowlist en
+`ORION_WEB_ALLOWED_DOMAINS` y exigí al menos `ORION_WEB_MINIMUM_SOURCES` fuentes
+permitidas. El valor predeterminado es cuatro y la búsqueda permanece
+desactivada en local.
+
+Con una a tres fuentes, Orion muestra directamente los extractos y enlaces como
+información preliminar, sin pedirle al modelo que invente una síntesis. Con cuatro
+o más dominios independientes, el modelo puede sintetizar y citar el resultado.
 
 La memoria con Supabase se implementará en el Módulo 2. Hasta entonces, la
 conversación existe únicamente en la pestaña abierta.
+
+La base de conocimiento local no es memoria conversacional: guarda únicamente
+los documentos que importes de forma explícita en `.orion-runtime/knowledge`.
+Desde la interfaz podés usar `Documento` para agregar archivos de texto, CSV,
+Markdown o JSON. Orion solo recupera fragmentos relacionados con la pregunta y
+los marca como `Fuente local`; si no encuentra coincidencias, no agrega contexto.
+
+Antes de responder, el orquestador clasifica la consulta. Las preguntas actuales
+priorizan web; las preguntas sobre archivos priorizan las herramientas locales;
+las preguntas generales no reciben el CSV cargado por accidente. Los cálculos y
+gráficos se ejecutan con código y el modelo se limita a explicarlos.
+
+El currículo de fundamentos deportivos de diez preguntas está en
+`backend/evals/sports_foundations_cases.json`. Se puede ejecutar con
+`--dataset foundations`; los fallos muestran la corrección esperada para convertir
+cada error en un caso de regresión.
 
 ## Arquitectura
 
@@ -63,8 +92,14 @@ mantienen con prioridad reducida para que Windows y las demás aplicaciones
 tengan preferencia.
 
 La interfaz ya no espera la respuesta completa: muestra cada fragmento apenas
-llega. Esto reduce mucho el tiempo percibido, aunque el tiempo total seguirá
-dependiendo del modelo, la longitud de la respuesta y la carga del equipo.
+llega y renderiza Markdown progresivamente. Esto reduce mucho el tiempo
+percibido, aunque el tiempo total seguirá dependiendo del modelo, la longitud
+de la respuesta y la carga del equipo.
+
+El modo Rápido permite hasta 768 tokens de salida y Profundo hasta 1536 por
+defecto. Estos límites pueden ajustarse con `ORION_QUICK_MAX_TOKENS` y
+`ORION_DEEP_MAX_TOKENS`. Markdown admite negrita, tablas, listas y emojis;
+HTML y estilos de color generados por el modelo no se ejecutan por seguridad.
 
 El presupuesto de hilos reduce el impacto, pero no constituye un límite rígido
 de porcentaje: controladores, GPU integrada y tareas auxiliares también pueden
@@ -146,4 +181,7 @@ respuesta para poder comparar cambios sin depender de una impresión subjetiva.
 
 Los valores disponibles están documentados en `backend/.env.example`. En el
 prototipo se mantienen los puertos y direcciones locales predeterminados para
-reducir exposición accidental.
+reducir exposición accidental. Para un despliegue remoto, definí `ORION_API_KEY`
+en el backend y la misma clave en `NEXT_PUBLIC_ORION_API_KEY` para la interfaz.
+La clave protege el estado y el chat; `/api/v1/health` queda disponible para
+comprobaciones de disponibilidad.

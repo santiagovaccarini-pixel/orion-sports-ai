@@ -4,12 +4,16 @@ import os
 from dataclasses import dataclass
 from functools import lru_cache
 
+from backend.app.services.web_research import DEFAULT_ALLOWED_DOMAINS
+
 
 DEFAULT_CORS_ORIGINS = (
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
 )
 
 
@@ -43,12 +47,17 @@ class Settings:
     deep_context: int = 8192
     quick_threads: int = 8
     deep_threads: int = 8
-    quick_max_tokens: int = 384
-    deep_max_tokens: int = 1024
+    quick_max_tokens: int = 768
+    deep_max_tokens: int = 1536
     quick_history_characters: int = 12_000
     deep_history_characters: int = 30_000
     keep_alive: str = "10m"
     request_timeout_seconds: int = 300
+    api_key: str | None = None
+    knowledge_path: str = ".orion-runtime/knowledge/documents.json"
+    web_enabled: bool = True
+    web_minimum_sources: int = 4
+    web_allowed_domains: tuple[str, ...] = DEFAULT_ALLOWED_DOMAINS
     cors_origins: tuple[str, ...] = DEFAULT_CORS_ORIGINS
 
 
@@ -71,8 +80,8 @@ def get_settings() -> Settings:
         deep_context=_read_positive_int("ORION_DEEP_CONTEXT", 8192),
         quick_threads=_read_positive_int("ORION_QUICK_THREADS", 8),
         deep_threads=_read_positive_int("ORION_DEEP_THREADS", 8),
-        quick_max_tokens=_read_positive_int("ORION_QUICK_MAX_TOKENS", 384),
-        deep_max_tokens=_read_positive_int("ORION_DEEP_MAX_TOKENS", 1024),
+        quick_max_tokens=_read_positive_int("ORION_QUICK_MAX_TOKENS", 768),
+        deep_max_tokens=_read_positive_int("ORION_DEEP_MAX_TOKENS", 1536),
         quick_history_characters=_read_positive_int(
             "ORION_QUICK_HISTORY_CHARACTERS", 12_000
         ),
@@ -81,5 +90,16 @@ def get_settings() -> Settings:
         ),
         keep_alive=os.getenv("ORION_KEEP_ALIVE", "10m"),
         request_timeout_seconds=_read_int("ORION_REQUEST_TIMEOUT", 300),
+        api_key=os.getenv("ORION_API_KEY") or None,
+        knowledge_path=os.getenv(
+            "ORION_KNOWLEDGE_PATH", ".orion-runtime/knowledge/documents.json"
+        ),
+        web_enabled=os.getenv("ORION_WEB_ENABLED", "true").lower() in {"1", "true", "yes"},
+        web_minimum_sources=_read_positive_int("ORION_WEB_MINIMUM_SOURCES", 4),
+        web_allowed_domains=tuple(
+            item.strip().lower().removeprefix("www.")
+            for item in os.getenv("ORION_WEB_ALLOWED_DOMAINS", "").split(",")
+            if item.strip()
+        ) or DEFAULT_ALLOWED_DOMAINS,
         cors_origins=origins or DEFAULT_CORS_ORIGINS,
     )

@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 import unittest
 
-from backend.evals.run_local_evaluation import CASES_PATH, precheck
+from backend.evals.run_local_evaluation import (
+    CASES_PATH,
+    FOOTBALL_PATH,
+    FOUNDATIONS_PATH,
+    precheck,
+)
 
 
 class EvaluationCaseTests(unittest.TestCase):
@@ -28,6 +33,30 @@ class EvaluationCaseTests(unittest.TestCase):
         )
         self.assertEqual(missing, [])
         self.assertEqual(forbidden, [])
+
+    def test_precheck_rejects_empty_answers(self) -> None:
+        missing, forbidden = precheck(
+            "   ",
+            {"required_any": [], "forbidden": []},
+        )
+        self.assertEqual(missing, [["respuesta con contenido"]])
+        self.assertEqual(forbidden, [])
+
+    def test_foundation_curriculum_has_ten_correctable_cases(self) -> None:
+        cases = json.loads(FOUNDATIONS_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(len(cases), 10)
+        self.assertEqual(len({case["id"] for case in cases}), 10)
+        for case in cases:
+            self.assertTrue(case["correction"].strip())
+            self.assertTrue(case["required_any"])
+            self.assertTrue(case["forbidden"])
+
+    def test_football_curriculum_has_ten_distinct_cases(self) -> None:
+        cases = json.loads(FOOTBALL_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(len(cases), 10)
+        self.assertEqual(len({case["id"] for case in cases}), 10)
+        self.assertTrue(all(case["correction"].strip() for case in cases))
+        self.assertIn("balón fuera del campo", cases[0]["forbidden"])
 
 
 if __name__ == "__main__":

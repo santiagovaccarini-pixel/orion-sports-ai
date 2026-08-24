@@ -217,13 +217,13 @@ button {
 
 .chat-stage {
   display: flex;
-  width: min(100%, 58rem);
+  width: min(100%, 76rem);
   flex: 1;
   min-height: 0;
   flex-direction: column;
   align-self: center;
   overflow: hidden;
-  padding: clamp(1.25rem, 4vw, 3rem);
+  padding: clamp(1.25rem, 3vw, 2.25rem);
 }
 
 .empty-state {
@@ -287,10 +287,12 @@ button {
   padding-bottom: 2rem;
   padding-right: 0.45rem;
   scrollbar-gutter: stable;
+  overflow-anchor: none;
 }
 
 .message {
-  max-width: 86%;
+  min-width: 0;
+  max-width: 100%;
   border-radius: 1.25rem;
   padding: 1rem 1.1rem;
   line-height: 1.62;
@@ -311,6 +313,13 @@ button {
 
 .markdown-content > :last-child {
   margin-bottom: 0;
+}
+
+.message-content,
+.markdown-content {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .markdown-content p,
@@ -370,6 +379,10 @@ button {
   max-width: 100%;
   overflow-x: auto;
   border-collapse: collapse;
+  border: 1px solid #d8dacd;
+  border-radius: 0.7rem;
+  background: #fff;
+  box-shadow: 0 0.35rem 1rem rgba(25, 26, 22, 0.05);
 }
 
 .markdown-content th,
@@ -377,12 +390,64 @@ button {
   border: 1px solid var(--line);
   padding: 0.45rem 0.6rem;
   text-align: left;
+  max-width: 20rem;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .markdown-content th {
   background: #f0f1ea;
   color: #34362f;
   font-weight: 750;
+}
+
+.markdown-content tbody tr:nth-child(even) {
+  background: #fafbf7;
+}
+
+.chart-preview {
+  margin: 0 0 1rem;
+  border: 1px solid #d8dacd;
+  border-radius: 0.8rem;
+  background: #fbfcf8;
+  padding: 0.8rem;
+}
+
+.chart-preview figcaption {
+  margin-bottom: 0.35rem;
+  color: #34362f;
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
+.chart-preview svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.chart-axis {
+  stroke: #bfc3b3;
+  stroke-width: 1;
+}
+
+.chart-bar {
+  fill: #8db92d;
+}
+
+.chart-value,
+.chart-label {
+  fill: #5e6257;
+  font-size: 11px;
+}
+
+.chart-value {
+  font-weight: 700;
+}
+
+.chart-preview small {
+  color: #777970;
+  font-size: 0.66rem;
 }
 
 .message.user {
@@ -566,19 +631,85 @@ button {
   background: var(--surface);
   padding: 0.7rem;
   box-shadow: 0 1.4rem 3.5rem rgba(25, 26, 22, 0.08);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.composer:focus-within {
+  border-color: #aab37c;
+  box-shadow: 0 1.4rem 3.5rem rgba(25, 26, 22, 0.08),
+    0 0 0 0.2rem rgba(185, 244, 74, 0.18);
 }
 
 .composer textarea {
   width: 100%;
-  min-height: 3.25rem;
-  max-height: 11rem;
+  min-height: 3.75rem;
+  max-height: 8rem;
   resize: vertical;
   border: 0;
   outline: 0;
   background: transparent;
-  padding: 0.6rem;
+  padding: 0.45rem 0.7rem;
   color: var(--ink);
   line-height: 1.5;
+}
+
+.knowledge-attachment {
+  display: flex;
+  width: fit-content;
+  max-width: min(22rem, 100%);
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid #d9dad3;
+  border-radius: 0.65rem;
+  background: #f7f8f2;
+  padding: 0.35rem 0.45rem 0.35rem 0.55rem;
+  color: #484b42;
+  font-size: 0.72rem;
+}
+
+.knowledge-file-icon {
+  color: #6f8e21;
+  font-size: 0.9rem;
+}
+
+.knowledge-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-remove {
+  display: grid;
+  width: 1.2rem;
+  height: 1.2rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #777970;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.knowledge-remove:hover {
+  background: #e4e6dc;
+  color: var(--ink);
+}
+
+.message-attachment {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.55rem;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 0.55rem;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0.3rem 0.5rem;
+  color: #d7e9ad;
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
 }
 
 .composer-controls {
@@ -587,6 +718,42 @@ button {
   align-items: flex-end;
   justify-content: space-between;
   gap: 0.75rem;
+}
+
+.knowledge-upload {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid #d9dad3;
+  border-radius: 999px;
+  background: #f7f8f2;
+  padding: 0.44rem 0.68rem;
+  color: #484b42;
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.knowledge-upload:hover {
+  border-color: #aeb1a5;
+  color: var(--ink);
+}
+
+.knowledge-upload input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.knowledge-message {
+  margin: 0.45rem 0 0;
+  color: #5f6258;
+  font-size: 0.7rem;
+  text-align: center;
 }
 
 .sport-picker {
@@ -749,7 +916,12 @@ button {
   }
 
   .message {
-    max-width: 94%;
+    max-width: 100%;
+  }
+
+  .composer textarea {
+    min-height: 3.75rem;
+    max-height: 7rem;
   }
 
   .sport-menu {

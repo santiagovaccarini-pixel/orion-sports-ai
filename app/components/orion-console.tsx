@@ -1,21 +1,32 @@
 "use client";
 
-import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
+import {
+  ChangeEvent,
+  FormEvent,
+  KeyboardEvent,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   ChatMessage,
+  OrionChart,
   getOrionStatus,
   OrionApiError,
   OrionStatus,
   RequestedMode,
   ResourceWarning,
   sendChatStream,
+  uploadKnowledgeDocument,
   Sport,
 } from "../lib/orion-api";
 
 type UiMessage = ChatMessage & {
   id: string;
+  attachmentName?: string;
+  chart?: OrionChart;
   sport?: Sport;
   streaming?: boolean;
   model?: string;
@@ -92,13 +103,88 @@ function simplifyFormula(expression: string) {
 }
 
 function normalizeCompletedMarkdown(content: string) {
-  return content
+  const normalized = content
     .replace(/\\\[([\s\S]*?)\\\]/g, (_match, expression: string) =>
       `\n\n\`\`\`text\n${simplifyFormula(expression)}\n\`\`\`\n\n`,
     )
     .replace(/\\\(([\s\S]*?)\\\)/g, (_match, expression: string) =>
       `\`${simplifyFormula(expression)}\``,
     );
+
+  return normalized.replace(/```(?:text|txt)?\n([\s\S]*?)```/g, (match, block: string) => {
+    const rows = block
+      .split("\n")
+      .map((line: string) => line.trim())
+      .filter((line: string) => line.includes("|"))
+      .filter((line: string) => !/^[|+\-=: ]+$/.test(line));
+    if (rows.length < 2) return match;
+
+    const cells = rows.map((row: string) =>
+      row
+        .replace(/^[|+]/, "")
+        .replace(/[|+]$/, "")
+        .split(/[|+]/)
+        .map((cell: string) => cell.trim())
+        .filter(Boolean),
+    );
+    const columnCount = cells[0]?.length ?? 0;
+    if (columnCount < 2 || cells.some((row: string[]) => row.length !== columnCount)) {
+      return match;
+    }
+    return [
+      `| ${cells[0].join(" | ")} |`,
+      `| ${cells[0].map(() => "---").join(" | ")} |`,
+      ...cells.slice(1).map((row: string[]) => `| ${row.join(" | ")} |`),
+    ].join("\n");
+  });
+}
+
+function renderMarkdown(content: string) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a: ({ href, children }) => (
+          <a href={href} target="_blank" rel="noreferrer">
+            {children}
+          </a>
+        ),
+      }}
+    >
+      {normalizeCompletedMarkdown(content)}
+    </ReactMarkdown>
+  );
+}
+
+function ChartPreview({ chart }: { chart: OrionChart }) {
+  const width = 640;
+  const height = 260;
+  const padding = { top: 42, right: 24, bottom: 48, left: 52 };
+  const max = Math.max(...chart.points.map((point) => point.value), 1);
+  const chartHeight = height - padding.top - padding.bottom;
+  const barWidth = (width - padding.left - padding.right) / chart.points.length * 0.62;
+  return (
+    <figure className="chart-preview">
+      <figcaption>{chart.title}</figcaption>
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${chart.title}. Fuente: ${chart.source}`}>
+        <line x1={padding.left} y1={height - padding.bottom} x2={width - padding.right} y2={height - padding.bottom} className="chart-axis" />
+        {chart.points.map((point, index) => {
+          const slot = (width - padding.left - padding.right) / chart.points.length;
+          const barHeight = (point.value / max) * chartHeight;
+          const x = padding.left + slot * index + (slot - barWidth) / 2;
+          const y = height - padding.bottom - barHeight;
+          return (
+            <g key={`${point.label}-${index}`}>
+              <rect x={x} y={y} width={barWidth} height={barHeight} rx="4" className="chart-bar" />
+              <text x={x + barWidth / 2} y={Math.max(y - 8, 18)} textAnchor="middle" className="chart-value">{point.value.toLocaleString("es-AR")}</text>
+              <text x={x + barWidth / 2} y={height - 20} textAnchor="middle" className="chart-label">{point.label}</text>
+            </g>
+          );
+        })}
+      </svg>
+      <small>Unidad: {chart.unit} · Fuente local: {chart.source}</small>
+    </figure>
+  );
 }
 
 export function OrionConsole() {
@@ -111,13 +197,19 @@ export function OrionConsole() {
   const [loading, setLoading] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [knowledgeMessage, setKnowledgeMessage] = useState<string | null>(null);
+  const [knowledgeFile, setKnowledgeFile] = useState<string | null>(null);
   const [warning, setWarning] = useState<PendingWarning | null>(null);
   const [showScrollToLatest, setShowScrollToLatest] = useState(false);
   const messagesRef = useRef<HTMLDivElement>(null);
   const sportPickerRef = useRef<HTMLDetailsElement>(null);
   const activeRequestRef = useRef<AbortController | null>(null);
+  const pendingContentRef = useRef("");
+  const contentFrameRef = useRef<number | null>(null);
   const peakCpuRef = useRef(0);
   const shouldFollowRef = useRef(true);
+  const previousScrollTopRef = useRef(0);
+  const autoScrollFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -161,10 +253,24 @@ export function OrionConsole() {
   useEffect(() => {
     const container = messagesRef.current;
     if (!container || !shouldFollowRef.current) return;
-    container.scrollTo({
-      top: container.scrollHeight,
-      behavior: loading ? "auto" : "smooth",
+    if (autoScrollFrameRef.current !== null) {
+      cancelAnimationFrame(autoScrollFrameRef.current);
+    }
+    autoScrollFrameRef.current = requestAnimationFrame(() => {
+      if (!shouldFollowRef.current) {
+        autoScrollFrameRef.current = null;
+        return;
+      }
+      container.scrollTop = container.scrollHeight;
+      previousScrollTopRef.current = container.scrollTop;
+      autoScrollFrameRef.current = null;
     });
+    return () => {
+      if (autoScrollFrameRef.current !== null) {
+        cancelAnimationFrame(autoScrollFrameRef.current);
+        autoScrollFrameRef.current = null;
+      }
+    };
   }, [messages, loading, warning]);
 
   useEffect(
@@ -193,6 +299,18 @@ export function OrionConsole() {
     const startedAt = performance.now();
     let firstTokenMs: number | null = null;
     let assistantStarted = false;
+    const flushPendingContent = () => {
+      const pendingContent = pendingContentRef.current;
+      if (!pendingContent) return;
+      pendingContentRef.current = "";
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === assistantId
+            ? { ...message, content: message.content + pendingContent }
+            : message,
+        ),
+      );
+    };
 
     try {
       const result = await sendChatStream(
@@ -219,21 +337,36 @@ export function OrionConsole() {
               },
             ]);
           },
+          onChart: (chart) => {
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === assistantId ? { ...message, chart } : message,
+              ),
+            );
+          },
           onContent: (content) => {
             if (firstTokenMs === null) {
               firstTokenMs = performance.now() - startedAt;
             }
-            setMessages((current) =>
-              current.map((message) =>
-                message.id === assistantId
-                  ? { ...message, content: message.content + content }
-                  : message,
-              ),
-            );
+            pendingContentRef.current += content;
+            if (contentFrameRef.current !== null) return;
+            contentFrameRef.current = requestAnimationFrame(() => {
+              const pendingContent = pendingContentRef.current;
+              pendingContentRef.current = "";
+              contentFrameRef.current = null;
+              setMessages((current) =>
+                current.map((message) =>
+                  message.id === assistantId
+                    ? { ...message, content: message.content + pendingContent }
+                    : message,
+                ),
+              );
+            });
           },
         },
         controller.signal,
       );
+      flushPendingContent();
       let measuredPeakCpu = peakCpuRef.current;
       try {
         const latestStatus = await getOrionStatus();
@@ -323,6 +456,11 @@ export function OrionConsole() {
         );
       }
     } finally {
+      if (contentFrameRef.current !== null) {
+        cancelAnimationFrame(contentFrameRef.current);
+        contentFrameRef.current = null;
+      }
+      pendingContentRef.current = "";
       if (activeRequestRef.current === controller) {
         activeRequestRef.current = null;
       }
@@ -337,23 +475,68 @@ export function OrionConsole() {
   const handleConversationScroll = () => {
     const container = messagesRef.current;
     if (!container) return;
+    const movedUp = container.scrollTop < previousScrollTopRef.current - 1;
     const distanceFromBottom =
       container.scrollHeight - container.scrollTop - container.clientHeight;
     const isNearBottom = distanceFromBottom <= 96;
+    previousScrollTopRef.current = container.scrollTop;
+    if (movedUp) {
+      shouldFollowRef.current = false;
+      setShowScrollToLatest(true);
+      return;
+    }
     shouldFollowRef.current = isNearBottom;
     setShowScrollToLatest(!isNearBottom);
+  };
+
+  const handleConversationWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (event.deltaY < 0) {
+      shouldFollowRef.current = false;
+      setShowScrollToLatest(true);
+    }
   };
 
   const scrollToLatest = () => {
     const container = messagesRef.current;
     shouldFollowRef.current = true;
     setShowScrollToLatest(false);
+    if (container) previousScrollTopRef.current = container.scrollTop;
     container?.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+  };
+
+  const removeKnowledgeFile = () => {
+    const container = messagesRef.current;
+    const scrollTop = container?.scrollTop ?? 0;
+    setKnowledgeFile(null);
+    requestAnimationFrame(() => {
+      if (container) {
+        container.scrollTop = scrollTop;
+        previousScrollTopRef.current = scrollTop;
+      }
+    });
   };
 
   const selectSport = (nextSport: Sport) => {
     setSport(nextSport);
     sportPickerRef.current?.removeAttribute("open");
+  };
+
+  const handleKnowledgeUpload = async (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setKnowledgeMessage("Importando documento…");
+    try {
+      const document = await uploadKnowledgeDocument(file);
+      setKnowledgeFile(document.name);
+      setKnowledgeMessage(null);
+    } catch (caught) {
+      setKnowledgeMessage(
+        caught instanceof Error ? caught.message : "No se pudo importar el documento.",
+      );
+    }
   };
 
   const submitPrompt = async (prompt: string) => {
@@ -364,12 +547,14 @@ export function OrionConsole() {
       id: makeId("user"),
       role: "user",
       content: clean,
+      attachmentName: knowledgeFile ?? undefined,
     };
     const nextMessages = [...messages, nextUiMessage];
     shouldFollowRef.current = true;
     setShowScrollToLatest(false);
     setMessages(nextMessages);
     setDraft("");
+    setKnowledgeFile(null);
 
     await runRequest(
       nextMessages
@@ -516,6 +701,7 @@ export function OrionConsole() {
               className="messages"
               aria-live="polite"
               onScroll={handleConversationScroll}
+              onWheel={handleConversationWheel}
             >
               {messages.map((message) => {
                 const metrics = [
@@ -554,22 +740,14 @@ export function OrionConsole() {
                   <article key={message.id} className={`message ${message.role}`}>
                     {message.role === "assistant" ? (
                       <div className="message-content markdown-content">
+                        {message.chart ? <ChartPreview chart={message.chart} /> : null}
                         {message.content ? (
                           message.streaming ? (
-                            <div className="streaming-content">{message.content}</div>
+                            <div className="streaming-content">
+                              {renderMarkdown(message.content)}
+                            </div>
                           ) : (
-                            <ReactMarkdown
-                              remarkPlugins={[remarkGfm]}
-                              components={{
-                                a: ({ href, children }) => (
-                                  <a href={href} target="_blank" rel="noreferrer">
-                                    {children}
-                                  </a>
-                                ),
-                              }}
-                            >
-                              {normalizeCompletedMarkdown(message.content)}
-                            </ReactMarkdown>
+                            renderMarkdown(message.content)
                           )
                         ) : (
                           <span className="stream-placeholder">Preparando respuesta…</span>
@@ -577,7 +755,13 @@ export function OrionConsole() {
                       </div>
                     ) : (
                       <div className="message-content plain-content">
-                        {message.content}
+                        {message.attachmentName ? (
+                          <div className="message-attachment">
+                            <span className="knowledge-file-icon" aria-hidden="true">▤</span>
+                            <span>{message.attachmentName}</span>
+                          </div>
+                        ) : null}
+                        <div>{message.content}</div>
                       </div>
                     )}
                     {message.role === "assistant" && message.model ? (
@@ -666,6 +850,21 @@ export function OrionConsole() {
             {error ? <div className="error-banner" role="alert">{error}</div> : null}
 
             <form className="composer" onSubmit={handleSubmit}>
+              {knowledgeFile ? (
+                <div className="knowledge-attachment">
+                  <span className="knowledge-file-icon" aria-hidden="true">▤</span>
+                  <span className="knowledge-file-name" title={knowledgeFile}>{knowledgeFile}</span>
+                  <button
+                    type="button"
+                    className="knowledge-remove"
+                    aria-label={`Quitar ${knowledgeFile}`}
+                    title="Quitar documento"
+                    onClick={removeKnowledgeFile}
+                  >
+                    ×
+                  </button>
+                </div>
+              ) : null}
               <textarea
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
@@ -675,6 +874,15 @@ export function OrionConsole() {
                 maxLength={20_000}
               />
               <div className="composer-controls">
+                <label className="knowledge-upload" title="Importar documento local">
+                  <span aria-hidden="true">+</span>
+                  <span>Documento</span>
+                  <input
+                    type="file"
+                    accept=".txt,.md,.csv,.json,text/plain,text/csv,application/json"
+                    onChange={handleKnowledgeUpload}
+                  />
+                </label>
                 <details ref={sportPickerRef} className="sport-picker">
                   <summary aria-label={`Deporte seleccionado: ${SPORT_LABELS[sport]}`}>
                     <span aria-hidden="true">
@@ -716,6 +924,7 @@ export function OrionConsole() {
                 </button>
               </div>
             </form>
+            {knowledgeMessage ? <p className="knowledge-message" role="status">{knowledgeMessage}</p> : null}
             <p className="composer-note">
               Contexto local: {SPORT_LABELS[sport]} · Enter para enviar · Shift + Enter para una nueva línea · Sin memoria permanente
             </p>

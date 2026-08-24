@@ -13,13 +13,13 @@ class RuntimeOptionsTests(unittest.TestCase):
         options = runtime_options(Settings(), SelectedMode.QUICK)
         self.assertEqual(options["num_thread"], 8)
         self.assertEqual(options["num_ctx"], 4096)
-        self.assertEqual(options["num_predict"], 384)
+        self.assertEqual(options["num_predict"], 768)
 
     def test_deep_mode_has_separate_thread_budget(self) -> None:
         options = runtime_options(Settings(), SelectedMode.DEEP)
         self.assertEqual(options["num_thread"], 8)
         self.assertEqual(options["num_ctx"], 8192)
-        self.assertEqual(options["num_predict"], 1024)
+        self.assertEqual(options["num_predict"], 1536)
 
     def test_quick_history_keeps_recent_turns_only(self) -> None:
         messages = [
