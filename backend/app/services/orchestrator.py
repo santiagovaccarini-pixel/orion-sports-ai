@@ -38,15 +38,16 @@ def create_plan(
     has_local_documents: bool,
     semantic_plan: SemanticPlan | None = None,
 ) -> OrchestrationPlan:
-    """Create an execution plan.
+    """Create an execution plan after semantic reasoning has completed.
 
-    Semantic intent is authoritative when available. The lexical router remains as
-    a compatibility fallback so a planner outage never blocks Orion.
+    When a SemanticPlan exists it is authoritative. Raw wording must not override a
+    resolved plan. Lexical routing is retained only as a legacy degradation path for
+    callers that provide no semantic plan at all.
     """
     if semantic_plan is not None:
-        use_web = semantic_plan.needs_web or is_web_request(query)
+        use_web = semantic_plan.needs_web
         use_local = has_local_documents and semantic_plan.needs_local_data
-        use_chart = semantic_plan.task_type == "chart"
+        use_chart = use_local and semantic_plan.task_type == "chart"
         use_calculator = use_local and semantic_plan.task_type == "calculation"
         needs_clarification = semantic_plan.requires_clarification
 
@@ -71,11 +72,13 @@ def create_plan(
             use_chart=use_chart,
             needs_clarification=needs_clarification,
             reason=(
-                "Plan construido desde la intención semántica: "
+                "Plan construido desde el marco de razonamiento: "
                 f"{semantic_plan.user_goal}"
             ),
         )
 
+    # Legacy compatibility only. Normal chat requests always create a SemanticPlan,
+    # even when the LLM planner is unavailable (neutral low-confidence fallback).
     folded = _fold(query)
     chart = any(marker in folded for marker in ("grafic", "visualiz", "chart"))
     calculation = any(
@@ -96,7 +99,7 @@ def create_plan(
             use_calculator=False,
             use_chart=False,
             needs_clarification=False,
-            reason="La consulta depende de información actual o solicita fuentes web.",
+            reason="Fallback legado: la consulta solicita información externa.",
         )
     if chart:
         intent = Intent.CHART
@@ -113,5 +116,5 @@ def create_plan(
         use_calculator=local and calculation,
         use_chart=local and chart,
         needs_clarification=False,
-        reason="La consulta se responde con conocimiento general o datos locales según su intención.",
+        reason="Fallback legado sin plan semántico disponible.",
     )
