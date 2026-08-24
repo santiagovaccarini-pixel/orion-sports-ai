@@ -1,33 +1,40 @@
 from __future__ import annotations
 
-import re
-import unicodedata
 from collections.abc import Sequence
 
 from backend.app.domain.intent import SemanticPlan
 from backend.app.domain.schemas import ChatMessage, SportContext
+from backend.app.services.ontology_runtime import (
+    canonical_labels,
+    concept_flags,
+    primary_domain,
+    valid_concept_ids,
+)
 
 
-def _fold(value: str) -> str:
-    return "".join(
-        character
-        for character in unicodedata.normalize("NFKD", value.casefold())
-        if not unicodedata.combining(character)
-    )
+TASK_COMPLEXITY = {
+    "direct_answer": 0.20,
+    "definition": 0.22,
+    "calculation": 0.28,
+    "data_query": 0.30,
+    "chart": 0.30,
+    "interpretation": 0.48,
+    "comparison": 0.52,
+    "clarification": 0.25,
+    "research": 0.66,
+    "planning": 0.70,
+    "debugging": 0.72,
+}
 
-
-def _add_unique(values: list[str], *items: str) -> None:
-    seen = {item.casefold() for item in values}
-    for item in items:
-        clean = " ".join(item.strip().split())
-        key = clean.casefold()
-        if clean and key not in seen:
-            values.append(clean)
-            seen.add(key)
-
-
-def _has_any(text: str, markers: tuple[str, ...]) -> bool:
-    return any(marker in text for marker in markers)
+INFERENCE_COMPLEXITY = {
+    "descriptive": 0.00,
+    "interpretive": 0.10,
+    "comparative": 0.14,
+    "causal": 0.25,
+    "diagnostic": 0.22,
+    "predictive": 0.25,
+    "planning": 0.18,
+}
 
 
 def normalize_semantic_plan(
@@ -37,181 +44,72 @@ def normalize_semantic_plan(
     *,
     has_local_documents: bool,
 ) -> SemanticPlan:
-    """Apply deterministic domain invariants after semantic inference.
+    """Validate a semantic plan using ontology structure, never phrase matching.
 
-    The LLM remains responsible for open-ended intent inference. This layer only
-    normalizes high-confidence linguistic and sports-domain relationships so a small
-    local model cannot silently turn an obvious concept into a contradictory plan.
-    It is deliberately conservative and does not answer the user's question.
+    Natural-language interpretation belongs to the planner model. Python only checks
+    whether selected ontology IDs exist and derives deterministic consequences from
+    their domains/flags and from the explicit inference type.
     """
-    query = messages[-1].content.strip()
-    folded = _fold(query)
-    prior_messages = list(messages[:-1])
-    prior_text = _fold(" ".join(message.content for message in prior_messages[-5:]))
-    conversation = f"{prior_text} {folded}".strip()
+    del messages  # Conversation text must not be reinterpreted through keyword rules.
 
-    if prior_messages and re.search(
-        r"\b(eso|esto|esa|ese|aquello|lo mismo|como antes|anterior)\b", folded
-    ):
-        plan.referenced_previous_context = True
-    if _has_any(
-        folded,
-        (
-            "veniamos", "como lo usamos", "como usamos", "nuestro criterio",
-            "nuestra metodologia", "nuestro protocolo", "mi protocolo",
-            "mi metodologia", "en el club", "para nosotros",
-        ),
-    ):
+    plan.concept_ids = valid_concept_ids(sport, plan.concept_ids)
+    plan.concepts = canonical_labels(sport, plan.concept_ids)
+
+    derived_domain = primary_domain(sport, plan.concept_ids)
+    if derived_domain != "general":
+        plan.domain = derived_domain
+
+    flags = concept_flags(sport, plan.concept_ids)
+    if "private_memory" in flags:
         plan.needs_private_memory = True
-        if _has_any(folded, ("veniamos", "como antes", "anterior")):
-            plan.referenced_previous_context = True
-
-    explicit_definition = bool(
-        re.search(r"^\s*¿?\s*(que es|que significa|define|definime)\b", folded)
-        or re.search(r"^\s*(explica|explicame|explica en|explicame en).*\bque es\b", folded)
-    )
-    if explicit_definition:
-        plan.task_type = "definition"
-        plan.requires_clarification = False
-        plan.ambiguity = min(plan.ambiguity, 0.25)
-        plan.complexity = min(plan.complexity, 0.35)
-
-    if _has_any(folded, ("grafic", "visualiz", "chart")):
-        plan.task_type = "chart"
-        plan.needs_local_data = has_local_documents
-
-    if _has_any(
-        folded,
-        (
-            "busca fuentes", "busca estudios", "fuentes actuales", "estudios recientes",
-            "investiga", "buscar en internet", "busca en internet",
-        ),
-    ):
-        plan.task_type = "research"
-        plan.needs_web = True
-        plan.needs_global_knowledge = True
-
-    if _has_any(
-        folded,
-        (
-            "mas que", "menos que", "quien trabajo mas", "quien corrio mas",
-            "estuvo peor", "estuvo mejor", "diferencia entre", " vs ", "versus",
-        ),
-    ):
-        plan.comparison = True
-
-    causal_question = _has_any(
-        folded,
-        (
-            "causo", "causa las", "provoco", "provoca", "fue porque", "debido a",
-            "explica que", "por eso", "implica que", "significa que estuvo",
-        ),
-    )
-    performance_inference = _has_any(folded, ("estuvo peor", "estuvo mejor")) and _has_any(
-        conversation,
-        ("corrio", "distancia", "hsr", "sprint", "aceler", "desaceler", "carga"),
-    )
-    if causal_question or performance_inference:
+    if "causal_risk" in flags:
         plan.causal_claim_risk = True
-        if plan.task_type not in {"research", "planning", "debugging"}:
-            plan.task_type = "interpretation"
-        plan.complexity = max(plan.complexity, 0.6)
 
-    if _has_any(folded, ("quien trabajo mas", "quien trabajó mas", "quien tuvo mas carga")):
+    if plan.inference_type == "comparative" or plan.task_type == "comparison":
         plan.comparison = True
-        plan.needs_local_data = has_local_documents
-        plan.requires_clarification = True
-        plan.ambiguity = max(plan.ambiguity, 0.75)
-        _add_unique(plan.missing_variables, "métrica de carga o trabajo a comparar")
-        _add_unique(plan.concepts, "training load", "external load")
-        if plan.task_type not in {"chart", "research"}:
-            plan.task_type = "comparison"
+    if plan.inference_type == "causal":
+        plan.causal_claim_risk = True
+        if plan.task_type == "direct_answer":
+            plan.task_type = "interpretation"
 
-    if sport is SportContext.FOOTBALL:
-        _normalize_football(plan, folded, conversation)
-
-    # A resolved conversational reference is usually an interpretation of prior
-    # context, not an isolated direct answer. Keep explicit tasks untouched.
-    if (
-        plan.referenced_previous_context
-        and plan.task_type == "direct_answer"
-        and plan.domain != "general"
-    ):
-        plan.task_type = "interpretation"
-        plan.complexity = max(plan.complexity, 0.4)
+    if plan.requires_clarification and not plan.missing_variables:
+        plan.missing_variables = ["variable indispensable no especificada"]
 
     if not has_local_documents:
         plan.needs_local_data = False
 
-    if plan.concepts:
-        canonical_query = " ".join(plan.concepts[:8])
-        _add_unique(plan.retrieval_queries, canonical_query)
+    # Private conventions are not global truth. Local calculations/charts normally do
+    # not need global knowledge unless the planner explicitly frames an interpretation.
+    plan.needs_global_knowledge = not (
+        plan.needs_local_data
+        and plan.task_type in {"calculation", "data_query", "chart"}
+        and not plan.needs_private_memory
+    )
+    if plan.needs_private_memory and plan.task_type in {"direct_answer", "definition"}:
+        plan.needs_global_knowledge = False
+    if plan.needs_web or plan.task_type == "research":
+        plan.needs_global_knowledge = True
 
+    complexity = TASK_COMPLEXITY.get(plan.task_type, 0.35)
+    complexity += INFERENCE_COMPLEXITY.get(plan.inference_type, 0.0)
+    if plan.referenced_previous_context:
+        complexity += 0.06
+    if plan.requires_clarification:
+        complexity -= 0.08
+    if len(plan.concept_ids) >= 4:
+        complexity += 0.05
+    plan.complexity = max(0.10, min(complexity, 1.0))
+
+    plan.ambiguity = max(
+        0.0,
+        min(
+            1.0,
+            0.75 if plan.requires_clarification else max(0.05, 1.0 - plan.confidence),
+        ),
+    )
+
+    # Retrieval may use canonical labels later, but retrieval text never determines
+    # the semantic plan. Keep this derived and compact.
+    plan.retrieval_queries = [" ".join(plan.concepts)] if plan.concepts else []
     plan.confidence = max(0.0, min(plan.confidence, 1.0))
     return plan
-
-
-def _normalize_football(plan: SemanticPlan, folded: str, conversation: str) -> None:
-    physical_markers = (
-        "hsr", "high speed", "sprint", "distancia", "corrio", "gps", "velocidad",
-        "aceler", "desaceler", "carga externa", "metros por minuto",
-    )
-    if _has_any(conversation, physical_markers):
-        if plan.domain in {"general", "sports", "football"} or _has_any(
-            folded, ("hsr", "sprint", "corrio", "distancia", "rendimiento fisico")
-        ):
-            plan.domain = "physical_performance"
-        _add_unique(plan.concepts, "external load", "match exposure")
-
-    if "distancia total" in conversation or "total distance" in conversation:
-        _add_unique(plan.concepts, "total distance")
-    if _has_any(folded, ("por periodo", "por período", "periodo", "período")):
-        _add_unique(plan.concepts, "period")
-
-    if "hsr" in conversation or "high-speed running" in conversation or "high speed running" in conversation:
-        _add_unique(plan.concepts, "HSR", "high-speed running", "match exposure")
-
-    if "sprint" in conversation:
-        _add_unique(plan.concepts, "sprint", "speed threshold")
-
-    if _has_any(folded, ("estuvo peor", "estuvo mejor", "rendimiento")) and _has_any(
-        conversation, physical_markers
-    ):
-        _add_unique(plan.concepts, "physical performance", "external load", "match exposure")
-
-    if "rpe" in conversation or "esfuerzo percibido" in conversation:
-        if plan.domain in {"general", "sports", "football"}:
-            plan.domain = "internal_load"
-        _add_unique(plan.concepts, "RPE", "rating of perceived exertion", "internal load")
-
-    if _has_any(
-        conversation,
-        ("monitoreo de carga", "monitorizacion de carga", "monitoramento de carga", "load monitoring"),
-    ):
-        _add_unique(plan.concepts, "training load", "load monitoring")
-        if plan.domain in {"general", "sports", "football"}:
-            plan.domain = "physical_performance"
-
-    tactical_markers = (
-        "presion alta", "high press", "bloque alto", "bloque medio", "linea alta",
-        "salir largo", "salida larga", "juego largo", "build up", "build-up",
-        "transicion ofensiva", "contraataque", "posesion",
-    )
-    if _has_any(conversation, tactical_markers):
-        plan.domain = "tactical_analysis"
-
-    if _has_any(conversation, ("presion alta", "high press")):
-        _add_unique(plan.concepts, "high press", "pressing")
-    if "bloque medio" in conversation:
-        _add_unique(plan.concepts, "mid block")
-    if _has_any(folded, ("salir largo", "salida larga", "juego largo")):
-        _add_unique(plan.concepts, "long ball", "build-up")
-    if "transicion ofensiva" in conversation:
-        _add_unique(plan.concepts, "offensive transition", "possession transition")
-
-    if _has_any(conversation, ("lesion", "lesiones")) and _has_any(conversation, ("carga", "training load")):
-        _add_unique(plan.concepts, "injury", "training load", "causality")
-        if _has_any(folded, ("causo", "causa", "provoco", "provoca")):
-            plan.causal_claim_risk = True
-            plan.task_type = "interpretation"
-            plan.complexity = max(plan.complexity, 0.7)
