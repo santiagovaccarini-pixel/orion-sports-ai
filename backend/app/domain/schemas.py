@@ -94,6 +94,8 @@ class KnowledgeDocumentResponse(BaseModel):
 class StatusResponse(BaseModel):
     service: Literal["online"] = "online"
     version: str
+    model_provider: Literal["ollama", "cloudflare"] = "ollama"
+    model_provider_online: bool = False
     ollama_online: bool
     installed_models: list[str]
     quick_model: str
