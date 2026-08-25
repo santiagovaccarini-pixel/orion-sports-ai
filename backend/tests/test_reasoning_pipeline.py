@@ -6,7 +6,10 @@ from unittest.mock import AsyncMock, patch
 
 from backend.app.core.config import Settings
 from backend.app.domain.schemas import ChatRequest
-from backend.app.providers.model_provider import ModelResult
+from backend.app.providers.model_provider import (
+    ModelProviderUnavailableError,
+    ModelResult,
+)
 from backend.app.services.reasoning_pipeline import build_reasoning_bundle
 from backend.app.services.web_research import WebSource
 
@@ -24,6 +27,14 @@ class FakeProvider:
             model="test-model",
             thread_limit=0,
         )
+
+
+class FailingProvider:
+    name = "cloudflare"
+    uses_local_resources = False
+
+    async def chat(self, **_kwargs):
+        raise ModelProviderUnavailableError("etapa interna temporalmente no disponible")
 
 
 PLAN = """
@@ -131,6 +142,35 @@ class ReasoningPipelineTests(unittest.TestCase):
             )
         self.assertEqual(search.await_count, 1)
         self.assertFalse(bundle.review.sufficient)
+
+    def test_internal_model_failure_degrades_instead_of_aborting_chat(self) -> None:
+        provider = FailingProvider()
+        settings = Settings(
+            web_enabled=True,
+            web_provider="tavily",
+            tavily_api_key="test",
+            semantic_orchestration=True,
+        )
+        request = ChatRequest(
+            messages=[{"role": "user", "content": "Pregunta sin patrón predefinido"}]
+        )
+        evidence = (
+            WebSource("Fuente", "https://a.test", "dato verificable", "a.test"),
+        )
+        with patch(
+            "backend.app.services.reasoning_pipeline.research",
+            new=AsyncMock(return_value=evidence),
+        ) as search:
+            bundle = asyncio.run(
+                build_reasoning_bundle(provider, request, settings, [])
+            )
+
+        self.assertEqual(search.await_count, 1)
+        self.assertEqual(bundle.plan.web_query, request.messages[-1].content)
+        self.assertFalse(bundle.review.sufficient)
+        self.assertEqual(bundle.review.relevant_source_ids, ("W1",))
+        self.assertIn("no pudo completarse", bundle.review.missing_information[0])
+        self.assertEqual(bundle.web_sources, evidence)
 
 
 if __name__ == "__main__":
