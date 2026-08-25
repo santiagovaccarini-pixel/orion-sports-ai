@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import json
 import unittest
+from dataclasses import replace
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
 from backend.app.core.config import Settings
 from backend.app.domain.models import SelectedMode
-from backend.app.domain.schemas import SportContext
 from backend.app.main import app
 from backend.app.providers.model_provider import ModelProviderStatus, ModelStreamEvent
 from backend.app.services.reasoning_pipeline import ReasoningBundle
@@ -135,12 +135,10 @@ class SemanticStreamRouteTests(unittest.TestCase):
     def test_semantic_plan_can_ask_clarification_without_final_generation(self) -> None:
         provider = RecordingCloudProvider()
         bundle = semantic_bundle()
-        plan = SemanticPlan(
-            **{
-                **bundle.plan.__dict__,
-                "needs_clarification": True,
-                "clarifying_question": "¿A qué período te referís?",
-            }
+        plan = replace(
+            bundle.plan,
+            needs_clarification=True,
+            clarifying_question="¿A qué período te referís?",
         )
         clarification_bundle = ReasoningBundle(
             plan=plan,
