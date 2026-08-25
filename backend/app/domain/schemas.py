@@ -106,7 +106,4 @@ class StatusResponse(BaseModel):
     snapshot: SystemSnapshotResponse
     memory_enabled: Literal[False] = False
     web_enabled: bool = False
-    web_provider: Literal["auto", "tavily", "duckduckgo"] = "auto"
     web_minimum_sources: int = 4
-    semantic_orchestration: bool = False
-    semantic_max_tool_rounds: int = 2
