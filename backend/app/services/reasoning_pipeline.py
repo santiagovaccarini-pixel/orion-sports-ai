@@ -6,7 +6,10 @@ from typing import Sequence
 from backend.app.core.config import Settings
 from backend.app.domain.models import SelectedMode
 from backend.app.domain.schemas import ChatRequest, RequestedMode
-from backend.app.providers.model_provider import ModelProvider
+from backend.app.providers.model_provider import (
+    ModelProvider,
+    ModelProviderUnavailableError,
+)
 from backend.app.services.knowledge_base import KnowledgeDocument
 from backend.app.services.semantic_orchestrator import (
     EvidenceReview,
@@ -47,7 +50,9 @@ async def _plan(
             documents=documents,
             sport=request.sport,
         )
-    except SemanticOrchestrationError:
+    except (SemanticOrchestrationError, ModelProviderUnavailableError):
+        # An auxiliary planning failure must not take the whole chat down. The
+        # fallback deliberately avoids lexical classification and gathers broadly.
         return conservative_fallback_plan(
             request.messages,
             web_available=settings.web_enabled,
@@ -85,7 +90,9 @@ async def _review(
 ) -> EvidenceReview:
     try:
         return await review_evidence(provider, plan, web_sources, local_evidence)
-    except SemanticOrchestrationError:
+    except (SemanticOrchestrationError, ModelProviderUnavailableError):
+        # Preserve already retrieved evidence even if the reviewer model fails.
+        # The final answer is explicitly instructed to remain provisional.
         return _fallback_review(plan, web_sources)
 
 
@@ -113,6 +120,8 @@ async def build_reasoning_bundle(
 
     The model decides tool use semantically. Python only executes those decisions and
     enforces bounded tool rounds; it does not map user words to meanings or answers.
+    Auxiliary reasoning failures degrade conservatively instead of surfacing a raw
+    infrastructure error to the user.
     """
 
     plan = await _plan(provider, request, settings, documents)
