@@ -66,34 +66,42 @@ def _selected_mode(request: ChatRequest, plan: SemanticPlan) -> SelectedMode:
     return SelectedMode(request.mode.value)
 
 
-def _fallback_review(plan: SemanticPlan, web_sources: Sequence[WebSource]) -> EvidenceReview:
+def _fallback_review(plan: SemanticPlan) -> EvidenceReview:
     return EvidenceReview(
         sufficient=False,
-        relevant_source_ids=tuple(
-            f"W{index}" for index in range(1, len(web_sources) + 1)
-        ),
+        relevant_source_ids=(),
         discarded_source_ids=(),
         missing_information=("La revisión semántica de la evidencia no pudo completarse.",),
         follow_up_web_query=None,
         needs_clarification=False,
         clarifying_question=None,
         resolved_scope=None,
-        reason="Fallback conservador de revisión; no afirmar más de lo que muestran las fuentes.",
+        reason=(
+            "Fallback conservador de revisión: ninguna fuente queda validada "
+            "automáticamente cuando falla la etapa crítica."
+        ),
     )
 
 
 async def _review(
     provider: ModelProvider,
+    request: ChatRequest,
     plan: SemanticPlan,
     web_sources: Sequence[WebSource],
     local_evidence: Sequence[LocalEvidence],
 ) -> EvidenceReview:
     try:
-        return await review_evidence(provider, plan, web_sources, local_evidence)
+        return await review_evidence(
+            provider,
+            plan,
+            web_sources,
+            local_evidence,
+            messages=request.messages,
+        )
     except (SemanticOrchestrationError, ModelProviderUnavailableError):
-        # Preserve already retrieved evidence even if the reviewer model fails.
-        # The final answer is explicitly instructed to remain provisional.
-        return _fallback_review(plan, web_sources)
+        # Preserve already retrieved evidence for the final model, but do not mark
+        # any source as semantically validated if the critic itself failed.
+        return _fallback_review(plan)
 
 
 async def _search(
@@ -120,8 +128,8 @@ async def build_reasoning_bundle(
 
     The model decides tool use semantically. Python only executes those decisions and
     enforces bounded tool rounds; it does not map user words to meanings or answers.
-    Auxiliary reasoning failures degrade conservatively instead of surfacing a raw
-    infrastructure error to the user.
+    The critic always receives the original conversation so it can reject a plan that
+    silently changed scope. Auxiliary reasoning failures degrade conservatively.
     """
 
     plan = await _plan(provider, request, settings, documents)
@@ -138,7 +146,7 @@ async def build_reasoning_bundle(
         initial_query = plan.web_query or plan.objective
         web_sources = await _search(initial_query, settings)
 
-    review = await _review(provider, plan, web_sources, local_evidence)
+    review = await _review(provider, request, plan, web_sources, local_evidence)
 
     rounds = 1 if plan.use_web and settings.web_enabled else 0
     while (
@@ -151,9 +159,15 @@ async def build_reasoning_bundle(
         incoming = await _search(review.follow_up_web_query, settings)
         web_sources = merge_web_sources(web_sources, incoming)
         rounds += 1
-        review = await _review(provider, plan, web_sources, local_evidence)
+        review = await _review(provider, request, plan, web_sources, local_evidence)
 
-    context = format_reasoning_context(plan, review, web_sources, local_evidence)
+    context = format_reasoning_context(
+        plan,
+        review,
+        web_sources,
+        local_evidence,
+        original_user_request=request.messages[-1].content,
+    )
     return ReasoningBundle(
         plan=plan,
         review=review,
