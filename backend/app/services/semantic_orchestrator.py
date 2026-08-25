@@ -12,6 +12,9 @@ from backend.app.services.knowledge_base import KnowledgeDocument
 from backend.app.services.web_research import WebSource
 
 
+MAX_REVIEW_INPUT_CHARACTERS = 19_000
+
+
 class SemanticOrchestrationError(RuntimeError):
     """Raised when a structured semantic decision cannot be interpreted safely."""
 
@@ -163,15 +166,31 @@ def _extract_json_object(value: str) -> dict[str, object]:
 def _strings(payload: dict[str, object], key: str) -> tuple[str, ...]:
     value = payload.get(key, [])
     if not isinstance(value, list):
-        return ()
+        raise SemanticOrchestrationError(f"{key} debe ser una lista.")
     return tuple(str(item).strip() for item in value if str(item).strip())
+
+
+def _boolean(
+    payload: dict[str, object],
+    key: str,
+    *,
+    default: bool = False,
+) -> bool:
+    if key not in payload:
+        return default
+    value = payload[key]
+    if isinstance(value, bool):
+        return value
+    raise SemanticOrchestrationError(f"{key} debe ser booleano, no {type(value).__name__}.")
 
 
 def _optional_string(payload: dict[str, object], key: str) -> str | None:
     value = payload.get(key)
     if value is None:
         return None
-    clean = str(value).strip()
+    if not isinstance(value, str):
+        raise SemanticOrchestrationError(f"{key} debe ser texto o null.")
+    clean = value.strip()
     return clean or None
 
 
@@ -191,11 +210,11 @@ def parse_semantic_plan(value: str) -> SemanticPlan:
         references=_strings(payload, "references"),
         information_needed=_strings(payload, "information_needed"),
         ambiguities=_strings(payload, "ambiguities"),
-        use_web=bool(payload.get("use_web", False)),
-        use_local_data=bool(payload.get("use_local_data", False)),
-        use_calculator=bool(payload.get("use_calculator", False)),
-        use_chart=bool(payload.get("use_chart", False)),
-        needs_clarification=bool(payload.get("needs_clarification", False)),
+        use_web=_boolean(payload, "use_web"),
+        use_local_data=_boolean(payload, "use_local_data"),
+        use_calculator=_boolean(payload, "use_calculator"),
+        use_chart=_boolean(payload, "use_chart"),
+        needs_clarification=_boolean(payload, "needs_clarification"),
         clarifying_question=_optional_string(payload, "clarifying_question"),
         web_query=_optional_string(payload, "web_query"),
         local_document_names=_strings(payload, "local_document_names"),
@@ -207,12 +226,12 @@ def parse_semantic_plan(value: str) -> SemanticPlan:
 def parse_evidence_review(value: str) -> EvidenceReview:
     payload = _extract_json_object(value)
     return EvidenceReview(
-        sufficient=bool(payload.get("sufficient", False)),
+        sufficient=_boolean(payload, "sufficient"),
         relevant_source_ids=_strings(payload, "relevant_source_ids"),
         discarded_source_ids=_strings(payload, "discarded_source_ids"),
         missing_information=_strings(payload, "missing_information"),
         follow_up_web_query=_optional_string(payload, "follow_up_web_query"),
-        needs_clarification=bool(payload.get("needs_clarification", False)),
+        needs_clarification=_boolean(payload, "needs_clarification"),
         clarifying_question=_optional_string(payload, "clarifying_question"),
         resolved_scope=_optional_string(payload, "resolved_scope"),
         reason=str(payload.get("reason") or "Revisión semántica de evidencia.").strip(),
@@ -270,12 +289,7 @@ def conservative_fallback_plan(
     web_available: bool,
     documents: Sequence[KnowledgeDocument],
 ) -> SemanticPlan:
-    """Safe fallback when structured planning fails.
-
-    It intentionally does not classify the question with keywords. It searches the
-    original question broadly when web is available and exposes local documents when
-    any exist, preferring extra evidence over a guessed interpretation.
-    """
+    """Safe fallback when structured planning fails without lexical classification."""
 
     question = messages[-1].content.strip()
     return SemanticPlan(
@@ -346,11 +360,21 @@ def merge_web_sources(
     return tuple(merged)
 
 
+def _clip(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    if limit <= 1:
+        return value[:limit]
+    return value[: limit - 1].rstrip() + "…"
+
+
 def _review_input(
     plan: SemanticPlan,
     web_sources: Sequence[WebSource],
     local_evidence: Sequence[LocalEvidence],
 ) -> str:
+    """Build reviewer input below ChatMessage's 20k validation ceiling."""
+
     plan_payload = {
         "objective": plan.objective,
         "entities": list(plan.entities),
@@ -358,30 +382,33 @@ def _review_input(
         "information_needed": list(plan.information_needed),
         "ambiguities": list(plan.ambiguities),
     }
-    parts = ["PLAN INTERPRETADO:\n" + json.dumps(plan_payload, ensure_ascii=False)]
+    parts = [
+        "PLAN INTERPRETADO:\n"
+        + _clip(json.dumps(plan_payload, ensure_ascii=False), 3_500)
+    ]
+
     if web_sources:
-        parts.append(
-            "EVIDENCIA WEB:\n"
-            + "\n\n".join(
-                f"W{index} | {source.title}\nURL: {source.url}\n"
-                f"Dominio: {source.domain}\nExtracto: {source.excerpt}"
-                for index, source in enumerate(web_sources, start=1)
-            )
-        )
+        web_blocks = [
+            f"W{index} | {source.title}\nURL: {source.url}\n"
+            f"Dominio: {source.domain}\nExtracto: {_clip(source.excerpt, 1_100)}"
+            for index, source in enumerate(web_sources, start=1)
+        ]
+        parts.append("EVIDENCIA WEB:\n" + "\n\n".join(web_blocks))
     else:
         parts.append("EVIDENCIA WEB: ninguna.")
+
     if local_evidence:
-        parts.append(
-            "EVIDENCIA LOCAL:\n"
-            + "\n\n".join(
-                f"{item.source_id} | {item.document_name}"
-                f"{' | TRUNCADO' if item.truncated else ''}\n{item.content}"
-                for item in local_evidence
-            )
-        )
+        local_blocks = [
+            f"{item.source_id} | {item.document_name}"
+            f"{' | TRUNCADO' if item.truncated else ''}\n{_clip(item.content, 2_000)}"
+            for item in local_evidence
+        ]
+        parts.append("EVIDENCIA LOCAL:\n" + "\n\n".join(local_blocks))
     else:
         parts.append("EVIDENCIA LOCAL: ninguna.")
-    return "\n\n".join(parts)
+
+    combined = "\n\n".join(parts)
+    return _clip(combined, MAX_REVIEW_INPUT_CHARACTERS)
 
 
 async def review_evidence(
@@ -404,7 +431,12 @@ async def review_evidence(
         )
     result = await provider.chat(
         mode=SelectedMode.QUICK,
-        messages=[ChatMessage(role="user", content=_review_input(plan, web_sources, local_evidence))],
+        messages=[
+            ChatMessage(
+                role="user",
+                content=_review_input(plan, web_sources, local_evidence),
+            )
+        ],
         system_prompt=REVIEW_PROMPT + f"\n\nFecha actual: {date.today().isoformat()}",
     )
     return parse_evidence_review(result.content)
