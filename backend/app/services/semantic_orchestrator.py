@@ -294,6 +294,7 @@ async def create_semantic_plan(
         mode=SelectedMode.QUICK,
         messages=recent,
         system_prompt=system_prompt,
+        structured=True,
     )
     return parse_semantic_plan(result.content)
 
@@ -453,6 +454,7 @@ async def review_evidence(
             )
         ],
         system_prompt=REVIEW_PROMPT + f"\n\nFecha actual: {date.today().isoformat()}",
+        structured=True,
     )
     return parse_evidence_review(result.content)
 
