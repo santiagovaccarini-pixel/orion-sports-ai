@@ -34,6 +34,11 @@ class DeploymentConfigTests(unittest.TestCase):
         self.assertIn("--port $PORT", content)
         self.assertIn("healthCheckPath: /api/v1/health", content)
 
+    def test_cloud_prototype_enables_bounded_web_verification(self) -> None:
+        content = RENDER_YAML.read_text(encoding="utf-8")
+        self.assertIn("- key: ORION_WEB_ENABLED\n        value: \"true\"", content)
+        self.assertIn("- key: ORION_WEB_MINIMUM_SOURCES\n        value: \"3\"", content)
+
 
 if __name__ == "__main__":
     unittest.main()
