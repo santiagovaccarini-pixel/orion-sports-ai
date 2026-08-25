@@ -71,6 +71,10 @@ Reglas obligatorias:
   por el significado de la conversación completa.
 - Resolvé referencias conversacionales como «eso», «lo mismo», «hacelo con 5» usando
   el contexto previo cuando exista.
+- Conservá el alcance que realmente pidió el usuario. No agregues por conveniencia un
+  período, competición, población, filtro, unidad o recorte que no surja de la
+  conversación. Si el usuario no fijó una restricción temporal, no la inventes para
+  adaptar la pregunta a una fuente más fácil de encontrar.
 - No supongas que un dato del modelo está actualizado. Si el hecho puede haber
   cambiado con el tiempo y la respuesta necesita el valor actual, planificá evidencia
   externa verificable cuando la herramienta web esté disponible.
@@ -120,6 +124,10 @@ Reglas obligatorias:
   explícita puede ser suficiente; muchas fuentes irrelevantes no lo son.
 - Comprobá entidad, alcance, período, competición/contexto, unidad y fecha antes de
   tratar dos cifras como comparables.
+- Una fuente que cubre un alcance más estrecho no responde por sí sola una pregunta de
+  alcance más amplio. No reemplaces silenciosamente el objetivo del usuario por la
+  temporada, competición, período o subconjunto que casualmente aparezca en una
+  fuente. Si falta evidencia del alcance real, buscá de nuevo o marcá que falta.
 - Si dos cifras parecen contradictorias, primero evaluá si en realidad miden cosas
   distintas. No las presentes como discrepancia del mismo dato sin demostrarlo.
 - Priorizá evidencia primaria, explícita, reciente y directamente relacionada con la
