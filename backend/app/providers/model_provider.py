@@ -86,6 +86,7 @@ class ModelProvider(Protocol):
         mode: SelectedMode,
         messages: list[ChatMessage],
         system_prompt: str,
+        structured: bool = False,
     ) -> ModelResult: ...
 
     def chat_stream(
@@ -145,7 +146,12 @@ class OllamaModelProvider:
         mode: SelectedMode,
         messages: list[ChatMessage],
         system_prompt: str,
+        structured: bool = False,
     ) -> ModelResult:
+        # Ollama keeps its existing transport; the semantic prompt already requests
+        # JSON. The structured flag is accepted so the provider interface stays
+        # interchangeable with cloud providers.
+        _ = structured
         model = self.model_for(mode)
         try:
             result = await self.client.chat(
@@ -244,12 +250,14 @@ class CloudflareModelProvider:
         mode: SelectedMode,
         messages: list[ChatMessage],
         system_prompt: str,
+        structured: bool = False,
     ) -> ModelResult:
         try:
             result = await self.client.chat(
                 mode=mode,
                 messages=messages,
                 system_prompt=system_prompt,
+                structured=structured,
             )
         except CloudAIConfigurationError as exc:
             raise ModelProviderConfigurationError(str(exc)) from exc
