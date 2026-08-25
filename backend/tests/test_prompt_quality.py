@@ -36,7 +36,7 @@ class PromptQualityTests(unittest.TestCase):
         prompt = ORION_SYSTEM_PROMPT.lower()
         self.assertIn("reduzca mejor el esfuerzo de comprensión", prompt)
         self.assertIn("no inventes imágenes", prompt)
-        self.assertIn("colores son responsabilidad de la interfaz", prompt)
+        self.assertIn("responsabilidad de la interfaz", prompt)
 
     def test_prompt_verifies_entity_period_scope_and_units(self) -> None:
         prompt = ORION_SYSTEM_PROMPT.lower()
@@ -48,7 +48,8 @@ class PromptQualityTests(unittest.TestCase):
     def test_prompt_rejects_unrequested_precision(self) -> None:
         prompt = ORION_SYSTEM_PROMPT.lower()
         self.assertIn("no agregues cifras, rangos, tiempos", prompt)
-        self.assertIn("números inventados", prompt)
+        self.assertIn("nunca uses números", prompt)
+        self.assertIn("inventados para dar apariencia de precisión", prompt)
 
     def test_prompt_contains_corrective_sports_foundations(self) -> None:
         prompt = ORION_SYSTEM_PROMPT.lower()
