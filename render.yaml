@@ -24,5 +24,13 @@ services:
         value: "@cf/openai/gpt-oss-20b"
       - key: ORION_WEB_ENABLED
         value: "true"
+      - key: ORION_WEB_PROVIDER
+        value: "auto"
+      - key: ORION_TAVILY_API_KEY
+        sync: false
       - key: ORION_WEB_MINIMUM_SOURCES
         value: "3"
+      - key: ORION_SEMANTIC_ORCHESTRATION
+        value: "true"
+      - key: ORION_SEMANTIC_MAX_TOOL_ROUNDS
+        value: "2"
