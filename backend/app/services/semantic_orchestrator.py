@@ -78,8 +78,12 @@ Reglas obligatorias:
   ninguna, una o ambas según lo que realmente necesite la pregunta.
 - No inventes que un documento contiene un dato. Solo podés elegir documentos que
   aparezcan en el catálogo disponible.
-- Pedí aclaración únicamente si una ambigüedad cambia materialmente la respuesta y no
-  puede resolverse razonablemente con el contexto o con investigación.
+- No interrumpas automáticamente una consulta breve solo porque admita más de un
+  alcance razonable. Si el contexto, el uso ordinario o la investigación permiten
+  adoptar una interpretación defendible, investigá y dejá que la respuesta explicite
+  el alcance adoptado. Pedí aclaración únicamente cuando varias interpretaciones
+  sigan siendo materialmente distintas y ninguna pueda resolverse razonablemente con
+  contexto o evidencia; en acciones destructivas o sensibles, preferí aclarar.
 - La consulta de búsqueda web debe surgir del objetivo entendido, no de una regla
   escrita para un jugador, deporte, métrica o frase particular.
 - Recomendá modo quick para consultas directas y deep cuando haga falta análisis,
@@ -124,7 +128,10 @@ Reglas obligatorias:
 - Si falta información y una búsqueda adicional puede resolverla, proponé UNA nueva
   consulta web semánticamente dirigida a lo que falta. No uses reglas particulares
   para nombres, frases o deportes.
-- Pedí aclaración solo si buscar más no resolvería una ambigüedad material.
+- Si la evidencia permite sostener una interpretación razonable del alcance, marcala
+  en resolved_scope y continuá. Pedí aclaración solo cuando buscar más no resolvería
+  una ambigüedad material o cuando elegir por cuenta propia pueda producir una acción
+  sensible o destructiva.
 
 Devolvé exclusivamente un objeto JSON válido con estas claves:
 {
