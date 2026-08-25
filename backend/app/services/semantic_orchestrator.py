@@ -116,30 +116,36 @@ Devolvé exclusivamente un objeto JSON válido con estas claves:
 
 
 REVIEW_PROMPT = """
-Sos la etapa de revisión de evidencia de Orion. No contestes todavía la pregunta del
-usuario. Evaluá si la evidencia reunida permite responder el objetivo interpretado.
+Sos la etapa crítica de revisión de Orion. No contestes todavía al usuario. Auditá
+tres cosas de forma independiente: la conversación original, el plan interpretado y
+la evidencia reunida. La conversación original es la fuente de verdad sobre lo que
+pidió el usuario; el plan puede estar equivocado y no debe validarse por defecto.
 
 Reglas obligatorias:
+- Primero compará el plan con la conversación original. Si el plan agregó, quitó o
+  cambió materialmente un período, competición, población, filtro, unidad, entidad o
+  alcance que no surge de la conversación, consideralo una interpretación defectuosa.
+  En ese caso no declares evidencia suficiente para ese plan deformado: proponé una
+  nueva consulta web basada en el pedido original, salvo que realmente haga falta una
+  aclaración del usuario.
 - No uses cantidad fija de fuentes como criterio de verdad. Una fuente primaria y
   explícita puede ser suficiente; muchas fuentes irrelevantes no lo son.
-- Comprobá entidad, alcance, período, competición/contexto, unidad y fecha antes de
-  tratar dos cifras como comparables.
-- Una fuente que cubre un alcance más estrecho no responde por sí sola una pregunta de
-  alcance más amplio. No reemplaces silenciosamente el objetivo del usuario por la
-  temporada, competición, período o subconjunto que casualmente aparezca en una
-  fuente. Si falta evidencia del alcance real, buscá de nuevo o marcá que falta.
+- Una fuente solo puede ser relevante si responde a la misma entidad, métrica,
+  alcance, período, competición/contexto y unidad que requiere la conversación. Un
+  dato de un subconjunto no demuestra automáticamente el total del conjunto.
+- Comprobá fecha y actualidad cuando el dato pueda cambiar con el tiempo.
 - Si dos cifras parecen contradictorias, primero evaluá si en realidad miden cosas
   distintas. No las presentes como discrepancia del mismo dato sin demostrarlo.
 - Priorizá evidencia primaria, explícita, reciente y directamente relacionada con la
-  pregunta. La actualidad importa cuando el dato cambia con el tiempo.
+  pregunta.
 - No completes huecos con conocimiento de memoria del modelo.
 - Si falta información y una búsqueda adicional puede resolverla, proponé UNA nueva
-  consulta web semánticamente dirigida a lo que falta. No uses reglas particulares
-  para nombres, frases o deportes.
-- Si la evidencia permite sostener una interpretación razonable del alcance, marcala
-  en resolved_scope y continuá. Pedí aclaración solo cuando buscar más no resolvería
-  una ambigüedad material o cuando elegir por cuenta propia pueda producir una acción
-  sensible o destructiva.
+  consulta web semánticamente dirigida a lo que falta y al alcance original. No uses
+  reglas particulares para nombres, frases, métricas o deportes.
+- Si la evidencia permite sostener una interpretación razonable del alcance original,
+  marcala en resolved_scope y continuá. Pedí aclaración solo cuando buscar más no
+  resolvería una ambigüedad material o cuando elegir por cuenta propia pueda producir
+  una acción sensible o destructiva.
 
 Devolvé exclusivamente un objeto JSON válido con estas claves:
 {
@@ -384,10 +390,21 @@ def _clip(value: str, limit: int) -> str:
     return value[: limit - 1].rstrip() + "…"
 
 
+def _conversation_input(messages: Sequence[ChatMessage]) -> str:
+    if not messages:
+        return "(no disponible)"
+    blocks = [
+        f"{message.role.upper()}: {_clip(message.content, 1_500)}"
+        for message in messages[-12:]
+    ]
+    return _clip("\n".join(blocks), 5_000)
+
+
 def _review_input(
     plan: SemanticPlan,
     web_sources: Sequence[WebSource],
     local_evidence: Sequence[LocalEvidence],
+    messages: Sequence[ChatMessage] = (),
 ) -> str:
     """Build reviewer input below ChatMessage's 20k validation ceiling."""
 
@@ -399,8 +416,10 @@ def _review_input(
         "ambiguities": list(plan.ambiguities),
     }
     parts = [
-        "PLAN INTERPRETADO:\n"
-        + _clip(json.dumps(plan_payload, ensure_ascii=False), 3_500)
+        "CONVERSACIÓN ORIGINAL (fuente de verdad sobre el pedido):\n"
+        + _conversation_input(messages),
+        "PLAN INTERPRETADO (puede contener errores y debe auditarse):\n"
+        + _clip(json.dumps(plan_payload, ensure_ascii=False), 3_500),
     ]
 
     if web_sources:
@@ -432,6 +451,8 @@ async def review_evidence(
     plan: SemanticPlan,
     web_sources: Sequence[WebSource],
     local_evidence: Sequence[LocalEvidence],
+    *,
+    messages: Sequence[ChatMessage] = (),
 ) -> EvidenceReview:
     if not web_sources and not local_evidence:
         return EvidenceReview(
@@ -450,7 +471,7 @@ async def review_evidence(
         messages=[
             ChatMessage(
                 role="user",
-                content=_review_input(plan, web_sources, local_evidence),
+                content=_review_input(plan, web_sources, local_evidence, messages),
             )
         ],
         system_prompt=REVIEW_PROMPT + f"\n\nFecha actual: {date.today().isoformat()}",
@@ -464,9 +485,12 @@ def format_reasoning_context(
     review: EvidenceReview,
     web_sources: Sequence[WebSource],
     local_evidence: Sequence[LocalEvidence],
+    *,
+    original_user_request: str | None = None,
 ) -> str:
     header = {
-        "objective": plan.objective,
+        "original_user_request": original_user_request,
+        "planned_objective": plan.objective,
         "entities": list(plan.entities),
         "constraints": list(plan.constraints),
         "resolved_scope": review.resolved_scope,
@@ -478,10 +502,13 @@ def format_reasoning_context(
     sections = [
         "CONTEXTO DE ORQUESTACIÓN SEMÁNTICA (no lo repitas al usuario):\n"
         + json.dumps(header, ensure_ascii=False),
-        "Usá la evidencia según la revisión. No conviertas fuentes descartadas en hechos. "
-        "Si la revisión dice que la evidencia no alcanza, respondé con el mejor dato "
-        "provisional que esté realmente respaldado o explicá brevemente qué falta; nunca "
-        "completes con memoria del modelo. Citá evidencia web como [W1], [W2], etc.",
+        "La petición original del usuario manda sobre el plan. Si entran en conflicto, "
+        "no adoptes silenciosamente el alcance del plan. Usá solo evidencia compatible "
+        "con el pedido original y con la revisión. No conviertas fuentes descartadas en "
+        "hechos. Si evidence_sufficient es false, no presentes una cifra o conclusión "
+        "como confirmada; explicá brevemente qué falta o, si hay evidencia parcial útil, "
+        "identificá exactamente qué alcance sí respalda. Nunca completes huecos con "
+        "memoria del modelo. Citá evidencia web como [W1], [W2], etc.",
     ]
     if web_sources:
         sections.append(
