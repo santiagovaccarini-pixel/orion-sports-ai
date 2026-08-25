@@ -23,4 +23,6 @@ services:
       - key: ORION_CLOUDFLARE_DEEP_MODEL
         value: "@cf/openai/gpt-oss-20b"
       - key: ORION_WEB_ENABLED
-        value: "false"
+        value: "true"
+      - key: ORION_WEB_MINIMUM_SOURCES
+        value: "3"
