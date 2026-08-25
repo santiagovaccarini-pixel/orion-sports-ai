@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -32,8 +33,6 @@ DEFAULT_ALLOWED_DOMAINS = (
     "365scores.com",
 )
 
-# Domains that are especially useful for current football facts. They are tried
-# first so a simple statistics question does not fan out over the whole allowlist.
 FOOTBALL_STATS_DOMAINS = (
     "bocajuniors.com.ar",
     "afa.com.ar",
@@ -122,7 +121,6 @@ def is_web_request(query: str) -> bool:
     ):
         return True
 
-    # Safety net for natural variants such as "qué cantidad de goles lleva X".
     folded = _fold(query)
     asks_amount = bool(re.search(r"\b(cuantos?|cantidad|numero)\b", folded))
     asks_live_stat = bool(
@@ -168,8 +166,6 @@ def _visible_text(value: str) -> str:
 
 
 def _relevant_excerpt(value: str, query: str, limit: int = 1400) -> str:
-    """Return the densest query-related window instead of the page header."""
-
     visible = _visible_text(value)
     if len(visible) <= limit:
         return visible
@@ -241,8 +237,6 @@ def _extract_search_urls(
     html: str,
     allowed_domains: tuple[str, ...],
 ) -> tuple[str, ...]:
-    """Extract allowed result URLs without depending on one DuckDuckGo CSS class."""
-
     candidates = re.findall(r'href=["\']([^"\']+)["\']', html, re.IGNORECASE)
     urls: list[str] = []
     for candidate in candidates:
@@ -259,8 +253,6 @@ def _tavily_sources(
     allowed_domains: tuple[str, ...],
     limit: int,
 ) -> tuple[WebSource, ...]:
-    """Normalize Tavily JSON into Orion sources and enforce Orion's allowlist."""
-
     if not isinstance(payload, dict):
         return ()
     raw_results = payload.get("results")
@@ -344,7 +336,6 @@ async def _discover_duckduckgo_urls(
                 search = await client.get(template.format(query=encoded))
                 search.raise_for_status()
             except httpx.HTTPError:
-                # One blocked search endpoint must not zero out the whole research run.
                 continue
             for target in _extract_search_urls(search.text, allowed_domains):
                 if target not in urls:
@@ -412,16 +403,10 @@ async def research(
     provider: str = "auto",
     tavily_api_key: str | None = None,
 ) -> tuple[WebSource, ...]:
-    """Research the web using an interchangeable provider with safe fallback.
-
-    `auto` prefers Tavily when a key is configured, then falls back to the
-    DuckDuckGo discovery path. The fallback remains available so Orion is not
-    locked to one external search provider.
-    """
-
-    selected_provider = provider.strip().lower()
-    if selected_provider not in {"auto", "tavily", "duckduckgo"}:
+    configured_provider = os.getenv("ORION_WEB_PROVIDER", provider).strip().lower()
+    if configured_provider not in {"auto", "tavily", "duckduckgo"}:
         raise ValueError("Proveedor web no válido.")
+    configured_tavily_key = tavily_api_key or os.getenv("ORION_TAVILY_API_KEY") or None
 
     headers = {"User-Agent": "Orion-Research/0.3"}
     async with httpx.AsyncClient(
@@ -429,18 +414,18 @@ async def research(
         headers=headers,
         follow_redirects=True,
     ) as client:
-        if selected_provider in {"auto", "tavily"} and tavily_api_key:
+        if configured_provider in {"auto", "tavily"} and configured_tavily_key:
             sources = await _research_tavily(
                 client,
                 query,
-                api_key=tavily_api_key,
+                api_key=configured_tavily_key,
                 allowed_domains=allowed_domains,
                 minimum_sources=minimum_sources,
             )
-            if len(sources) >= minimum_sources or selected_provider == "tavily":
+            if len(sources) >= minimum_sources or configured_provider == "tavily":
                 return sources
 
-        if selected_provider == "tavily":
+        if configured_provider == "tavily":
             return ()
 
         return await _research_duckduckgo(
