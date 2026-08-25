@@ -7,6 +7,8 @@ from backend.app.services.web_research import (
     DEFAULT_ALLOWED_DOMAINS,
     WebSource,
     _allowed,
+    _relevant_excerpt,
+    _search_domains,
     format_sources,
     is_web_request,
 )
@@ -64,6 +66,25 @@ class WebResearchTests(unittest.TestCase):
 
     def test_detects_current_sports_questions_without_explicit_web_word(self) -> None:
         self.assertTrue(is_web_request("¿Cuántos goles hizo un jugador esta temporada?"))
+        self.assertTrue(is_web_request("¿Qué cantidad de goles lleva Miguel Merentiel?"))
+
+    def test_current_goal_questions_prioritize_football_sources(self) -> None:
+        domains = _search_domains("¿Cuántos goles tiene Messi?", DEFAULT_ALLOWED_DOMAINS)
+        self.assertEqual(domains[0], "bocajuniors.com.ar")
+        self.assertLess(domains.index("espn.com.ar"), domains.index("fifa.com"))
+
+    def test_relevant_excerpt_keeps_statistic_far_from_page_header(self) -> None:
+        html = (
+            "<html><body>" + ("Menú navegación patrocinadores " * 120)
+            + "Miguel Merentiel registra 50 goles en Boca Juniors en partidos oficiales. "
+            + ("Noticias relacionadas " * 120) + "</body></html>"
+        )
+
+        excerpt = _relevant_excerpt(html, "¿Cuántos goles tiene Miguel Merentiel en Boca?")
+
+        self.assertIn("Miguel Merentiel", excerpt)
+        self.assertIn("50 goles", excerpt)
+        self.assertIn("Boca Juniors", excerpt)
 
     def test_extracts_duckduckgo_result_links(self) -> None:
         self.assertTrue(_allowed("https://www.espn.com.ar/futbol", DEFAULT_ALLOWED_DOMAINS))
