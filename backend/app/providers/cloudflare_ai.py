@@ -40,6 +40,8 @@ class CloudAIStreamEvent:
 TRANSIENT_HTTP_STATUSES = frozenset({502, 503, 504})
 TRANSIENT_RETRY_DELAYS_SECONDS = (0.35, 0.9)
 STRUCTURED_MIN_MAX_TOKENS = 1536
+FINAL_VISIBLE_RESCUE_MIN_MAX_TOKENS = 1536
+FINAL_VISIBLE_RESCUE_MAX_MAX_TOKENS = 3072
 
 
 def _selected_model(settings: Settings, mode: SelectedMode) -> str:
@@ -55,6 +57,13 @@ def _max_tokens(settings: Settings, mode: SelectedMode) -> int:
         settings.quick_max_tokens
         if mode is SelectedMode.QUICK
         else settings.deep_max_tokens
+    )
+
+
+def _visible_rescue_max_tokens(current: int) -> int:
+    return min(
+        max(current * 2, FINAL_VISIBLE_RESCUE_MIN_MAX_TOKENS),
+        FINAL_VISIBLE_RESCUE_MAX_MAX_TOKENS,
     )
 
 
@@ -161,6 +170,8 @@ class CloudflareAIClient:
     Las llamadas internas de razonamiento usan completions completas (no streaming).
     El streaming queda reservado para la respuesta visible del chat. Las etapas
     estructuradas pueden activar JSON Mode y un presupuesto de salida algo mayor.
+    Si un modelo de razonamiento consume todo el presupuesto visible sin emitir texto
+    final, se permite un único rescate acotado con más tokens.
     """
 
     def __init__(self, settings: Settings) -> None:
@@ -272,13 +283,14 @@ class CloudflareAIClient:
             stream=True,
         )
 
-        last_status_error: httpx.HTTPStatusError | None = None
-        attempt_count = len(TRANSIENT_RETRY_DELAYS_SECONDS) + 1
+        transient_failures = 0
+        rescue_used = False
 
-        for attempt in range(attempt_count):
+        while True:
             prompt_tokens: int | None = None
             completion_tokens: int | None = None
-            saw_done = False
+            visible_content_emitted = False
+            requested_max_tokens = int(payload["max_tokens"])
 
             try:
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -291,17 +303,7 @@ class CloudflareAIClient:
                         response.raise_for_status()
                         async for line in response.aiter_lines():
                             data = parse_sse_data(line)
-                            if data is None:
-                                continue
-                            if data.get("done") is True:
-                                saw_done = True
-                                yield CloudAIStreamEvent(
-                                    content="",
-                                    done=True,
-                                    model=model,
-                                    prompt_tokens=prompt_tokens,
-                                    completion_tokens=completion_tokens,
-                                )
+                            if data is None or data.get("done") is True:
                                 continue
 
                             usage = data.get("usage")
@@ -324,13 +326,14 @@ class CloudflareAIClient:
                                 continue
                             content = delta.get("content")
                             if isinstance(content, str) and content:
+                                visible_content_emitted = True
                                 yield CloudAIStreamEvent(
                                     content=content,
                                     done=False,
                                     model=model,
                                 )
 
-                if not saw_done:
+                if visible_content_emitted:
                     yield CloudAIStreamEvent(
                         content="",
                         done=True,
@@ -338,25 +341,39 @@ class CloudflareAIClient:
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
                     )
-                return
+                    return
+
+                hit_generation_limit = (
+                    completion_tokens is not None
+                    and completion_tokens >= requested_max_tokens
+                )
+                if hit_generation_limit and not rescue_used:
+                    rescue_used = True
+                    payload = dict(payload)
+                    payload["max_tokens"] = _visible_rescue_max_tokens(
+                        requested_max_tokens
+                    )
+                    continue
+
+                raise CloudAIUnavailableError(
+                    "El modelo cloud terminó sin producir una respuesta visible."
+                )
 
             except httpx.HTTPStatusError as exc:
                 status_code = exc.response.status_code
                 if (
                     _is_transient_status(status_code)
-                    and attempt < len(TRANSIENT_RETRY_DELAYS_SECONDS)
+                    and transient_failures < len(TRANSIENT_RETRY_DELAYS_SECONDS)
                 ):
-                    last_status_error = exc
-                    await asyncio.sleep(TRANSIENT_RETRY_DELAYS_SECONDS[attempt])
+                    delay = TRANSIENT_RETRY_DELAYS_SECONDS[transient_failures]
+                    transient_failures += 1
+                    await asyncio.sleep(delay)
                     continue
                 self._raise_status_error(exc)
             except httpx.HTTPError as exc:
                 raise CloudAIUnavailableError(
                     "No se pudo conectar con el motor cloud."
                 ) from exc
-
-        if last_status_error is not None:  # pragma: no cover - defensive safeguard
-            self._raise_status_error(last_status_error)
 
     @staticmethod
     def _raise_status_error(exc: httpx.HTTPStatusError) -> None:
