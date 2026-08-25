@@ -11,6 +11,7 @@ from backend.app.core.config import Settings
 from backend.app.domain.models import SelectedMode
 from backend.app.domain.schemas import ChatMessage
 from backend.app.providers.cloudflare_ai import (
+    FINAL_VISIBLE_RESCUE_MIN_MAX_TOKENS,
     STRUCTURED_MIN_MAX_TOKENS,
     CloudAIConfigurationError,
     CloudAIUnavailableError,
@@ -292,6 +293,74 @@ class CloudflareAIProviderTests(unittest.TestCase):
 
         self.assertEqual(attempts, 3)
         self.assertEqual(sleep.await_count, 2)
+
+    def test_stream_rescues_answer_when_reasoning_exhausts_visible_budget(self) -> None:
+        captured_payloads: list[dict[str, object]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            payload = json.loads(request.content.decode("utf-8"))
+            captured_payloads.append(payload)
+            current_limit = int(payload["max_tokens"])
+            if len(captured_payloads) == 1:
+                body = (
+                    f'data: {{"usage":{{"prompt_tokens":5000,"completion_tokens":{current_limit}}}}}\n\n'
+                    "data: [DONE]\n\n"
+                )
+            else:
+                body = (
+                    'data: {"choices":[{"delta":{"content":"60 goles"}}]}\n\n'
+                    'data: {"usage":{"prompt_tokens":5000,"completion_tokens":120}}\n\n'
+                    "data: [DONE]\n\n"
+                )
+            return httpx.Response(
+                200,
+                request=request,
+                text=body,
+                headers={"content-type": "text/event-stream"},
+            )
+
+        transport = httpx.MockTransport(handler)
+        real_async_client = httpx.AsyncClient
+
+        def client_factory(*_args, **kwargs):
+            return real_async_client(
+                transport=transport,
+                timeout=kwargs.get("timeout"),
+            )
+
+        client = CloudflareAIClient(
+            Settings(
+                cloudflare_account_id="account",
+                cloudflare_api_token="token",
+                quick_max_tokens=768,
+            )
+        )
+
+        async def collect_events():
+            return [
+                event
+                async for event in client.chat_stream(
+                    mode=SelectedMode.QUICK,
+                    messages=[ChatMessage(role="user", content="Pregunta")],
+                    system_prompt="Respondé.",
+                )
+            ]
+
+        with patch(
+            "backend.app.providers.cloudflare_ai.httpx.AsyncClient",
+            side_effect=client_factory,
+        ):
+            events = asyncio.run(collect_events())
+
+        self.assertEqual(len(captured_payloads), 2)
+        self.assertEqual(captured_payloads[0]["max_tokens"], 768)
+        self.assertGreaterEqual(
+            captured_payloads[1]["max_tokens"],
+            FINAL_VISIBLE_RESCUE_MIN_MAX_TOKENS,
+        )
+        self.assertEqual("".join(event.content for event in events), "60 goles")
+        self.assertTrue(events[-1].done)
+        self.assertEqual(events[-1].completion_tokens, 120)
 
 
 if __name__ == "__main__":
