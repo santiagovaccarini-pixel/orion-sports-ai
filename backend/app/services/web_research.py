@@ -90,6 +90,11 @@ def _query_terms(query: str) -> tuple[str, ...]:
 
 
 def is_web_request(query: str) -> bool:
+    """Legacy-only heuristic retained for rollback compatibility.
+
+    The semantic pipeline does not use this function to understand user intent.
+    """
+
     lowered = query.lower()
     if any(
         marker in lowered
@@ -120,7 +125,6 @@ def is_web_request(query: str) -> bool:
         )
     ):
         return True
-
     folded = _fold(query)
     asks_amount = bool(re.search(r"\b(cuantos?|cantidad|numero)\b", folded))
     asks_live_stat = bool(
@@ -139,7 +143,7 @@ def _allowed(url: str, domains: tuple[str, ...]) -> bool:
     )
 
 
-def _source_key(hostname: str, domains: tuple[str, ...]) -> str:
+def _source_key(hostname: str, domains: tuple[str, ...] = ()) -> str:
     clean = hostname.lower().removeprefix("www.")
     matches = [
         domain
@@ -166,15 +170,15 @@ def _visible_text(value: str) -> str:
 
 
 def _relevant_excerpt(value: str, query: str, limit: int = 1400) -> str:
+    """Legacy HTML fallback extraction; semantic routing does not depend on it."""
+
     visible = _visible_text(value)
     if len(visible) <= limit:
         return visible
-
     folded = _fold(visible)
     terms = _query_terms(query)
     if not terms:
         return visible[:limit]
-
     candidate_starts: set[int] = {0}
     for term in terms:
         offset = 0
@@ -184,7 +188,6 @@ def _relevant_excerpt(value: str, query: str, limit: int = 1400) -> str:
                 break
             candidate_starts.add(max(0, index - limit // 3))
             offset = index + len(term)
-
     best_start = 0
     best_score = -1.0
     for start in candidate_starts:
@@ -197,7 +200,6 @@ def _relevant_excerpt(value: str, query: str, limit: int = 1400) -> str:
         if score > best_score:
             best_score = score
             best_start = start
-
     excerpt = visible[best_start : best_start + limit].strip()
     if best_start > 0:
         excerpt = f"…{excerpt}"
@@ -209,6 +211,8 @@ def _relevant_excerpt(value: str, query: str, limit: int = 1400) -> str:
 def _search_domains(
     query: str, allowed_domains: tuple[str, ...]
 ) -> tuple[str, ...]:
+    """Legacy DuckDuckGo prioritization only."""
+
     folded = _fold(query)
     football_stat = bool(
         re.search(r"\b(gol|goles|asistencia|asistencias|partido|partidos)\b", folded)
@@ -250,31 +254,36 @@ def _extract_search_urls(
 def _tavily_sources(
     payload: object,
     *,
-    allowed_domains: tuple[str, ...],
     limit: int,
 ) -> tuple[WebSource, ...]:
+    """Convert Tavily results without a hard domain allowlist.
+
+    Source authority and relevance are evaluated later by the semantic evidence
+    reviewer. Hard-coding allowed domains here would prevent Orion from discovering
+    useful evidence for new sports, competitions or topics.
+    """
+
     if not isinstance(payload, dict):
         return ()
     raw_results = payload.get("results")
     if not isinstance(raw_results, list):
         return ()
-
     sources: list[WebSource] = []
-    source_domains: set[str] = set()
+    seen_urls: set[str] = set()
     for item in raw_results:
         if not isinstance(item, dict):
             continue
         url = str(item.get("url") or "").strip()
-        if not url or not _allowed(url, allowed_domains):
+        if not url or not url.startswith(("http://", "https://")) or url in seen_urls:
             continue
-        domain = _source_key(urlparse(url).hostname or "", allowed_domains)
-        if domain in source_domains:
-            continue
-        title = str(item.get("title") or url).strip()
         excerpt = str(item.get("content") or "").strip()
         if len(excerpt) < 40:
             continue
-        source_domains.add(domain)
+        title = str(item.get("title") or url).strip()
+        domain = _source_key(urlparse(url).hostname or "")
+        if not domain:
+            continue
+        seen_urls.add(url)
         sources.append(WebSource(title, url, excerpt[:1800], domain))
         if len(sources) >= limit:
             break
@@ -286,8 +295,7 @@ async def _research_tavily(
     query: str,
     *,
     api_key: str,
-    allowed_domains: tuple[str, ...],
-    minimum_sources: int,
+    result_limit: int,
 ) -> tuple[WebSource, ...]:
     try:
         response = await client.post(
@@ -296,17 +304,12 @@ async def _research_tavily(
             json={
                 "query": query,
                 "search_depth": "basic",
-                "max_results": max(8, minimum_sources * 3),
+                "max_results": max(result_limit, 6),
                 "include_answer": False,
-                "include_domains": list(_search_domains(query, allowed_domains)),
             },
         )
         response.raise_for_status()
-        return _tavily_sources(
-            response.json(),
-            allowed_domains=allowed_domains,
-            limit=minimum_sources,
-        )
+        return _tavily_sources(response.json(), limit=result_limit)
     except (httpx.HTTPError, ValueError):
         return ()
 
@@ -328,7 +331,6 @@ async def _discover_duckduckgo_urls(
         "https://lite.duckduckgo.com/lite/?q={query}",
     )
     urls: list[str] = []
-
     for search_query in search_queries:
         encoded = quote_plus(search_query)
         for template in endpoints:
@@ -351,6 +353,7 @@ async def _research_duckduckgo(
     *,
     allowed_domains: tuple[str, ...],
     minimum_sources: int,
+    result_limit: int,
 ) -> tuple[WebSource, ...]:
     urls = await _discover_duckduckgo_urls(
         client,
@@ -390,7 +393,7 @@ async def _research_duckduckgo(
             continue
         source_domains.add(domain)
         sources.append(WebSource(title, str(response.url), body, domain))
-        if len(sources) >= minimum_sources:
+        if len(sources) >= result_limit:
             break
     return tuple(sources)
 
@@ -400,6 +403,7 @@ async def research(
     *,
     allowed_domains: tuple[str, ...] = DEFAULT_ALLOWED_DOMAINS,
     minimum_sources: int = 4,
+    result_limit: int = 6,
     provider: str = "auto",
     tavily_api_key: str | None = None,
 ) -> tuple[WebSource, ...]:
@@ -407,39 +411,39 @@ async def research(
     if configured_provider not in {"auto", "tavily", "duckduckgo"}:
         raise ValueError("Proveedor web no válido.")
     configured_tavily_key = tavily_api_key or os.getenv("ORION_TAVILY_API_KEY") or None
-
-    headers = {"User-Agent": "Orion-Research/0.3"}
+    headers = {"User-Agent": "Orion-Research/0.4"}
     async with httpx.AsyncClient(
         timeout=12.0,
         headers=headers,
         follow_redirects=True,
     ) as client:
         if configured_provider in {"auto", "tavily"} and configured_tavily_key:
-            # When Tavily is configured, keep the request bounded. Returning one or
-            # two sources as insufficient evidence is safer than starting a long
-            # sequential HTML-search fallback before the chat stream has opened.
             return await _research_tavily(
                 client,
                 query,
                 api_key=configured_tavily_key,
-                allowed_domains=allowed_domains,
-                minimum_sources=minimum_sources,
+                result_limit=result_limit,
             )
-
         if configured_provider == "tavily":
             return ()
-
         return await _research_duckduckgo(
             client,
             query,
             allowed_domains=allowed_domains,
             minimum_sources=minimum_sources,
+            result_limit=result_limit,
         )
 
 
 def format_sources(
     sources: tuple[WebSource, ...], *, minimum_sources: int = 4
 ) -> str:
+    """Legacy formatter retained for rollback mode.
+
+    The semantic pipeline uses model-based evidence review instead of a fixed source
+    count as its verification criterion.
+    """
+
     independent_domains = {
         source.domain.lower().removeprefix("www.") for source in sources
     }
