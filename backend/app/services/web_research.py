@@ -415,15 +415,16 @@ async def research(
         follow_redirects=True,
     ) as client:
         if configured_provider in {"auto", "tavily"} and configured_tavily_key:
-            sources = await _research_tavily(
+            # When Tavily is configured, keep the request bounded. Returning one or
+            # two sources as insufficient evidence is safer than starting a long
+            # sequential HTML-search fallback before the chat stream has opened.
+            return await _research_tavily(
                 client,
                 query,
                 api_key=configured_tavily_key,
                 allowed_domains=allowed_domains,
                 minimum_sources=minimum_sources,
             )
-            if len(sources) >= minimum_sources or configured_provider == "tavily":
-                return sources
 
         if configured_provider == "tavily":
             return ()
