@@ -1,5 +1,8 @@
 [CmdletBinding()]
-param()
+param(
+    [switch]$Cloud,
+    [string]$CloudUrl = "https://orion-core-prototype.onrender.com"
+)
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
@@ -9,14 +12,43 @@ $BackendOutputLog = Join-Path $RuntimeDirectory "backend-output.log"
 $BackendErrorLog = Join-Path $RuntimeDirectory "backend-error.log"
 $BackendHealthUrl = "http://127.0.0.1:8765/api/v1/health"
 
-if (-not (Test-Path $PythonExecutable)) {
-    throw "Primero ejecutá scripts\windows\Setup-Orion.ps1."
-}
 if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
     throw "No se encontró Node.js/npm."
 }
 
 New-Item -ItemType Directory -Path $RuntimeDirectory -Force | Out-Null
+
+function Start-OrionFrontend {
+    Push-Location $ProjectRoot
+    try {
+        # Desactiva los atajos interactivos de Vite/Cloudflare. Así, pegar un
+        # comando en esta terminal no puede abrir un túnel público por accidente.
+        $env:CI = "1"
+        npm exec vite -- --host 127.0.0.1
+    }
+    finally {
+        Pop-Location
+    }
+}
+
+if ($Cloud) {
+    if (-not $env:ORION_API_KEY) {
+        throw "Falta ORION_API_KEY en esta terminal. Definila antes de iniciar Orion Cloud."
+    }
+
+    $NormalizedCloudUrl = $CloudUrl.TrimEnd("/")
+    $env:NEXT_PUBLIC_ORION_API_URL = "$NormalizedCloudUrl/api/v1"
+    $env:NEXT_PUBLIC_ORION_API_KEY = $env:ORION_API_KEY
+
+    Write-Host "Orion UI conectado al núcleo cloud: $NormalizedCloudUrl" -ForegroundColor Green
+    Write-Host "Modo de prueba local: no publiques esta compilación porque la API key queda disponible en el navegador local." -ForegroundColor Yellow
+    Start-OrionFrontend
+    exit 0
+}
+
+if (-not (Test-Path $PythonExecutable)) {
+    throw "Primero ejecutá scripts\windows\Setup-Orion.ps1."
+}
 
 $BackendArguments = @(
     "-m", "uvicorn", "backend.app.main:app",
@@ -74,17 +106,7 @@ try {
 
     Wait-OrionBackend -Process $BackendProcess
     Write-Host "Núcleo local iniciado en segundo plano." -ForegroundColor Green
-
-    Push-Location $ProjectRoot
-    try {
-        # Desactiva los atajos interactivos de Vite/Cloudflare. Así, pegar un
-        # comando en esta terminal no puede abrir un túnel público por accidente.
-        $env:CI = "1"
-        npm exec vite -- --host 127.0.0.1
-    }
-    finally {
-        Pop-Location
-    }
+    Start-OrionFrontend
 }
 finally {
     if ($BackendProcess -and -not $BackendProcess.HasExited) {
