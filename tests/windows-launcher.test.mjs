@@ -22,9 +22,27 @@ test("always stops the hidden backend when the launcher finishes", async () => {
   assert.match(source, /\.orion-runtime/);
 });
 
-test("disables interactive tunnel shortcuts in the local launcher", async () => {
+test("disables interactive tunnel shortcuts in the launcher", async () => {
   const source = await readFile(launcher, "utf8");
 
   assert.match(source, /\$env:CI\s*=\s*"1"/);
   assert.match(source, /npm exec vite -- --host 127\.0\.0\.1/);
+});
+
+test("cloud mode uses the remote core without starting a second backend first", async () => {
+  const source = await readFile(launcher, "utf8");
+
+  assert.match(source, /\[switch\]\$Cloud/);
+  assert.match(source, /https:\/\/orion-core-prototype\.onrender\.com/);
+  assert.match(source, /\$env:NEXT_PUBLIC_ORION_API_URL/);
+  assert.match(source, /\$env:NEXT_PUBLIC_ORION_API_KEY\s*=\s*\$env:ORION_API_KEY/);
+  assert.match(source, /if \(\$Cloud\)[\s\S]*Start-OrionFrontend[\s\S]*exit 0/);
+});
+
+test("cloud mode refuses to start without the local secret", async () => {
+  const source = await readFile(launcher, "utf8");
+
+  assert.match(source, /if \(-not \$env:ORION_API_KEY\)/);
+  assert.match(source, /Falta ORION_API_KEY/);
+  assert.match(source, /no publiques esta compilación/);
 });
