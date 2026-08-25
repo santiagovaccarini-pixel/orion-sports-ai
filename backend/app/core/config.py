@@ -34,6 +34,13 @@ def _read_positive_int(name: str, default: int) -> int:
     return value
 
 
+def _read_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _read_provider() -> str:
     provider = os.getenv("ORION_MODEL_PROVIDER", "ollama").strip().lower()
     if provider not in {"ollama", "cloudflare"}:
@@ -55,7 +62,7 @@ def _read_web_provider() -> str:
 @dataclass(frozen=True, slots=True)
 class Settings:
     app_name: str = "Orion Core"
-    version: str = "0.2.0-cloud-prototype"
+    version: str = "0.3.0-semantic-prototype"
     host: str = "127.0.0.1"
     port: int = 8765
     model_provider: str = "ollama"
@@ -83,6 +90,9 @@ class Settings:
     tavily_api_key: str | None = None
     web_minimum_sources: int = 4
     web_allowed_domains: tuple[str, ...] = DEFAULT_ALLOWED_DOMAINS
+    semantic_orchestration: bool = False
+    semantic_max_tool_rounds: int = 2
+    semantic_local_context_characters: int = 12_000
     cors_origins: tuple[str, ...] = DEFAULT_CORS_ORIGINS
 
 
@@ -128,8 +138,7 @@ def get_settings() -> Settings:
         knowledge_path=os.getenv(
             "ORION_KNOWLEDGE_PATH", ".orion-runtime/knowledge/documents.json"
         ),
-        web_enabled=os.getenv("ORION_WEB_ENABLED", "true").lower()
-        in {"1", "true", "yes"},
+        web_enabled=_read_bool("ORION_WEB_ENABLED", True),
         web_provider=_read_web_provider(),
         tavily_api_key=os.getenv("ORION_TAVILY_API_KEY") or None,
         web_minimum_sources=_read_positive_int("ORION_WEB_MINIMUM_SOURCES", 4),
@@ -139,5 +148,12 @@ def get_settings() -> Settings:
             if item.strip()
         )
         or DEFAULT_ALLOWED_DOMAINS,
+        semantic_orchestration=_read_bool("ORION_SEMANTIC_ORCHESTRATION", False),
+        semantic_max_tool_rounds=_read_positive_int(
+            "ORION_SEMANTIC_MAX_TOOL_ROUNDS", 2
+        ),
+        semantic_local_context_characters=_read_positive_int(
+            "ORION_SEMANTIC_LOCAL_CONTEXT_CHARACTERS", 12_000
+        ),
         cors_origins=origins or DEFAULT_CORS_ORIGINS,
     )
