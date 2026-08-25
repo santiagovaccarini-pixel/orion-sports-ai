@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from html import unescape
 from dataclasses import dataclass
 from datetime import date
+from html import unescape
 from urllib.parse import parse_qs, quote_plus, urlparse
 
 import httpx
@@ -58,13 +58,29 @@ class WebSource:
 
 def _fold(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value.lower())
-    return "".join(character for character in normalized if not unicodedata.combining(character))
+    return "".join(
+        character for character in normalized if not unicodedata.combining(character)
+    )
 
 
 def _query_terms(query: str) -> tuple[str, ...]:
     stopwords = {
-        "cuantos", "cuantas", "tiene", "hizo", "hacer", "esta", "este", "para",
-        "como", "cual", "cuales", "donde", "cuando", "desde", "hasta", "total",
+        "cuantos",
+        "cuantas",
+        "tiene",
+        "hizo",
+        "hacer",
+        "esta",
+        "este",
+        "para",
+        "como",
+        "cual",
+        "cuales",
+        "donde",
+        "cuando",
+        "desde",
+        "hasta",
+        "total",
     }
     terms = {
         term
@@ -79,12 +95,29 @@ def is_web_request(query: str) -> bool:
     if any(
         marker in lowered
         for marker in (
-            "buscá en internet", "busca en internet", "web", "fuentes actuales",
-            "información actual", "informacion actual", "último partido",
-            "ultimo partido", "próximo partido", "proximo partido", "cuántos goles",
-            "cuantos goles", "goles de", "alineación", "alineacion", "resultado de",
-            "tabla de posiciones", "estadísticas actuales", "estadisticas actuales",
-            "hoy", "ayer", "esta temporada", "actualmente",
+            "buscá en internet",
+            "busca en internet",
+            "web",
+            "fuentes actuales",
+            "información actual",
+            "informacion actual",
+            "último partido",
+            "ultimo partido",
+            "próximo partido",
+            "proximo partido",
+            "cuántos goles",
+            "cuantos goles",
+            "goles de",
+            "alineación",
+            "alineacion",
+            "resultado de",
+            "tabla de posiciones",
+            "estadísticas actuales",
+            "estadisticas actuales",
+            "hoy",
+            "ayer",
+            "esta temporada",
+            "actualmente",
         )
     ):
         return True
@@ -93,19 +126,28 @@ def is_web_request(query: str) -> bool:
     folded = _fold(query)
     asks_amount = bool(re.search(r"\b(cuantos?|cantidad|numero)\b", folded))
     asks_live_stat = bool(
-        re.search(r"\b(goles?|asistencias?|partidos?|puntos?|victorias?|derrotas?)\b", folded)
+        re.search(
+            r"\b(goles?|asistencias?|partidos?|puntos?|victorias?|derrotas?)\b",
+            folded,
+        )
     )
     return asks_amount and asks_live_stat
 
 
 def _allowed(url: str, domains: tuple[str, ...]) -> bool:
     hostname = (urlparse(url).hostname or "").lower().removeprefix("www.")
-    return any(hostname == domain or hostname.endswith(f".{domain}") for domain in domains)
+    return any(
+        hostname == domain or hostname.endswith(f".{domain}") for domain in domains
+    )
 
 
 def _source_key(hostname: str, domains: tuple[str, ...]) -> str:
     clean = hostname.lower().removeprefix("www.")
-    matches = [domain for domain in domains if clean == domain or clean.endswith(f".{domain}")]
+    matches = [
+        domain
+        for domain in domains
+        if clean == domain or clean.endswith(f".{domain}")
+    ]
     return max(matches, key=len) if matches else clean
 
 
@@ -120,16 +162,13 @@ def _visible_text(value: str) -> str:
         value,
         flags=re.IGNORECASE,
     )
-    return unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", without_code))).strip()
+    return unescape(
+        re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", without_code))
+    ).strip()
 
 
 def _relevant_excerpt(value: str, query: str, limit: int = 1400) -> str:
-    """Return the densest query-related window instead of the page header.
-
-    Sports pages often put navigation, cookies and metadata before the actual
-    statistic. Selecting a scored window preserves nearby numbers and context,
-    which is much safer than feeding the model the first N characters.
-    """
+    """Return the densest query-related window instead of the page header."""
 
     visible = _visible_text(value)
     if len(visible) <= limit:
@@ -171,16 +210,198 @@ def _relevant_excerpt(value: str, query: str, limit: int = 1400) -> str:
     return excerpt
 
 
-def _search_domains(query: str, allowed_domains: tuple[str, ...]) -> tuple[str, ...]:
+def _search_domains(
+    query: str, allowed_domains: tuple[str, ...]
+) -> tuple[str, ...]:
     folded = _fold(query)
     football_stat = bool(
         re.search(r"\b(gol|goles|asistencia|asistencias|partido|partidos)\b", folded)
     )
     if not football_stat:
         return allowed_domains
-    prioritized = [domain for domain in FOOTBALL_STATS_DOMAINS if domain in allowed_domains]
-    remaining = [domain for domain in allowed_domains if domain not in prioritized]
+    prioritized = [
+        domain for domain in FOOTBALL_STATS_DOMAINS if domain in allowed_domains
+    ]
+    remaining = [
+        domain for domain in allowed_domains if domain not in prioritized
+    ]
     return tuple(prioritized + remaining)
+
+
+def _decode_search_target(candidate: str) -> str:
+    candidate = unescape(candidate)
+    if candidate.startswith("//"):
+        candidate = f"https:{candidate}"
+    parsed = urlparse(candidate)
+    redirected = parse_qs(parsed.query).get("uddg", [])
+    return unescape(redirected[0]) if redirected else candidate
+
+
+def _extract_search_urls(
+    html: str,
+    allowed_domains: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Extract allowed result URLs without depending on one DuckDuckGo CSS class."""
+
+    candidates = re.findall(r'href=["\']([^"\']+)["\']', html, re.IGNORECASE)
+    urls: list[str] = []
+    for candidate in candidates:
+        target = _decode_search_target(candidate)
+        if target.startswith("http") and _allowed(target, allowed_domains):
+            if target not in urls:
+                urls.append(target)
+    return tuple(urls)
+
+
+def _tavily_sources(
+    payload: object,
+    *,
+    allowed_domains: tuple[str, ...],
+    limit: int,
+) -> tuple[WebSource, ...]:
+    """Normalize Tavily JSON into Orion sources and enforce Orion's allowlist."""
+
+    if not isinstance(payload, dict):
+        return ()
+    raw_results = payload.get("results")
+    if not isinstance(raw_results, list):
+        return ()
+
+    sources: list[WebSource] = []
+    source_domains: set[str] = set()
+    for item in raw_results:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or "").strip()
+        if not url or not _allowed(url, allowed_domains):
+            continue
+        domain = _source_key(urlparse(url).hostname or "", allowed_domains)
+        if domain in source_domains:
+            continue
+        title = str(item.get("title") or url).strip()
+        excerpt = str(item.get("content") or "").strip()
+        if len(excerpt) < 40:
+            continue
+        source_domains.add(domain)
+        sources.append(WebSource(title, url, excerpt[:1800], domain))
+        if len(sources) >= limit:
+            break
+    return tuple(sources)
+
+
+async def _research_tavily(
+    client: httpx.AsyncClient,
+    query: str,
+    *,
+    api_key: str,
+    allowed_domains: tuple[str, ...],
+    minimum_sources: int,
+) -> tuple[WebSource, ...]:
+    try:
+        response = await client.post(
+            "https://api.tavily.com/search",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "query": query,
+                "search_depth": "basic",
+                "max_results": max(8, minimum_sources * 3),
+                "include_answer": False,
+                "include_domains": list(_search_domains(query, allowed_domains)),
+            },
+        )
+        response.raise_for_status()
+        return _tavily_sources(
+            response.json(),
+            allowed_domains=allowed_domains,
+            limit=minimum_sources,
+        )
+    except (httpx.HTTPError, ValueError):
+        return ()
+
+
+async def _discover_duckduckgo_urls(
+    client: httpx.AsyncClient,
+    query: str,
+    *,
+    allowed_domains: tuple[str, ...],
+    minimum_sources: int,
+) -> tuple[str, ...]:
+    domains = _search_domains(query, allowed_domains)
+    search_queries = [
+        query,
+        *(f"{query} site:{domain}" for domain in domains[:10]),
+    ]
+    endpoints = (
+        "https://html.duckduckgo.com/html/?q={query}",
+        "https://lite.duckduckgo.com/lite/?q={query}",
+    )
+    urls: list[str] = []
+
+    for search_query in search_queries:
+        encoded = quote_plus(search_query)
+        for template in endpoints:
+            try:
+                search = await client.get(template.format(query=encoded))
+                search.raise_for_status()
+            except httpx.HTTPError:
+                # One blocked search endpoint must not zero out the whole research run.
+                continue
+            for target in _extract_search_urls(search.text, allowed_domains):
+                if target not in urls:
+                    urls.append(target)
+            if len(urls) >= minimum_sources * 3:
+                return tuple(urls)
+    return tuple(urls)
+
+
+async def _research_duckduckgo(
+    client: httpx.AsyncClient,
+    query: str,
+    *,
+    allowed_domains: tuple[str, ...],
+    minimum_sources: int,
+) -> tuple[WebSource, ...]:
+    urls = await _discover_duckduckgo_urls(
+        client,
+        query,
+        allowed_domains=allowed_domains,
+        minimum_sources=minimum_sources,
+    )
+    sources: list[WebSource] = []
+    source_domains: set[str] = set()
+    query_terms = _query_terms(query)
+    for url in urls:
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+        except httpx.HTTPError:
+            continue
+        title_match = re.search(
+            r"<title[^>]*>(.*?)</title>",
+            response.text,
+            re.IGNORECASE | re.DOTALL,
+        )
+        title = (
+            _clean_text(re.sub(r"<[^>]+>", " ", title_match.group(1)))
+            if title_match
+            else url
+        )
+        body = _relevant_excerpt(response.text, query)
+        if len(body) < 80:
+            continue
+        folded_body = _fold(body)
+        if query_terms and not any(term in folded_body for term in query_terms):
+            continue
+        domain = _source_key(
+            urlparse(str(response.url)).hostname or "", allowed_domains
+        )
+        if domain in source_domains:
+            continue
+        source_domains.add(domain)
+        sources.append(WebSource(title, str(response.url), body, domain))
+        if len(sources) >= minimum_sources:
+            break
+    return tuple(sources)
 
 
 async def research(
@@ -188,65 +409,54 @@ async def research(
     *,
     allowed_domains: tuple[str, ...] = DEFAULT_ALLOWED_DOMAINS,
     minimum_sources: int = 4,
+    provider: str = "auto",
+    tavily_api_key: str | None = None,
 ) -> tuple[WebSource, ...]:
-    headers = {"User-Agent": "Orion-Research/0.2"}
-    try:
-        async with httpx.AsyncClient(timeout=12.0, headers=headers, follow_redirects=True) as client:
-            urls: list[str] = []
-            domains = _search_domains(query, allowed_domains)
-            # General search first, then a bounded set of high-value domains. This
-            # prevents a small factual question from issuing dozens of searches.
-            search_queries = [query, *(f"{query} site:{domain}" for domain in domains[:10])]
-            for search_query in search_queries:
-                search = await client.get(
-                    f"https://html.duckduckgo.com/html/?q={quote_plus(search_query)}"
-                )
-                search.raise_for_status()
-                candidates = re.findall(r'class="result__a"[^>]*href="([^"]+)"', search.text)
-                for candidate in candidates:
-                    target = unescape(parse_qs(urlparse(candidate).query).get("uddg", [candidate])[0])
-                    if target.startswith("//"):
-                        target = f"https:{target}"
-                    if _allowed(target, allowed_domains) and target not in urls:
-                        urls.append(target)
-                if len(urls) >= minimum_sources * 3:
-                    break
+    """Research the web using an interchangeable provider with safe fallback.
 
-            sources: list[WebSource] = []
-            source_domains: set[str] = set()
-            query_terms = _query_terms(query)
-            for url in urls:
-                try:
-                    response = await client.get(url)
-                    response.raise_for_status()
-                except httpx.HTTPError:
-                    continue
-                title_match = re.search(
-                    r"<title[^>]*>(.*?)</title>",
-                    response.text,
-                    re.IGNORECASE | re.DOTALL,
-                )
-                title = _clean_text(re.sub(r"<[^>]+>", " ", title_match.group(1))) if title_match else url
-                body = _relevant_excerpt(response.text, query)
-                if len(body) < 80:
-                    continue
-                folded_body = _fold(body)
-                if query_terms and not any(term in folded_body for term in query_terms):
-                    continue
-                domain = _source_key(urlparse(str(response.url)).hostname or "", allowed_domains)
-                if domain in source_domains:
-                    continue
-                source_domains.add(domain)
-                sources.append(WebSource(title, str(response.url), body, domain))
-                if len(sources) >= minimum_sources:
-                    break
-            return tuple(sources)
-    except (httpx.HTTPError, ValueError):
-        return ()
+    `auto` prefers Tavily when a key is configured, then falls back to the
+    DuckDuckGo discovery path. The fallback remains available so Orion is not
+    locked to one external search provider.
+    """
+
+    selected_provider = provider.strip().lower()
+    if selected_provider not in {"auto", "tavily", "duckduckgo"}:
+        raise ValueError("Proveedor web no válido.")
+
+    headers = {"User-Agent": "Orion-Research/0.3"}
+    async with httpx.AsyncClient(
+        timeout=12.0,
+        headers=headers,
+        follow_redirects=True,
+    ) as client:
+        if selected_provider in {"auto", "tavily"} and tavily_api_key:
+            sources = await _research_tavily(
+                client,
+                query,
+                api_key=tavily_api_key,
+                allowed_domains=allowed_domains,
+                minimum_sources=minimum_sources,
+            )
+            if len(sources) >= minimum_sources or selected_provider == "tavily":
+                return sources
+
+        if selected_provider == "tavily":
+            return ()
+
+        return await _research_duckduckgo(
+            client,
+            query,
+            allowed_domains=allowed_domains,
+            minimum_sources=minimum_sources,
+        )
 
 
-def format_sources(sources: tuple[WebSource, ...], *, minimum_sources: int = 4) -> str:
-    independent_domains = {source.domain.lower().removeprefix("www.") for source in sources}
+def format_sources(
+    sources: tuple[WebSource, ...], *, minimum_sources: int = 4
+) -> str:
+    independent_domains = {
+        source.domain.lower().removeprefix("www.") for source in sources
+    }
     if len(sources) < minimum_sources or len(independent_domains) < minimum_sources:
         warning = (
             f"INVESTIGACIÓN WEB INSUFICIENTE: solo se obtuvieron {len(sources)} fuentes "
@@ -258,7 +468,11 @@ def format_sources(sources: tuple[WebSource, ...], *, minimum_sources: int = 4) 
             f"[{index}] {source.title}\nURL: {source.url}\nExtracto: {source.excerpt}"
             for index, source in enumerate(sources, start=1)
         ]
-        return warning + ("\n\nFuentes encontradas:\n" + "\n\n".join(entries) if entries else "")
+        return warning + (
+            "\n\nFuentes encontradas:\n" + "\n\n".join(entries)
+            if entries
+            else ""
+        )
     entries = [
         f"[{index}] {source.title}\nURL: {source.url}\nExtracto: {source.excerpt}"
         for index, source in enumerate(sources, start=1)
