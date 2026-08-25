@@ -71,8 +71,8 @@ class Settings:
     deep_model: str = "qwen3:8b"
     cloudflare_account_id: str | None = None
     cloudflare_api_token: str | None = None
-    cloudflare_quick_model: str = "@cf/openai/gpt-oss-20b"
-    cloudflare_deep_model: str = "@cf/openai/gpt-oss-20b"
+    cloudflare_quick_model: str = "@cf/openai/gpt-oss-120b"
+    cloudflare_deep_model: str = "@cf/openai/gpt-oss-120b"
     quick_context: int = 4096
     deep_context: int = 8192
     quick_threads: int = 8
@@ -115,10 +115,10 @@ def get_settings() -> Settings:
         cloudflare_account_id=os.getenv("ORION_CLOUDFLARE_ACCOUNT_ID") or None,
         cloudflare_api_token=os.getenv("ORION_CLOUDFLARE_API_TOKEN") or None,
         cloudflare_quick_model=os.getenv(
-            "ORION_CLOUDFLARE_QUICK_MODEL", "@cf/openai/gpt-oss-20b"
+            "ORION_CLOUDFLARE_QUICK_MODEL", "@cf/openai/gpt-oss-120b"
         ),
         cloudflare_deep_model=os.getenv(
-            "ORION_CLOUDFLARE_DEEP_MODEL", "@cf/openai/gpt-oss-20b"
+            "ORION_CLOUDFLARE_DEEP_MODEL", "@cf/openai/gpt-oss-120b"
         ),
         quick_context=_read_positive_int("ORION_QUICK_CONTEXT", 4096),
         deep_context=_read_positive_int("ORION_DEEP_CONTEXT", 8192),
