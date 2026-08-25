@@ -27,6 +27,12 @@ class DeploymentConfigTests(unittest.TestCase):
             marker = f"- key: {secret}\n        sync: false"
             self.assertIn(marker, content)
 
+    def test_cloud_prototype_uses_stronger_120b_brain_for_controlled_benchmark(self) -> None:
+        content = RENDER_YAML.read_text(encoding="utf-8")
+        expected = 'value: "@cf/openai/gpt-oss-120b"'
+        self.assertEqual(content.count(expected), 2)
+        self.assertNotIn('@cf/openai/gpt-oss-20b', content)
+
     def test_render_starts_fastapi_core_and_has_health_check(self) -> None:
         content = RENDER_YAML.read_text(encoding="utf-8")
         self.assertIn("backend.app.main:app", content)
