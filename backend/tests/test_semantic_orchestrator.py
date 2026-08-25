@@ -200,6 +200,48 @@ class SemanticOrchestratorTests(unittest.TestCase):
             "confirmar alcance exacto de la estadística",
         )
 
+    def test_reviewer_receives_original_conversation_to_audit_plan_scope(self) -> None:
+        messages = [
+            ChatMessage(role="user", content="Quiero el acumulado completo de la entidad."),
+        ]
+        plan = parse_semantic_plan(
+            """
+            {"objective":"dato de la temporada actual","entities":["Entidad"],
+             "constraints":["temporada actual"],"references":[],
+             "information_needed":["dato"],"ambiguities":[],"use_web":true,
+             "use_local_data":false,"use_calculator":false,"use_chart":false,
+             "needs_clarification":false,"clarifying_question":null,
+             "web_query":"dato temporada actual entidad","local_document_names":[],
+             "recommended_mode":"quick","reason":"plan deliberadamente más estrecho"}
+            """
+        )
+        provider = FakePlanningProvider(
+            [
+                """
+                {"sufficient":false,"relevant_source_ids":[],"discarded_source_ids":["W1"],
+                 "missing_information":["falta el acumulado completo"],
+                 "follow_up_web_query":"acumulado completo entidad",
+                 "needs_clarification":false,"clarifying_question":null,
+                 "resolved_scope":null,"reason":"el plan recortó el alcance original"}
+                """
+            ]
+        )
+        review = asyncio.run(
+            review_evidence(
+                provider,
+                plan,
+                [WebSource("Parcial", "https://example.org/a", "Dato de temporada", "example.org")],
+                [],
+                messages=messages,
+            )
+        )
+        sent = provider.calls[0]["messages"][0].content
+        self.assertIn("CONVERSACIÓN ORIGINAL", sent)
+        self.assertIn("acumulado completo", sent)
+        self.assertIn("PLAN INTERPRETADO", sent)
+        self.assertFalse(review.sufficient)
+        self.assertEqual(review.follow_up_web_query, "acumulado completo entidad")
+
     def test_reviewer_input_stays_below_chat_message_limit(self) -> None:
         plan = conservative_fallback_plan(
             [ChatMessage(role="user", content="Pregunta")],
@@ -261,8 +303,10 @@ class SemanticOrchestratorTests(unittest.TestCase):
                 WebSource("No comparable", "https://b.test", "otro dato", "b.test"),
             ],
             [LocalEvidence("L1", "archivo.csv", "fila", False)],
+            original_user_request="Pregunta original",
         )
         self.assertIn('"discarded_source_ids": ["W2"]', context)
+        self.assertIn('"original_user_request": "Pregunta original"', context)
         self.assertIn("No conviertas fuentes descartadas en hechos", context)
 
 
