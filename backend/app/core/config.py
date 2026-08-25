@@ -43,6 +43,15 @@ def _read_provider() -> str:
     return provider
 
 
+def _read_web_provider() -> str:
+    provider = os.getenv("ORION_WEB_PROVIDER", "auto").strip().lower()
+    if provider not in {"auto", "tavily", "duckduckgo"}:
+        raise RuntimeError(
+            "ORION_WEB_PROVIDER debe ser 'auto', 'tavily' o 'duckduckgo'."
+        )
+    return provider
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     app_name: str = "Orion Core"
@@ -70,6 +79,8 @@ class Settings:
     api_key: str | None = None
     knowledge_path: str = ".orion-runtime/knowledge/documents.json"
     web_enabled: bool = True
+    web_provider: str = "auto"
+    tavily_api_key: str | None = None
     web_minimum_sources: int = 4
     web_allowed_domains: tuple[str, ...] = DEFAULT_ALLOWED_DOMAINS
     cors_origins: tuple[str, ...] = DEFAULT_CORS_ORIGINS
@@ -117,12 +128,16 @@ def get_settings() -> Settings:
         knowledge_path=os.getenv(
             "ORION_KNOWLEDGE_PATH", ".orion-runtime/knowledge/documents.json"
         ),
-        web_enabled=os.getenv("ORION_WEB_ENABLED", "true").lower() in {"1", "true", "yes"},
+        web_enabled=os.getenv("ORION_WEB_ENABLED", "true").lower()
+        in {"1", "true", "yes"},
+        web_provider=_read_web_provider(),
+        tavily_api_key=os.getenv("ORION_TAVILY_API_KEY") or None,
         web_minimum_sources=_read_positive_int("ORION_WEB_MINIMUM_SOURCES", 4),
         web_allowed_domains=tuple(
             item.strip().lower().removeprefix("www.")
             for item in os.getenv("ORION_WEB_ALLOWED_DOMAINS", "").split(",")
             if item.strip()
-        ) or DEFAULT_ALLOWED_DOMAINS,
+        )
+        or DEFAULT_ALLOWED_DOMAINS,
         cors_origins=origins or DEFAULT_CORS_ORIGINS,
     )
