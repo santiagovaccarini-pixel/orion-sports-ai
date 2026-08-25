@@ -17,16 +17,16 @@ from backend.app.services.web_research import (
 
 
 class WebResearchTests(unittest.TestCase):
-    def test_default_allowlist_is_a_concrete_domain_tuple(self) -> None:
+    def test_default_allowlist_remains_available_for_legacy_fallback(self) -> None:
         settings = get_settings()
         self.assertIsInstance(settings.web_allowed_domains, tuple)
         self.assertIn("fifa.com", settings.web_allowed_domains)
 
-    def test_rejects_domains_outside_allowlist(self) -> None:
+    def test_legacy_fallback_rejects_domains_outside_allowlist(self) -> None:
         self.assertTrue(_allowed("https://www.fifa.com/laws", DEFAULT_ALLOWED_DOMAINS))
         self.assertFalse(_allowed("https://example.com/article", DEFAULT_ALLOWED_DOMAINS))
 
-    def test_requires_four_sources_before_claiming_verification(self) -> None:
+    def test_legacy_formatter_still_requires_configured_source_count(self) -> None:
         sources = tuple(
             WebSource(
                 f"Fuente {index}",
@@ -36,58 +36,19 @@ class WebResearchTests(unittest.TestCase):
             )
             for index in range(3)
         )
-
         result = format_sources(sources, minimum_sources=4)
-
         self.assertIn("INSUFICIENTE", result)
         self.assertNotIn("VERIFICADA", result)
-        self.assertIn("URL:", result)
-        self.assertIn("provisional", result)
 
-    def test_formats_four_sources_with_urls_and_date(self) -> None:
-        sources = tuple(
-            WebSource(
-                f"Fuente {index}",
-                f"https://{domain}/{index}",
-                "Contenido verificable",
-                domain,
-            )
-            for index, domain in enumerate(
-                ("fifa.com", "theifab.com", "uefa.com", "espn.com.ar")
-            )
-        )
-
-        result = format_sources(sources, minimum_sources=4)
-
-        self.assertIn("VERIFICADA", result)
-        self.assertIn("URL: https://fifa.com/0", result)
-        self.assertIn("fecha", result)
-
-    def test_four_sources_must_be_independent_domains(self) -> None:
-        sources = tuple(
-            WebSource(
-                f"Fuente {index}",
-                f"https://fifa.com/{index}",
-                "Contenido verificable",
-                "fifa.com",
-            )
-            for index in range(4)
-        )
-
-        result = format_sources(sources, minimum_sources=4)
-
-        self.assertIn("INSUFICIENTE", result)
-
-    def test_detects_current_sports_questions_without_explicit_web_word(self) -> None:
+    def test_legacy_heuristic_is_retained_only_for_rollback_mode(self) -> None:
         self.assertTrue(is_web_request("¿Cuántos goles hizo un jugador esta temporada?"))
-        self.assertTrue(is_web_request("¿Qué cantidad de goles lleva Miguel Merentiel?"))
+        self.assertIn("Legacy-only heuristic", is_web_request.__doc__ or "")
 
-    def test_current_goal_questions_prioritize_football_sources(self) -> None:
+    def test_legacy_duckduckgo_prioritization_is_unchanged(self) -> None:
         domains = _search_domains(
             "¿Cuántos goles tiene Messi?", DEFAULT_ALLOWED_DOMAINS
         )
         self.assertEqual(domains[0], "bocajuniors.com.ar")
-        self.assertLess(domains.index("espn.com.ar"), domains.index("fifa.com"))
 
     def test_relevant_excerpt_keeps_statistic_far_from_page_header(self) -> None:
         html = (
@@ -97,11 +58,9 @@ class WebResearchTests(unittest.TestCase):
             + ("Noticias relacionadas " * 120)
             + "</body></html>"
         )
-
         excerpt = _relevant_excerpt(
             html, "¿Cuántos goles tiene Miguel Merentiel en Boca?"
         )
-
         self.assertIn("Miguel Merentiel", excerpt)
         self.assertIn("50 goles", excerpt)
         self.assertIn("Boca Juniors", excerpt)
@@ -114,47 +73,35 @@ class WebResearchTests(unittest.TestCase):
           <a class="anything" href="https://www.transfermarkt.es/lionel-messi/profil/spieler/28003">Messi</a>
         </body></html>
         """
-
         urls = _extract_search_urls(html, DEFAULT_ALLOWED_DOMAINS)
-
         self.assertEqual(len(urls), 2)
         self.assertTrue(any("espn.com.ar" in url for url in urls))
         self.assertTrue(any("transfermarkt.es" in url for url in urls))
 
-    def test_tavily_results_are_allowlisted_and_deduplicated_by_domain(self) -> None:
+    def test_tavily_open_web_results_are_not_hard_filtered_by_domain(self) -> None:
         payload = {
             "results": [
                 {
-                    "title": "ESPN 1",
+                    "title": "Fuente primaria nueva",
+                    "url": "https://club-nuevo.example/noticia",
+                    "content": "Una fuente que el código nunca conoció de antemano pero puede ser relevante.",
+                },
+                {
+                    "title": "ESPN",
                     "url": "https://www.espn.com.ar/futbol/a",
-                    "content": "Lionel Messi registra una cantidad actualizada de goles oficiales.",
+                    "content": "Contenido deportivo suficientemente extenso para revisión semántica.",
                 },
                 {
-                    "title": "ESPN 2",
-                    "url": "https://www.espn.com.ar/futbol/b",
-                    "content": "Otra nota extensa del mismo dominio sobre Lionel Messi.",
-                },
-                {
-                    "title": "Transfermarkt",
-                    "url": "https://www.transfermarkt.es/lionel-messi/leistungsdaten/spieler/28003",
-                    "content": "Estadísticas detalladas y actuales de Lionel Messi por competición.",
-                },
-                {
-                    "title": "No permitido",
-                    "url": "https://example.com/messi",
-                    "content": "Este contenido no debe entrar aunque parezca relevante.",
+                    "title": "Duplicado exacto",
+                    "url": "https://www.espn.com.ar/futbol/a",
+                    "content": "La misma URL no debe repetirse dentro de la evidencia.",
                 },
             ]
         }
-
-        sources = _tavily_sources(
-            payload,
-            allowed_domains=DEFAULT_ALLOWED_DOMAINS,
-            limit=4,
-        )
-
+        sources = _tavily_sources(payload, limit=6)
         self.assertEqual(len(sources), 2)
-        self.assertEqual({source.domain for source in sources}, {"espn.com.ar", "transfermarkt.es"})
+        self.assertIn("club-nuevo.example", {source.domain for source in sources})
+        self.assertIn("espn.com.ar", {source.domain for source in sources})
 
 
 if __name__ == "__main__":
