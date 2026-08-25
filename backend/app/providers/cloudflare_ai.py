@@ -39,6 +39,7 @@ class CloudAIStreamEvent:
 
 TRANSIENT_HTTP_STATUSES = frozenset({502, 503, 504})
 TRANSIENT_RETRY_DELAYS_SECONDS = (0.35, 0.9)
+STRUCTURED_MIN_MAX_TOKENS = 1536
 
 
 def _selected_model(settings: Settings, mode: SelectedMode) -> str:
@@ -68,7 +69,12 @@ def _chat_payload(
     system_prompt: str,
     *,
     stream: bool,
+    structured: bool = False,
 ) -> dict[str, object]:
+    max_tokens = _max_tokens(settings, mode)
+    if structured:
+        max_tokens = max(max_tokens, STRUCTURED_MIN_MAX_TOKENS)
+
     payload: dict[str, object] = {
         "model": _selected_model(settings, mode),
         "messages": [
@@ -78,10 +84,15 @@ def _chat_payload(
                 for message in messages
             ],
         ],
-        "max_tokens": _max_tokens(settings, mode),
-        "temperature": 0.2 if mode is SelectedMode.QUICK else 0.35,
+        "max_tokens": max_tokens,
+        "temperature": 0.1 if structured else (0.2 if mode is SelectedMode.QUICK else 0.35),
         "stream": stream,
     }
+    if structured:
+        # Workers AI JSON Mode is OpenAI-compatible. Internal semantic stages already
+        # request JSON, so enforcing the transport format reduces malformed/empty
+        # planner and reviewer completions without encoding any domain-specific rule.
+        payload["response_format"] = {"type": "json_object"}
     if stream:
         payload["stream_options"] = {"include_usage": True}
     return payload
@@ -148,9 +159,8 @@ class CloudflareAIClient:
     """Cliente mínimo para Workers AI usando su API compatible con OpenAI.
 
     Las llamadas internas de razonamiento usan completions completas (no streaming).
-    El streaming queda reservado para la respuesta visible del chat. Esto evita que
-    una etapa estructurada falle por un cierre SSE incompleto y mantiene separada la
-    lógica de transporte de la lógica de Orion.
+    El streaming queda reservado para la respuesta visible del chat. Las etapas
+    estructuradas pueden activar JSON Mode y un presupuesto de salida algo mayor.
     """
 
     def __init__(self, settings: Settings) -> None:
@@ -175,8 +185,9 @@ class CloudflareAIClient:
         mode: SelectedMode,
         messages: list[ChatMessage],
         system_prompt: str,
+        structured: bool = False,
     ) -> CloudAIResult:
-        """Return one complete completion for internal planner/reviewer calls."""
+        """Return one complete completion; structured stages may request JSON Mode."""
 
         model = _selected_model(self.settings, mode)
         payload = _chat_payload(
@@ -185,6 +196,7 @@ class CloudflareAIClient:
             messages,
             system_prompt,
             stream=False,
+            structured=structured,
         )
         attempt_count = len(TRANSIENT_RETRY_DELAYS_SECONDS) + 1
 
