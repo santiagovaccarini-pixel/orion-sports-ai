@@ -8,6 +8,7 @@ from backend.app.domain.schemas import ChatMessage, SportContext
 from backend.app.providers.model_provider import ModelResult
 from backend.app.services.knowledge_base import KnowledgeDocument
 from backend.app.services.semantic_orchestrator import (
+    MAX_REVIEW_INPUT_CHARACTERS,
     EvidenceReview,
     LocalEvidence,
     SemanticOrchestrationError,
@@ -65,12 +66,26 @@ class SemanticOrchestratorTests(unittest.TestCase):
             """
         )
         self.assertTrue(plan.use_web)
+        self.assertFalse(plan.use_local_data)
         self.assertEqual(plan.recommended_mode, SelectedMode.QUICK)
         self.assertEqual(plan.entities, ("Jugador A",))
 
     def test_rejects_invalid_structured_plan(self) -> None:
         with self.assertRaises(SemanticOrchestrationError):
             parse_semantic_plan("esto no es json")
+
+    def test_rejects_string_boolean_instead_of_treating_false_as_true(self) -> None:
+        with self.assertRaises(SemanticOrchestrationError):
+            parse_semantic_plan(
+                """
+                {"objective":"probar parseo","entities":[],"constraints":[],
+                 "references":[],"information_needed":[],"ambiguities":[],
+                 "use_web":"false","use_local_data":false,"use_calculator":false,
+                 "use_chart":false,"needs_clarification":false,
+                 "clarifying_question":null,"web_query":null,"local_document_names":[],
+                 "recommended_mode":"quick","reason":"prueba"}
+                """
+            )
 
     def test_planner_receives_full_recent_conversation_and_capabilities(self) -> None:
         provider = FakePlanningProvider(
@@ -184,6 +199,36 @@ class SemanticOrchestratorTests(unittest.TestCase):
             review.follow_up_web_query,
             "confirmar alcance exacto de la estadística",
         )
+
+    def test_reviewer_input_stays_below_chat_message_limit(self) -> None:
+        plan = conservative_fallback_plan(
+            [ChatMessage(role="user", content="Pregunta")],
+            web_available=True,
+            documents=[],
+        )
+        provider = FakePlanningProvider(
+            [
+                """
+                {"sufficient":true,"relevant_source_ids":["W1"],
+                 "discarded_source_ids":[],"missing_information":[],
+                 "follow_up_web_query":null,"needs_clarification":false,
+                 "clarifying_question":null,"resolved_scope":"ok","reason":"ok"}
+                """
+            ]
+        )
+        web_sources = [
+            WebSource(
+                f"Fuente {index}",
+                f"https://example{index}.org/a",
+                "W" * 5_000,
+                f"example{index}.org",
+            )
+            for index in range(8)
+        ]
+        local = [LocalEvidence("L1", "grande.csv", "L" * 30_000, True)]
+        asyncio.run(review_evidence(provider, plan, web_sources, local))
+        sent = provider.calls[0]["messages"][0].content
+        self.assertLessEqual(len(sent), MAX_REVIEW_INPUT_CHARACTERS)
 
     def test_merge_web_sources_deduplicates_urls(self) -> None:
         a = WebSource("A", "https://a.test/1", "x", "a.test")
