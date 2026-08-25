@@ -1,148 +1,81 @@
 # Orion
 
-Agente personal de inteligencia deportiva con modelo local, control de recursos
-y memoria privada por consentimiento.
+Agente personal de inteligencia deportiva con modelos intercambiables, control de recursos y memoria privada por consentimiento.
 
-## Estado actual: Módulo 1.3
+## Estado actual: prototipo cloud
 
-Este módulo incorpora:
+Orion conserva el modo local con Ollama y suma un prototipo cloud con FastAPI en Render y Cloudflare Workers AI. La interfaz React/Vinext puede conectarse a cualquiera de los dos núcleos sin cambiar su contrato de chat.
+
+El prototipo incluye:
 
 - interfaz inicial de chat;
-- backend local en FastAPI;
-- conexión con Ollama;
+- backend FastAPI local o cloud;
+- proveedor intercambiable entre Ollama y Cloudflare Workers AI;
 - modos Automático, Rápido y Profundo;
-- respuesta progresiva: el texto aparece mientras Ollama lo genera;
-- el mismo botón del cuadro de escritura permite enviar o detener una generación;
-- selector de contexto local para General, Fútbol, Básquet, Vóley, Rugby,
-  Tenis, Atletismo, Natación y Ciclismo;
-- recomendación transparente del modo de respuesta;
-- advertencia antes de una operación pesada cuando la PC está exigida;
-- prioridad reducida continua para los procesos de Ollama;
-- `qwen3:4b-instruct` para Rápido y `qwen3:8b` para Profundo;
-- presupuesto configurable de 8 hilos físicos en ambos modos;
-- contexto, historial y salida acotados por modo para evitar trabajo innecesario;
-- servidor Python oculto, con verificación de arranque y registros de errores;
-- conversación con desplazamiento independiente, lectura libre durante la
-  generación y un control para volver al final;
-- reconstrucción final en Markdown seguro, fórmulas legibles sin LaTeX crudo y
-  métricas de primer texto, carga, tiempo total, velocidad,
-  tokens y pico de CPU por respuesta;
-- reglas de prudencia científica y una batería reproducible de calidad deportiva;
-- modelo activo en memoria durante diez minutos para acelerar preguntas seguidas;
-- atajos de túnel desactivados en el iniciador local;
-- cero memoria permanente y cero proveedores externos.
-- base de conocimiento local opcional para importar TXT, Markdown, CSV y JSON;
-  los fragmentos relevantes se incorporan como fuentes identificables en cada respuesta.
-- composición visual adaptativa: Orion elige entre texto, ejemplo, tabla o gráfico
-  según la tarea, con diseño orientado a comprensión y evidencia.
-- orquestador de intención: separa conocimiento general, datos locales, cálculo,
-  gráficos y búsqueda web antes de construir la respuesta.
+- respuesta progresiva por NDJSON;
+- botón unificado para enviar o detener;
+- selector de contexto para General, Fútbol, Básquet, Vóley, Rugby, Tenis, Atletismo, Natación y Ciclismo;
+- protección de CPU/RAM y prioridad reducida únicamente cuando la inferencia es local;
+- métricas de respuesta y evaluación reproducible;
+- base de conocimiento local opcional para TXT, Markdown, CSV y JSON;
+- orquestador que separa conocimiento general, datos locales, cálculo, gráficos y búsqueda web;
+- investigación web controlada para consultas que dependen de información actual;
+- extracción web orientada al fragmento relevante de la página, evitando usar solamente encabezados o navegación;
+- despliegue cloud de prototipo configurado explícitamente en plan gratuito.
 
-El deporte seleccionado especializa el vocabulario, las variables y los
-ejemplos del modelo local, pero no reemplaza la pregunta central ni activa una
-búsqueda en Internet. Si una consulta depende de información reciente, Orion
-debe reconocer esa limitación. La búsqueda web controlada ya está disponible de
-forma opcional: activala con `ORION_WEB_ENABLED=true`, mantené una allowlist en
-`ORION_WEB_ALLOWED_DOMAINS` y exigí al menos `ORION_WEB_MINIMUM_SOURCES` fuentes
-permitidas. El valor predeterminado es cuatro y la búsqueda permanece
-desactivada en local.
+## Investigación web
 
-Con una a tres fuentes, Orion muestra directamente los extractos y enlaces como
-información preliminar, sin pedirle al modelo que invente una síntesis. Con cuatro
-o más dominios independientes, el modelo puede sintetizar y citar el resultado.
+Las preguntas que dependen de información cambiante —por ejemplo goles actuales, resultados, tablas o alineaciones— deben consultar fuentes actuales en lugar de confiar en el conocimiento interno del modelo.
 
-La memoria con Supabase se implementará en el Módulo 2. Hasta entonces, la
-conversación existe únicamente en la pestaña abierta.
+En el prototipo cloud la búsqueda web está habilitada y exige al menos tres dominios independientes antes de presentar una investigación como verificada. Si no alcanza ese umbral, Orion debe mostrar la evidencia disponible como preliminar y evitar completar el dato con una suposición.
 
-La base de conocimiento local no es memoria conversacional: guarda únicamente
-los documentos que importes de forma explícita en `.orion-runtime/knowledge`.
-Desde la interfaz podés usar `Documento` para agregar archivos de texto, CSV,
-Markdown o JSON. Orion solo recupera fragmentos relacionados con la pregunta y
-los marca como `Fuente local`; si no encuentra coincidencias, no agrega contexto.
+La búsqueda usa una allowlist de fuentes y prioriza dominios futbolísticos para consultas estadísticas. Los extractos se seleccionan alrededor de los términos relevantes y números de la consulta, porque muchas páginas colocan menús, cookies y navegación antes del dato real.
 
-Antes de responder, el orquestador clasifica la consulta. Las preguntas actuales
-priorizan web; las preguntas sobre archivos priorizan las herramientas locales;
-las preguntas generales no reciben el CSV cargado por accidente. Los cálculos y
-gráficos se ejecutan con código y el modelo se limita a explicarlos.
-
-El currículo de fundamentos deportivos de diez preguntas está en
-`backend/evals/sports_foundations_cases.json`. Se puede ejecutar con
-`--dataset foundations`; los fallos muestran la corrección esperada para convertir
-cada error en un caso de regresión.
+El enrutamiento determinístico de consultas actuales funciona como una red de seguridad para decidir cuándo buscar; no debe utilizarse como mecanismo para generar la respuesta. La evolución prevista es un intérprete estructurado de intención, entidades, período y alcance antes de seleccionar herramientas.
 
 ## Arquitectura
 
 ```text
-Interfaz React/Vinext <- NDJSON progresivo <- FastAPI <- Ollama local
-                                                |
-                                                +-> Monitor de CPU y RAM
+Interfaz React/Vinext
+        |
+        +--> Orion local (FastAPI -> Ollama)
+        |
+        +--> Orion Cloud (FastAPI/Render -> Cloudflare Workers AI)
 ```
 
-Todo el núcleo escucha únicamente en `127.0.0.1`. No queda expuesto a otros
-equipos de la red durante este módulo.
+El modo cloud validado actualmente usa `@cf/openai/gpt-oss-20b`. El modelo no se considera definitivo: debe compararse contra alternativas mediante el mismo benchmark de Orion.
 
-## Uso de recursos
+## Inicio en Windows
 
-Generar texto localmente requiere cálculo. Un aumento temporal de CPU mientras
-Orion responde es normal; no significa por sí solo que exista un problema. El
-modo Rápido usa un modelo de 4B, contexto de 4096 tokens y un máximo de 384
-tokens de salida. Profundo reutiliza el modelo 8B ya instalado, con más contexto
-y una salida mayor. Ambos usan ocho hilos físicos y los procesos de Ollama se
-mantienen con prioridad reducida para que Windows y las demás aplicaciones
-tengan preferencia.
-
-La interfaz ya no espera la respuesta completa: muestra cada fragmento apenas
-llega y renderiza Markdown progresivamente. Esto reduce mucho el tiempo
-percibido, aunque el tiempo total seguirá dependiendo del modelo, la longitud
-de la respuesta y la carga del equipo.
-
-El modo Rápido permite hasta 768 tokens de salida y Profundo hasta 1536 por
-defecto. Estos límites pueden ajustarse con `ORION_QUICK_MAX_TOKENS` y
-`ORION_DEEP_MAX_TOKENS`. Markdown admite negrita, tablas, listas y emojis;
-HTML y estilos de color generados por el modelo no se ejecutan por seguridad.
-
-El presupuesto de hilos reduce el impacto, pero no constituye un límite rígido
-de porcentaje: controladores, GPU integrada y tareas auxiliares también pueden
-usar CPU. Puede ajustarse con `ORION_QUICK_THREADS` y `ORION_DEEP_THREADS`.
-
-## Preparación en Windows
-
-Desde PowerShell, ubicado en la carpeta del proyecto:
+Preparación local inicial:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\windows\Setup-Orion.ps1 -InstallOllama -DownloadQuickModel -DownloadDeepModel
 ```
 
-El script crea un entorno Python aislado, instala las dependencias de Orion,
-prepara la interfaz y, solamente cuando se incluyen esos parámetros, instala
-Ollama y descarga `qwen3:4b-instruct` para Rápido y `qwen3:8b` para Profundo.
-
-Si `qwen3:8b` ya está instalado, alcanza con ejecutar:
-
-```powershell
-.\scripts\windows\Setup-Orion.ps1 -DownloadQuickModel
-```
-
-Para iniciar Orion:
+Modo local:
 
 ```powershell
 .\scripts\windows\Start-Orion.ps1
 ```
 
-El núcleo Python se ejecuta oculto y sus registros quedan en
-`.orion-runtime`. La terminal desde la que se inicia Orion sigue siendo el
-controlador temporal del prototipo: al detenerla, el núcleo local se cierra de
-forma ordenada. El iniciador también desactiva los atajos interactivos que
-podrían abrir un túnel de Cloudflare al pegar texto accidentalmente.
+Modo Cloud de prueba local:
 
-## Dirección del producto
+```powershell
+$env:ORION_API_KEY="TU_CLAVE_LOCAL"
+.\scripts\windows\Start-Orion.ps1 -Cloud
+```
 
-El iniciador actual es transitorio. El objetivo de la siguiente etapa es
-empaquetar Orion como una aplicación liviana para Windows, con acceso directo e
-icono propio en la barra de tareas, sin necesitar VS Code. La aplicación deberá
-iniciar y detener de forma segura el núcleo local y mantener el mismo control
-de privacidad y recursos.
+En modo Cloud el iniciador no arranca el backend Python local ni Ollama. La interfaz apunta a `https://orion-core-prototype.onrender.com/api/v1` y usa la clave disponible únicamente en esa sesión de PowerShell.
+
+Este modo con `NEXT_PUBLIC_ORION_API_KEY` es exclusivamente para pruebas locales. No debe publicarse una compilación web con esa variable porque los valores `NEXT_PUBLIC_*` quedan accesibles en el navegador. Antes de publicar la interfaz se implementará autenticación server-side.
+
+## Persistencia
+
+La memoria permanente continúa desactivada. El filesystem del hosting gratuito no debe utilizarse como memoria porque es efímero. La memoria v1 tendrá almacenamiento separado y gobernado cuando se implemente su etapa.
+
+La base de conocimiento local no es memoria conversacional: guarda únicamente documentos importados explícitamente y recupera fragmentos relacionados con la consulta.
 
 ## Pruebas
 
@@ -158,30 +91,30 @@ Interfaz:
 npm run test:windows
 ```
 
-Evaluación deportiva local, con Orion iniciado:
+Smoke test cloud:
+
+```powershell
+$env:ORION_CLOUD_URL="https://orion-core-prototype.onrender.com"
+$env:ORION_API_KEY="TU_CLAVE_LOCAL"
+python backend\scripts\smoke_cloud.py
+```
+
+Evaluación deportiva local:
 
 ```powershell
 .\.venv\Scripts\python.exe -m backend.evals.run_local_evaluation --limit 3
 ```
 
-La batería completa contiene ocho casos y se ejecuta con `--limit 8`. El
-prechequeo por conceptos no reemplaza la revisión humana de las respuestas.
-
-Medición reproducible de rendimiento, con Orion iniciado:
+Benchmark de rendimiento local:
 
 ```powershell
 .\.venv\Scripts\python.exe -m backend.evals.run_performance_benchmark --mode quick --runs 2
 ```
 
-La primera ejecución incluye la carga del modelo; la segunda representa una
-consulta con el modelo ya caliente. La interfaz muestra las mismas métricas por
-respuesta para poder comparar cambios sin depender de una impresión subjetiva.
+## Seguridad del prototipo
 
-## Configuración
-
-Los valores disponibles están documentados en `backend/.env.example`. En el
-prototipo se mantienen los puertos y direcciones locales predeterminados para
-reducir exposición accidental. Para un despliegue remoto, definí `ORION_API_KEY`
-en el backend y la misma clave en `NEXT_PUBLIC_ORION_API_KEY` para la interfaz.
-La clave protege el estado y el chat; `/api/v1/health` queda disponible para
-comprobaciones de disponibilidad.
+- Las credenciales de Cloudflare y Orion se configuran como secretos del hosting y no se versionan.
+- `main` permanece estable mientras `cloud-prototype` continúa como rama de validación.
+- Las operaciones pesadas locales respetan la política de recursos; las consultas cloud no quedan bloqueadas por la CPU de la notebook.
+- La interfaz pública no se desplegará con una API key embebida.
+- La memoria y el acceso local de Mini Orion tendrán permisos y almacenamiento separados en etapas posteriores.
