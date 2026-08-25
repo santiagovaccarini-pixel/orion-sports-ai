@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from typing import AsyncIterator
@@ -36,6 +37,10 @@ class CloudAIStreamEvent:
     completion_tokens: int | None = None
 
 
+TRANSIENT_HTTP_STATUSES = frozenset({502, 503, 504})
+TRANSIENT_RETRY_DELAYS_SECONDS = (0.35, 0.9)
+
+
 def _selected_model(settings: Settings, mode: SelectedMode) -> str:
     return (
         settings.cloudflare_quick_model
@@ -50,6 +55,10 @@ def _max_tokens(settings: Settings, mode: SelectedMode) -> int:
         if mode is SelectedMode.QUICK
         else settings.deep_max_tokens
     )
+
+
+def _is_transient_status(status_code: int) -> bool:
+    return status_code in TRANSIENT_HTTP_STATUSES
 
 
 def parse_sse_data(line: str) -> dict[str, object] | None:
@@ -149,86 +158,107 @@ class CloudflareAIClient:
             "stream_options": {"include_usage": True},
         }
 
-        prompt_tokens: int | None = None
-        completion_tokens: int | None = None
-        saw_done = False
+        last_status_error: httpx.HTTPStatusError | None = None
+        attempt_count = len(TRANSIENT_RETRY_DELAYS_SECONDS) + 1
 
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                async with client.stream(
-                    "POST",
-                    f"{self.base_url}/chat/completions",
-                    headers=self.headers,
-                    json=payload,
-                ) as response:
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        data = parse_sse_data(line)
-                        if data is None:
-                            continue
-                        if data.get("done") is True:
-                            saw_done = True
-                            yield CloudAIStreamEvent(
-                                content="",
-                                done=True,
-                                model=model,
-                                prompt_tokens=prompt_tokens,
-                                completion_tokens=completion_tokens,
-                            )
-                            continue
+        for attempt in range(attempt_count):
+            prompt_tokens: int | None = None
+            completion_tokens: int | None = None
+            saw_done = False
 
-                        usage = data.get("usage")
-                        if isinstance(usage, dict):
-                            raw_prompt = usage.get("prompt_tokens")
-                            raw_completion = usage.get("completion_tokens")
-                            if isinstance(raw_prompt, int):
-                                prompt_tokens = raw_prompt
-                            if isinstance(raw_completion, int):
-                                completion_tokens = raw_completion
-
-                        choices = data.get("choices")
-                        if not isinstance(choices, list) or not choices:
-                            continue
-                        first = choices[0]
-                        if not isinstance(first, dict):
-                            continue
-                        delta = first.get("delta")
-                        if not isinstance(delta, dict):
-                            continue
-                        content = delta.get("content")
-                        if isinstance(content, str) and content:
-                            yield CloudAIStreamEvent(
-                                content=content,
-                                done=False,
-                                model=model,
-                            )
-
-            if not saw_done:
-                yield CloudAIStreamEvent(
-                    content="",
-                    done=True,
-                    model=model,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                )
-        except httpx.HTTPStatusError as exc:
-            detail = ""
             try:
-                detail = exc.response.text[:500]
-            except Exception:
-                detail = ""
-            if exc.response.status_code in {401, 403}:
-                raise CloudAIConfigurationError(
-                    "Cloudflare rechazó las credenciales configuradas para Orion."
-                ) from exc
-            if exc.response.status_code == 429:
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    async with client.stream(
+                        "POST",
+                        f"{self.base_url}/chat/completions",
+                        headers=self.headers,
+                        json=payload,
+                    ) as response:
+                        response.raise_for_status()
+                        async for line in response.aiter_lines():
+                            data = parse_sse_data(line)
+                            if data is None:
+                                continue
+                            if data.get("done") is True:
+                                saw_done = True
+                                yield CloudAIStreamEvent(
+                                    content="",
+                                    done=True,
+                                    model=model,
+                                    prompt_tokens=prompt_tokens,
+                                    completion_tokens=completion_tokens,
+                                )
+                                continue
+
+                            usage = data.get("usage")
+                            if isinstance(usage, dict):
+                                raw_prompt = usage.get("prompt_tokens")
+                                raw_completion = usage.get("completion_tokens")
+                                if isinstance(raw_prompt, int):
+                                    prompt_tokens = raw_prompt
+                                if isinstance(raw_completion, int):
+                                    completion_tokens = raw_completion
+
+                            choices = data.get("choices")
+                            if not isinstance(choices, list) or not choices:
+                                continue
+                            first = choices[0]
+                            if not isinstance(first, dict):
+                                continue
+                            delta = first.get("delta")
+                            if not isinstance(delta, dict):
+                                continue
+                            content = delta.get("content")
+                            if isinstance(content, str) and content:
+                                yield CloudAIStreamEvent(
+                                    content=content,
+                                    done=False,
+                                    model=model,
+                                )
+
+                if not saw_done:
+                    yield CloudAIStreamEvent(
+                        content="",
+                        done=True,
+                        model=model,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                    )
+                return
+
+            except httpx.HTTPStatusError as exc:
+                status_code = exc.response.status_code
+                if (
+                    _is_transient_status(status_code)
+                    and attempt < len(TRANSIENT_RETRY_DELAYS_SECONDS)
+                ):
+                    last_status_error = exc
+                    await asyncio.sleep(TRANSIENT_RETRY_DELAYS_SECONDS[attempt])
+                    continue
+                self._raise_status_error(exc)
+            except httpx.HTTPError as exc:
                 raise CloudAIUnavailableError(
-                    "Orion alcanzó el cupo gratuito o el límite temporal del motor cloud."
+                    "No se pudo conectar con el motor cloud."
                 ) from exc
-            raise CloudAIUnavailableError(
-                f"El motor cloud respondió con error {exc.response.status_code}. {detail}".strip()
+
+        if last_status_error is not None:  # pragma: no cover - defensive safeguard
+            self._raise_status_error(last_status_error)
+
+    @staticmethod
+    def _raise_status_error(exc: httpx.HTTPStatusError) -> None:
+        detail = ""
+        try:
+            detail = exc.response.text[:500]
+        except Exception:
+            detail = ""
+        if exc.response.status_code in {401, 403}:
+            raise CloudAIConfigurationError(
+                "Cloudflare rechazó las credenciales configuradas para Orion."
             ) from exc
-        except httpx.HTTPError as exc:
+        if exc.response.status_code == 429:
             raise CloudAIUnavailableError(
-                "No se pudo conectar con el motor cloud."
+                "Orion alcanzó el cupo gratuito o el límite temporal del motor cloud."
             ) from exc
+        raise CloudAIUnavailableError(
+            f"El motor cloud respondió con error {exc.response.status_code}. {detail}".strip()
+        ) from exc
