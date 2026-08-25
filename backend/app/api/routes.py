@@ -44,6 +44,7 @@ from backend.app.services.knowledge_base import (
 )
 from backend.app.services.mode_router import recommend_mode
 from backend.app.services.orchestrator import OrchestrationPlan, create_plan
+from backend.app.services.reasoning_pipeline import ReasoningBundle, build_reasoning_bundle
 from backend.app.services.resource_guard import (
     lower_ollama_priority,
     maintain_ollama_priority,
@@ -136,7 +137,6 @@ async def _provider_runtime(provider: ModelProvider) -> AsyncIterator[None]:
     if not provider.uses_local_resources:
         yield
         return
-
     async with chat_lock:
         lower_ollama_priority()
         priority_stop = asyncio.Event()
@@ -148,11 +148,96 @@ async def _provider_runtime(provider: ModelProvider) -> AsyncIterator[None]:
             await priority_task
 
 
-def _knowledge_prompt(
+async def _prepare_selected_chat(
+    request: ChatRequest,
+    *,
+    provider: ModelProvider,
+    selected_mode: SelectedMode,
+    recommended_mode: SelectedMode,
+    recommendation_reason: str,
+    preflight_model: bool,
+) -> PreparedChat:
+    if provider.uses_local_resources:
+        snapshot = read_snapshot()
+        resource_decision = evaluate_resources(selected_mode, snapshot)
+        if resource_decision.requires_confirmation and not request.allow_busy:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "resource_confirmation_required",
+                    "message": (
+                        "Orion recomienda esperar o utilizar el modo Rápido para no afectar "
+                        "las demás aplicaciones."
+                    ),
+                    "reasons": list(resource_decision.reasons),
+                    "selected_mode": selected_mode.value,
+                    "recommended_mode": recommended_mode.value,
+                    "snapshot": asdict(snapshot),
+                },
+            )
+    if preflight_model:
+        try:
+            await provider.preflight(selected_mode)
+        except (
+            ModelProviderConfigurationError,
+            ModelProviderModelError,
+            ModelProviderUnavailableError,
+        ) as exc:
+            raise _provider_http_exception(exc) from exc
+    return PreparedChat(
+        selected_mode=selected_mode,
+        recommended_mode=recommended_mode,
+        recommendation_reason=recommendation_reason,
+        model=provider.model_for(selected_mode),
+        sport=request.sport,
+    )
+
+
+async def _prepare_chat(
+    request: ChatRequest,
+    *,
+    preflight_model: bool,
+    provider: ModelProvider | None = None,
+) -> PreparedChat:
+    """Legacy preparation retained for rollback/local compatibility."""
+
+    recommendation = recommend_mode(request.messages)
+    selected_mode = (
+        recommendation.mode
+        if request.mode is RequestedMode.AUTO
+        else SelectedMode(request.mode.value)
+    )
+    provider = provider or _provider_or_http_error()
+    return await _prepare_selected_chat(
+        request,
+        provider=provider,
+        selected_mode=selected_mode,
+        recommended_mode=recommendation.mode,
+        recommendation_reason=recommendation.reason,
+        preflight_model=preflight_model,
+    )
+
+
+def _semantic_prompt(
+    request: ChatRequest,
+    prepared: PreparedChat,
+    bundle: ReasoningBundle,
+) -> str:
+    base = build_system_prompt(
+        prepared.sport,
+        prepared.selected_mode,
+        request.messages[-1].content,
+    )
+    return f"{base}\n\n{bundle.context}"
+
+
+def _legacy_knowledge_prompt(
     request: ChatRequest,
     prepared: PreparedChat,
     web_context: str = "",
 ) -> str:
+    """Previous keyword-based tool path kept only as an explicit rollback mode."""
+
     base_prompt = build_system_prompt(
         prepared.sport,
         prepared.selected_mode,
@@ -186,23 +271,20 @@ def _knowledge_prompt(
         overviews += (
             "ACLARACIÓN OBLIGATORIA: la petición no define qué jugador, columna, "
             "período o cálculo necesita el usuario. No analices ni resumas todavía. "
-            "Preguntá qué dato desea consultar y ofrecé ejemplos usando las columnas detectadas.\n"
+            "Preguntá qué dato desea consultar.\n"
         )
     if plan.use_chart and any(
         csv_chart_is_ambiguous(document.content, query) for document in csv_documents
     ):
         overviews += (
-            "ACLARACIÓN PARA EL GRÁFICO: indicá qué jugador o entidad, qué columna "
-            "y qué período querés visualizar. Orion puede generar un gráfico local "
-            "cuando esos datos estén definidos.\n"
+            "ACLARACIÓN PARA EL GRÁFICO: indicá qué entidad, columna y período querés "
+            "visualizar.\n"
         )
     chart = _knowledge_chart(request) if plan.use_chart else None
     if chart:
         overviews += (
-            "CAPACIDAD VISUAL ACTIVA: Orion ya generó un gráfico local verificable "
-            "para esta consulta y lo mostrará en la interfaz. No digas que no podés "
-            "generar gráficos. Describí el gráfico usando exclusivamente estos datos: "
-            f"{json.dumps(chart, ensure_ascii=False)}\n"
+            "CAPACIDAD VISUAL ACTIVA: Orion ya generó un gráfico local verificable. "
+            f"Describilo usando exclusivamente estos datos: {json.dumps(chart, ensure_ascii=False)}\n"
         )
     extra = "\n".join(
         item
@@ -210,6 +292,10 @@ def _knowledge_prompt(
         if item
     )
     return f"{base_prompt}\n\n{extra}" if extra else base_prompt
+
+
+# Backward-compatible alias used by existing tests and rollback tooling.
+_knowledge_prompt = _legacy_knowledge_prompt
 
 
 def _create_orchestration_plan(
@@ -233,6 +319,8 @@ def _create_orchestration_plan(
 
 
 async def _web_context(request: ChatRequest) -> str:
+    """Legacy web route retained for rollback mode."""
+
     settings = get_settings()
     query = request.messages[-1].content
     plan = _create_orchestration_plan(query)
@@ -242,6 +330,8 @@ async def _web_context(request: ChatRequest) -> str:
         query,
         allowed_domains=settings.web_allowed_domains,
         minimum_sources=settings.web_minimum_sources,
+        provider=settings.web_provider,
+        tavily_api_key=settings.tavily_api_key,
     )
     return format_sources(sources, minimum_sources=settings.web_minimum_sources)
 
@@ -256,9 +346,7 @@ def _insufficient_web_response(context: str) -> str:
         "suficiente respaldo.\n\n"
         f"{context}\n\n"
         "Tomá los extractos como datos provisionales de las fuentes encontradas; "
-        "no los presento como un hecho confirmado ni completo. No voy a calcular "
-        "ni completar lo que falta con una suposición. Podés pedir una búsqueda "
-        "más amplia, agregar una fuente específica o indicar un período exacto."
+        "no los presento como un hecho confirmado ni completo."
     )
 
 
@@ -273,57 +361,45 @@ def _knowledge_chart(request: ChatRequest) -> dict[str, object] | None:
     return None
 
 
-async def _prepare_chat(
-    request: ChatRequest,
-    *,
-    preflight_model: bool,
-    provider: ModelProvider | None = None,
-) -> PreparedChat:
-    recommendation = recommend_mode(request.messages)
-    selected_mode = (
-        recommendation.mode
-        if request.mode is RequestedMode.AUTO
-        else SelectedMode(request.mode.value)
+def _documents() -> list[KnowledgeDocument]:
+    return KnowledgeBase(Path(get_settings().knowledge_path)).list_documents()
+
+
+def _direct_response(
+    content: str,
+    prepared: PreparedChat,
+) -> ChatResponse:
+    return ChatResponse(
+        content=content,
+        sport=prepared.sport,
+        selected_mode=prepared.selected_mode,
+        recommended_mode=prepared.recommended_mode,
+        recommendation_reason=prepared.recommendation_reason,
+        model=prepared.model,
+        total_duration_ms=None,
+        load_duration_ms=None,
+        prompt_eval_duration_ms=None,
+        eval_duration_ms=None,
+        prompt_tokens=None,
+        completion_tokens=None,
+        tokens_per_second=None,
+        thread_limit=0,
     )
-    provider = provider or _provider_or_http_error()
 
-    # A cloud model does not consume the user's CPU/RAM, so local resource pressure
-    # must never block a cloud request.
-    if provider.uses_local_resources:
-        snapshot = read_snapshot()
-        resource_decision = evaluate_resources(selected_mode, snapshot)
-        if resource_decision.requires_confirmation and not request.allow_busy:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "resource_confirmation_required",
-                    "message": (
-                        "Orion recomienda esperar o utilizar el modo Rápido para no afectar "
-                        "las demás aplicaciones."
-                    ),
-                    "reasons": list(resource_decision.reasons),
-                    "selected_mode": selected_mode.value,
-                    "recommended_mode": recommendation.mode.value,
-                    "snapshot": asdict(snapshot),
-                },
-            )
 
-    if preflight_model:
-        try:
-            await provider.preflight(selected_mode)
-        except (
-            ModelProviderConfigurationError,
-            ModelProviderModelError,
-            ModelProviderUnavailableError,
-        ) as exc:
-            raise _provider_http_exception(exc) from exc
-
-    return PreparedChat(
-        selected_mode=selected_mode,
-        recommended_mode=recommendation.mode,
-        recommendation_reason=recommendation.reason,
-        model=provider.model_for(selected_mode),
-        sport=request.sport,
+def _done_event() -> bytes:
+    return _ndjson(
+        {
+            "type": "done",
+            "total_duration_ms": None,
+            "load_duration_ms": None,
+            "prompt_eval_duration_ms": None,
+            "eval_duration_ms": None,
+            "prompt_tokens": None,
+            "completion_tokens": None,
+            "tokens_per_second": None,
+            "thread_limit": 0,
+        }
     )
 
 
@@ -338,7 +414,7 @@ async def health() -> dict[str, str]:
     dependencies=[Depends(require_api_key)],
 )
 async def list_knowledge_documents() -> list[KnowledgeDocumentResponse]:
-    documents = KnowledgeBase(Path(get_settings().knowledge_path)).list_documents()
+    documents = _documents()
     return [
         KnowledgeDocumentResponse(
             id=item.id,
@@ -405,38 +481,51 @@ async def system_status() -> StatusResponse:
     dependencies=[Depends(require_api_key)],
 )
 async def chat(request: ChatRequest) -> ChatResponse:
+    settings = get_settings()
     provider = _provider_or_http_error()
-    prepared = await _prepare_chat(
-        request,
-        preflight_model=False,
-        provider=provider,
-    )
-    web_context = await _web_context(request)
-    if _web_is_insufficient(web_context):
-        return ChatResponse(
-            content=_insufficient_web_response(web_context),
-            sport=prepared.sport,
-            selected_mode=prepared.selected_mode,
-            recommended_mode=prepared.recommended_mode,
-            recommendation_reason=prepared.recommendation_reason,
-            model=prepared.model,
-            total_duration_ms=None,
-            load_duration_ms=None,
-            prompt_eval_duration_ms=None,
-            eval_duration_ms=None,
-            prompt_tokens=None,
-            completion_tokens=None,
-            tokens_per_second=None,
-            thread_limit=0,
-        )
 
     try:
-        async with _provider_runtime(provider):
-            result = await provider.chat(
-                mode=prepared.selected_mode,
-                messages=request.messages,
-                system_prompt=_knowledge_prompt(request, prepared, web_context),
+        if settings.semantic_orchestration:
+            await provider.preflight(SelectedMode.QUICK)
+            bundle = await build_reasoning_bundle(
+                provider,
+                request,
+                settings,
+                _documents(),
             )
+            prepared = await _prepare_selected_chat(
+                request,
+                provider=provider,
+                selected_mode=bundle.selected_mode,
+                recommended_mode=bundle.plan.recommended_mode,
+                recommendation_reason=bundle.plan.reason,
+                preflight_model=True,
+            )
+            if bundle.plan.needs_clarification and bundle.plan.clarifying_question:
+                return _direct_response(bundle.plan.clarifying_question, prepared)
+            if bundle.review.needs_clarification and bundle.review.clarifying_question:
+                return _direct_response(bundle.review.clarifying_question, prepared)
+            async with _provider_runtime(provider):
+                result = await provider.chat(
+                    mode=prepared.selected_mode,
+                    messages=request.messages,
+                    system_prompt=_semantic_prompt(request, prepared, bundle),
+                )
+        else:
+            prepared = await _prepare_chat(
+                request,
+                preflight_model=False,
+                provider=provider,
+            )
+            web_context = await _web_context(request)
+            if _web_is_insufficient(web_context):
+                return _direct_response(_insufficient_web_response(web_context), prepared)
+            async with _provider_runtime(provider):
+                result = await provider.chat(
+                    mode=prepared.selected_mode,
+                    messages=request.messages,
+                    system_prompt=_legacy_knowledge_prompt(request, prepared, web_context),
+                )
     except (
         ModelProviderConfigurationError,
         ModelProviderModelError,
@@ -467,69 +556,111 @@ async def chat(request: ChatRequest) -> ChatResponse:
     dependencies=[Depends(require_api_key)],
 )
 async def chat_stream(request: ChatRequest) -> StreamingResponse:
+    settings = get_settings()
     provider = _provider_or_http_error()
-    prepared = await _prepare_chat(
-        request,
-        preflight_model=True,
-        provider=provider,
-    )
-    web_context = await _web_context(request)
 
     async def generate() -> AsyncIterator[bytes]:
-        yield _ndjson(
-            {
-                "type": "meta",
-                "selected_mode": prepared.selected_mode.value,
-                "recommended_mode": prepared.recommended_mode.value,
-                "recommendation_reason": prepared.recommendation_reason,
-                "model": prepared.model,
-                "sport": prepared.sport.value,
-            }
-        )
-        if chart := _knowledge_chart(request):
-            yield _ndjson({"type": "chart", "chart": chart})
-        if _web_is_insufficient(web_context):
-            yield _ndjson(
-                {
-                    "type": "content",
-                    "content": _insufficient_web_response(web_context),
-                }
-            )
-            yield _ndjson(
-                {
-                    "type": "done",
-                    "total_duration_ms": None,
-                    "load_duration_ms": None,
-                    "prompt_eval_duration_ms": None,
-                    "eval_duration_ms": None,
-                    "prompt_tokens": None,
-                    "completion_tokens": None,
-                    "tokens_per_second": None,
-                    "thread_limit": 0,
-                }
-            )
-            return
-
         try:
+            if settings.semantic_orchestration:
+                # All potentially slow planning/search work happens inside the stream
+                # generator so the HTTP response is opened before research begins.
+                await provider.preflight(SelectedMode.QUICK)
+                bundle = await build_reasoning_bundle(
+                    provider,
+                    request,
+                    settings,
+                    _documents(),
+                )
+                prepared = await _prepare_selected_chat(
+                    request,
+                    provider=provider,
+                    selected_mode=bundle.selected_mode,
+                    recommended_mode=bundle.plan.recommended_mode,
+                    recommendation_reason=bundle.plan.reason,
+                    preflight_model=True,
+                )
+                yield _ndjson(
+                    {
+                        "type": "meta",
+                        "selected_mode": prepared.selected_mode.value,
+                        "recommended_mode": prepared.recommended_mode.value,
+                        "recommendation_reason": prepared.recommendation_reason,
+                        "model": prepared.model,
+                        "sport": prepared.sport.value,
+                    }
+                )
+                clarification = None
+                if bundle.plan.needs_clarification:
+                    clarification = bundle.plan.clarifying_question
+                if bundle.review.needs_clarification:
+                    clarification = bundle.review.clarifying_question or clarification
+                if clarification:
+                    yield _ndjson({"type": "content", "content": clarification})
+                    yield _done_event()
+                    return
+                async with _provider_runtime(provider):
+                    async for event in provider.chat_stream(
+                        mode=prepared.selected_mode,
+                        messages=request.messages,
+                        system_prompt=_semantic_prompt(request, prepared, bundle),
+                    ):
+                        if event.content:
+                            yield _ndjson({"type": "content", "content": event.content})
+                        if event.done:
+                            yield _ndjson(
+                                {
+                                    "type": "done",
+                                    "total_duration_ms": event.total_duration_ms,
+                                    "load_duration_ms": event.load_duration_ms,
+                                    "prompt_eval_duration_ms": event.prompt_eval_duration_ms,
+                                    "eval_duration_ms": event.eval_duration_ms,
+                                    "prompt_tokens": event.prompt_tokens,
+                                    "completion_tokens": event.completion_tokens,
+                                    "tokens_per_second": event.tokens_per_second,
+                                    "thread_limit": event.thread_limit,
+                                }
+                            )
+                return
+
+            prepared = await _prepare_chat(
+                request,
+                preflight_model=True,
+                provider=provider,
+            )
+            web_context = await _web_context(request)
+            yield _ndjson(
+                {
+                    "type": "meta",
+                    "selected_mode": prepared.selected_mode.value,
+                    "recommended_mode": prepared.recommended_mode.value,
+                    "recommendation_reason": prepared.recommendation_reason,
+                    "model": prepared.model,
+                    "sport": prepared.sport.value,
+                }
+            )
+            if chart := _knowledge_chart(request):
+                yield _ndjson({"type": "chart", "chart": chart})
+            if _web_is_insufficient(web_context):
+                yield _ndjson(
+                    {"type": "content", "content": _insufficient_web_response(web_context)}
+                )
+                yield _done_event()
+                return
             async with _provider_runtime(provider):
                 async for event in provider.chat_stream(
                     mode=prepared.selected_mode,
                     messages=request.messages,
-                    system_prompt=_knowledge_prompt(request, prepared, web_context),
+                    system_prompt=_legacy_knowledge_prompt(request, prepared, web_context),
                 ):
                     if event.content:
-                        yield _ndjson(
-                            {"type": "content", "content": event.content}
-                        )
+                        yield _ndjson({"type": "content", "content": event.content})
                     if event.done:
                         yield _ndjson(
                             {
                                 "type": "done",
                                 "total_duration_ms": event.total_duration_ms,
                                 "load_duration_ms": event.load_duration_ms,
-                                "prompt_eval_duration_ms": (
-                                    event.prompt_eval_duration_ms
-                                ),
+                                "prompt_eval_duration_ms": event.prompt_eval_duration_ms,
                                 "eval_duration_ms": event.eval_duration_ms,
                                 "prompt_tokens": event.prompt_tokens,
                                 "completion_tokens": event.completion_tokens,
