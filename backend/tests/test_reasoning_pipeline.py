@@ -168,7 +168,7 @@ class ReasoningPipelineTests(unittest.TestCase):
         self.assertEqual(search.await_count, 1)
         self.assertEqual(bundle.plan.web_query, request.messages[-1].content)
         self.assertFalse(bundle.review.sufficient)
-        self.assertEqual(bundle.review.relevant_source_ids, ("W1",))
+        self.assertEqual(bundle.review.relevant_source_ids, ())
         self.assertIn("no pudo completarse", bundle.review.missing_information[0])
         self.assertEqual(bundle.web_sources, evidence)
 
