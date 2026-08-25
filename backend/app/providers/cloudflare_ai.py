@@ -61,6 +61,69 @@ def _is_transient_status(status_code: int) -> bool:
     return status_code in TRANSIENT_HTTP_STATUSES
 
 
+def _chat_payload(
+    settings: Settings,
+    mode: SelectedMode,
+    messages: list[ChatMessage],
+    system_prompt: str,
+    *,
+    stream: bool,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "model": _selected_model(settings, mode),
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            *[
+                {"role": message.role, "content": message.content}
+                for message in messages
+            ],
+        ],
+        "max_tokens": _max_tokens(settings, mode),
+        "temperature": 0.2 if mode is SelectedMode.QUICK else 0.35,
+        "stream": stream,
+    }
+    if stream:
+        payload["stream_options"] = {"include_usage": True}
+    return payload
+
+
+def _completion_content(payload: dict[str, object]) -> str:
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0]
+    if not isinstance(first, dict):
+        return ""
+    message = first.get("message")
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content")
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            text = item.get("text")
+            if isinstance(text, str) and text:
+                parts.append(text)
+        return "".join(parts).strip()
+    return ""
+
+
+def _completion_usage(payload: dict[str, object]) -> tuple[int | None, int | None]:
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        return None, None
+    prompt_tokens = usage.get("prompt_tokens")
+    completion_tokens = usage.get("completion_tokens")
+    return (
+        prompt_tokens if isinstance(prompt_tokens, int) else None,
+        completion_tokens if isinstance(completion_tokens, int) else None,
+    )
+
+
 def parse_sse_data(line: str) -> dict[str, object] | None:
     line = line.strip()
     if not line or not line.startswith("data:"):
@@ -84,8 +147,10 @@ def parse_sse_data(line: str) -> dict[str, object] | None:
 class CloudflareAIClient:
     """Cliente mínimo para Workers AI usando su API compatible con OpenAI.
 
-    No contiene lógica de Orion: solamente traduce mensajes hacia/desde el
-    proveedor. Esto permite cambiar de motor sin reescribir el orquestador.
+    Las llamadas internas de razonamiento usan completions completas (no streaming).
+    El streaming queda reservado para la respuesta visible del chat. Esto evita que
+    una etapa estructurada falle por un cierre SSE incompleto y mantiene separada la
+    lógica de transporte de la lógica de Orion.
     """
 
     def __init__(self, settings: Settings) -> None:
@@ -111,28 +176,72 @@ class CloudflareAIClient:
         messages: list[ChatMessage],
         system_prompt: str,
     ) -> CloudAIResult:
-        parts: list[str] = []
-        final_event: CloudAIStreamEvent | None = None
-        async for event in self.chat_stream(
-            mode=mode,
-            messages=messages,
-            system_prompt=system_prompt,
-        ):
-            if event.content:
-                parts.append(event.content)
-            if event.done:
-                final_event = event
+        """Return one complete completion for internal planner/reviewer calls."""
 
-        content = "".join(parts).strip()
-        if not content or final_event is None:
-            raise CloudAIUnavailableError(
-                "El modelo cloud cerró la respuesta antes de terminar."
-            )
-        return CloudAIResult(
-            content=content,
-            model=final_event.model,
-            prompt_tokens=final_event.prompt_tokens,
-            completion_tokens=final_event.completion_tokens,
+        model = _selected_model(self.settings, mode)
+        payload = _chat_payload(
+            self.settings,
+            mode,
+            messages,
+            system_prompt,
+            stream=False,
+        )
+        attempt_count = len(TRANSIENT_RETRY_DELAYS_SECONDS) + 1
+
+        for attempt in range(attempt_count):
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.post(
+                        f"{self.base_url}/chat/completions",
+                        headers=self.headers,
+                        json=payload,
+                    )
+                    response.raise_for_status()
+                    try:
+                        raw = response.json()
+                    except ValueError as exc:
+                        raise CloudAIUnavailableError(
+                            "El motor cloud devolvió una respuesta que no es JSON válido."
+                        ) from exc
+
+                if not isinstance(raw, dict):
+                    raise CloudAIUnavailableError(
+                        "El motor cloud devolvió un formato inesperado."
+                    )
+
+                content = _completion_content(raw)
+                if content:
+                    prompt_tokens, completion_tokens = _completion_usage(raw)
+                    return CloudAIResult(
+                        content=content,
+                        model=model,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                    )
+
+                if attempt < len(TRANSIENT_RETRY_DELAYS_SECONDS):
+                    await asyncio.sleep(TRANSIENT_RETRY_DELAYS_SECONDS[attempt])
+                    continue
+                raise CloudAIUnavailableError(
+                    "El modelo cloud devolvió una respuesta vacía en una etapa interna."
+                )
+
+            except httpx.HTTPStatusError as exc:
+                status_code = exc.response.status_code
+                if (
+                    _is_transient_status(status_code)
+                    and attempt < len(TRANSIENT_RETRY_DELAYS_SECONDS)
+                ):
+                    await asyncio.sleep(TRANSIENT_RETRY_DELAYS_SECONDS[attempt])
+                    continue
+                self._raise_status_error(exc)
+            except httpx.HTTPError as exc:
+                raise CloudAIUnavailableError(
+                    "No se pudo conectar con el motor cloud."
+                ) from exc
+
+        raise CloudAIUnavailableError(
+            "El modelo cloud no pudo completar la etapa interna."
         )
 
     async def chat_stream(
@@ -143,20 +252,13 @@ class CloudflareAIClient:
         system_prompt: str,
     ) -> AsyncIterator[CloudAIStreamEvent]:
         model = _selected_model(self.settings, mode)
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                *[
-                    {"role": message.role, "content": message.content}
-                    for message in messages
-                ],
-            ],
-            "max_tokens": _max_tokens(self.settings, mode),
-            "temperature": 0.2 if mode is SelectedMode.QUICK else 0.35,
-            "stream": True,
-            "stream_options": {"include_usage": True},
-        }
+        payload = _chat_payload(
+            self.settings,
+            mode,
+            messages,
+            system_prompt,
+            stream=True,
+        )
 
         last_status_error: httpx.HTTPStatusError | None = None
         attempt_count = len(TRANSIENT_RETRY_DELAYS_SECONDS) + 1
