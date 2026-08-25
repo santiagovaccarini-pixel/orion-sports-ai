@@ -11,6 +11,7 @@ from backend.app.core.config import Settings
 from backend.app.domain.models import SelectedMode
 from backend.app.domain.schemas import ChatMessage
 from backend.app.providers.cloudflare_ai import (
+    STRUCTURED_MIN_MAX_TOKENS,
     CloudAIConfigurationError,
     CloudAIUnavailableError,
     CloudflareAIClient,
@@ -83,7 +84,7 @@ class CloudflareAIProviderTests(unittest.TestCase):
         for status_code in (400, 401, 403, 404, 429, 500):
             self.assertFalse(_is_transient_status(status_code))
 
-    def test_internal_chat_uses_non_streaming_completion(self) -> None:
+    def test_structured_internal_chat_uses_json_mode_and_larger_budget(self) -> None:
         captured_payload: dict[str, object] = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -129,6 +130,7 @@ class CloudflareAIProviderTests(unittest.TestCase):
                     mode=SelectedMode.QUICK,
                     messages=[ChatMessage(role="user", content="Planificá")],
                     system_prompt="Devolvé JSON.",
+                    structured=True,
                 )
             )
 
@@ -137,6 +139,54 @@ class CloudflareAIProviderTests(unittest.TestCase):
         self.assertEqual(result.completion_tokens, 5)
         self.assertIs(captured_payload["stream"], False)
         self.assertNotIn("stream_options", captured_payload)
+        self.assertEqual(captured_payload["response_format"], {"type": "json_object"})
+        self.assertGreaterEqual(captured_payload["max_tokens"], STRUCTURED_MIN_MAX_TOKENS)
+        self.assertEqual(captured_payload["temperature"], 0.1)
+
+    def test_regular_complete_chat_does_not_force_json_mode(self) -> None:
+        captured_payload: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_payload
+            captured_payload = json.loads(request.content.decode("utf-8"))
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "choices": [
+                        {"message": {"role": "assistant", "content": "Respuesta"}}
+                    ]
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+        real_async_client = httpx.AsyncClient
+
+        def client_factory(*_args, **kwargs):
+            return real_async_client(
+                transport=transport,
+                timeout=kwargs.get("timeout"),
+            )
+
+        client = CloudflareAIClient(
+            Settings(
+                cloudflare_account_id="account",
+                cloudflare_api_token="token",
+            )
+        )
+        with patch(
+            "backend.app.providers.cloudflare_ai.httpx.AsyncClient",
+            side_effect=client_factory,
+        ):
+            asyncio.run(
+                client.chat(
+                    mode=SelectedMode.QUICK,
+                    messages=[ChatMessage(role="user", content="Hola")],
+                    system_prompt="Respondé.",
+                )
+            )
+
+        self.assertNotIn("response_format", captured_payload)
 
     def test_chat_retries_one_transient_503_before_succeeding(self) -> None:
         attempts = 0
@@ -236,6 +286,7 @@ class CloudflareAIProviderTests(unittest.TestCase):
                         mode=SelectedMode.QUICK,
                         messages=[ChatMessage(role="user", content="Planificá")],
                         system_prompt="Devolvé JSON.",
+                        structured=True,
                     )
                 )
 
