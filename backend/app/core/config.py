@@ -93,6 +93,7 @@ class Settings:
     semantic_orchestration: bool = False
     semantic_max_tool_rounds: int = 2
     semantic_local_context_characters: int = 12_000
+    diagnostics_enabled: bool = False
     cors_origins: tuple[str, ...] = DEFAULT_CORS_ORIGINS
 
 
@@ -155,5 +156,6 @@ def get_settings() -> Settings:
         semantic_local_context_characters=_read_positive_int(
             "ORION_SEMANTIC_LOCAL_CONTEXT_CHARACTERS", 12_000
         ),
+        diagnostics_enabled=_read_bool("ORION_DIAGNOSTICS_ENABLED", False),
         cors_origins=origins or DEFAULT_CORS_ORIGINS,
     )
