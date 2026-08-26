@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.responses import StreamingResponse
 
 from backend.app.core.config import get_settings
+from backend.app.core.identity import direct_creator_answer
 from backend.app.core.prompt import build_system_prompt
 from backend.app.domain.models import SelectedMode
 from backend.app.domain.schemas import (
@@ -81,6 +82,16 @@ class PreparedChat:
     recommendation_reason: str
     model: str
     sport: SportContext
+
+
+def _identity_prepared(request: ChatRequest) -> PreparedChat:
+    return PreparedChat(
+        selected_mode=SelectedMode.QUICK,
+        recommended_mode=SelectedMode.QUICK,
+        recommendation_reason="Identidad institucional de Orion.",
+        model="orion-institutional-identity",
+        sport=request.sport,
+    )
 
 
 def _ndjson(payload: dict[str, object]) -> bytes:
@@ -498,6 +509,18 @@ async def system_status() -> StatusResponse:
 )
 async def chat(request: ChatRequest) -> ChatResponse:
     settings = get_settings()
+    identity_answer = direct_creator_answer(request.messages[-1].content)
+    if identity_answer is not None:
+        trace = _start_trace(request, settings.diagnostics_enabled)
+        if trace is not None:
+            trace.set_model("orion-institutional-identity")
+            trace.record_guard(
+                "institutional_identity_direct",
+                "Respuesta institucional de autoría de Orion; no se llamó a un modelo externo.",
+            )
+            trace.complete(identity_answer)
+        return _direct_response(identity_answer, _identity_prepared(request))
+
     provider = _provider_or_http_error()
     trace: DiagnosticTrace | None = None
 
@@ -601,6 +624,42 @@ async def chat(request: ChatRequest) -> ChatResponse:
 )
 async def chat_stream(request: ChatRequest) -> StreamingResponse:
     settings = get_settings()
+    identity_answer = direct_creator_answer(request.messages[-1].content)
+    if identity_answer is not None:
+        async def identity_generate() -> AsyncIterator[bytes]:
+            trace = _start_trace(request, settings.diagnostics_enabled)
+            if trace is not None:
+                trace.set_model("orion-institutional-identity")
+                trace.record_guard(
+                    "institutional_identity_direct",
+                    "Respuesta institucional de autoría de Orion; no se llamó a un modelo externo.",
+                )
+            prepared = _identity_prepared(request)
+            yield _ndjson(
+                {
+                    "type": "meta",
+                    "selected_mode": prepared.selected_mode.value,
+                    "recommended_mode": prepared.recommended_mode.value,
+                    "recommendation_reason": prepared.recommendation_reason,
+                    "model": prepared.model,
+                    "sport": prepared.sport.value,
+                    "trace_id": trace.trace_id if trace is not None else None,
+                }
+            )
+            yield _ndjson({"type": "content", "content": identity_answer})
+            if trace is not None:
+                trace.complete(identity_answer)
+            yield _done_event()
+
+        return StreamingResponse(
+            identity_generate(),
+            media_type="application/x-ndjson",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     provider = _provider_or_http_error()
 
     async def generate() -> AsyncIterator[bytes]:
@@ -648,6 +707,8 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                         trace.complete(clarification)
                     yield _done_event()
                     return
+                if bundle.chart is not None:
+                    yield _ndjson({"type": "chart", "chart": bundle.chart})
 
                 system_prompt = _semantic_prompt(request, prepared, bundle)
                 if trace is not None:
