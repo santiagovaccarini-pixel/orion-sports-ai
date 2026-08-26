@@ -33,6 +33,25 @@ class DeploymentConfigTests(unittest.TestCase):
         self.assertEqual(content.count(expected), 2)
         self.assertNotIn('@cf/openai/gpt-oss-20b', content)
 
+    def test_gpt_oss_reasoning_and_output_budgets_are_explicit(self) -> None:
+        content = RENDER_YAML.read_text(encoding="utf-8")
+        self.assertIn(
+            '- key: ORION_CLOUDFLARE_QUICK_REASONING_EFFORT\n        value: "low"',
+            content,
+        )
+        self.assertIn(
+            '- key: ORION_CLOUDFLARE_DEEP_REASONING_EFFORT\n        value: "medium"',
+            content,
+        )
+        self.assertIn(
+            '- key: ORION_CLOUDFLARE_QUICK_MAX_TOKENS\n        value: "1536"',
+            content,
+        )
+        self.assertIn(
+            '- key: ORION_CLOUDFLARE_DEEP_MAX_TOKENS\n        value: "3072"',
+            content,
+        )
+
     def test_render_starts_fastapi_core_and_has_health_check(self) -> None:
         content = RENDER_YAML.read_text(encoding="utf-8")
         self.assertIn("backend.app.main:app", content)
@@ -49,7 +68,7 @@ class DeploymentConfigTests(unittest.TestCase):
             content,
         )
         self.assertIn(
-            "- key: ORION_SEMANTIC_MAX_TOOL_ROUNDS\n        value: \"2\"",
+            "- key: ORION_SEMANTIC_MAX_TOOL_ROUNDS\n        value: \"3\"",
             content,
         )
 
