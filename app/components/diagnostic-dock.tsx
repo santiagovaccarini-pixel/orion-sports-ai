@@ -8,6 +8,7 @@ import {
   getLatestDiagnosticTrace,
 } from "../lib/orion-api";
 import { DiagnosticPanel } from "./diagnostic-panel";
+import styles from "./diagnostic.module.css";
 
 export function DiagnosticDock() {
   const [open, setOpen] = useState(false);
@@ -39,11 +40,11 @@ export function DiagnosticDock() {
   };
 
   return (
-    <div className={`diagnostic-dock ${open ? "open" : ""}`}>
-      <div className="diagnostic-dock-actions">
+    <div className={styles.dock}>
+      <div className={styles.actions}>
         <button
           type="button"
-          className="diagnostic-dock-button"
+          className={styles.button}
           onClick={() => (open ? setOpen(false) : void refresh())}
         >
           {open ? "Cerrar diagnóstico" : "Diagnóstico"}
@@ -51,7 +52,7 @@ export function DiagnosticDock() {
         {open ? (
           <button
             type="button"
-            className="diagnostic-refresh-button"
+            className={styles.refresh}
             onClick={() => void refresh()}
             disabled={loading}
           >
@@ -61,8 +62,8 @@ export function DiagnosticDock() {
       </div>
 
       {open ? (
-        <div className="diagnostic-dock-body">
-          {error ? <div className="diagnostic-error">{error}</div> : null}
+        <div className={styles.body}>
+          {error ? <div className={styles.error}>{error}</div> : null}
           {trace ? <DiagnosticPanel trace={trace} /> : null}
         </div>
       ) : null}
