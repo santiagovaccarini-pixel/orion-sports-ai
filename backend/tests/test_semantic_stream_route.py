@@ -58,6 +58,7 @@ def semantic_bundle() -> ReasoningBundle:
         references=(),
         information_needed=("evidencia",),
         ambiguities=(),
+        evidence_policy="external",
         use_web=True,
         use_local_data=False,
         use_calculator=False,
