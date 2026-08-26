@@ -1,6 +1,7 @@
 "use client";
 
 import { DiagnosticTrace } from "../lib/orion-api";
+import styles from "./diagnostic.module.css";
 
 function ms(value?: number) {
   if (value === undefined) return "—";
@@ -15,12 +16,12 @@ function join(values: string[]) {
 export function DiagnosticPanel({ trace }: { trace: DiagnosticTrace }) {
   const latestReview = trace.reviews.at(-1);
   return (
-    <details className="diagnostic-panel">
+    <details className={styles.panel} open>
       <summary>
         <span>Diagnóstico</span>
         <code>{trace.trace_id}</code>
       </summary>
-      <div className="diagnostic-grid">
+      <div className={styles.grid}>
         <section>
           <h4>Comprensión</h4>
           <p><strong>Objetivo:</strong> {trace.plan?.objective ?? "—"}</p>
@@ -40,11 +41,11 @@ export function DiagnosticPanel({ trace }: { trace: DiagnosticTrace }) {
       </div>
 
       {trace.searches.map((search) => (
-        <section key={`search-${search.round}`} className="diagnostic-section">
+        <section key={`search-${search.round}`} className={styles.section}>
           <h4>Búsqueda {search.round}</h4>
           <p><strong>Consulta:</strong> {search.query}</p>
           <p><strong>Duración:</strong> {ms(search.duration_ms)}</p>
-          <div className="diagnostic-sources">
+          <div className={styles.sources}>
             {search.raw_results.map((source) => (
               <details key={source.source_id}>
                 <summary>{source.source_id} · {source.domain || source.title}</summary>
@@ -60,7 +61,7 @@ export function DiagnosticPanel({ trace }: { trace: DiagnosticTrace }) {
       ))}
 
       {trace.reviews.map((review) => (
-        <section key={`review-${review.round}`} className="diagnostic-section">
+        <section key={`review-${review.round}`} className={styles.section}>
           <h4>Revisión {review.round}</h4>
           <p><strong>Evidencia suficiente:</strong> {review.sufficient ? "sí" : "no"}</p>
           <p><strong>Fuentes aceptadas:</strong> {join(review.relevant_source_ids)}</p>
@@ -72,12 +73,12 @@ export function DiagnosticPanel({ trace }: { trace: DiagnosticTrace }) {
         </section>
       ))}
 
-      <section className="diagnostic-section diagnostic-summary">
+      <section className={styles.section}>
         <h4>Resumen técnico</h4>
         <p><strong>Modelo:</strong> {trace.model ?? "—"}</p>
         <p><strong>Fuentes recuperadas:</strong> {trace.searches.reduce((sum, item) => sum + item.raw_results.length, 0)}</p>
         <p><strong>Resultado del revisor:</strong> {latestReview?.sufficient ? "suficiente" : "insuficiente/no confirmado"}</p>
-        <p className="diagnostic-privacy">La traza vive solo en RAM del proceso. No contiene credenciales ni cadena de pensamiento oculta.</p>
+        <p className={styles.privacy}>La traza vive solo en RAM del proceso. No contiene credenciales ni cadena de pensamiento oculta.</p>
       </section>
     </details>
   );
