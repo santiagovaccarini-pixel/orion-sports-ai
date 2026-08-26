@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [switch]$Cloud,
+    [switch]$LocalLegacy,
     [string]$CloudUrl = "https://orion-core-prototype.onrender.com"
 )
 
@@ -11,6 +12,10 @@ $RuntimeDirectory = Join-Path $ProjectRoot ".orion-runtime"
 $BackendOutputLog = Join-Path $RuntimeDirectory "backend-output.log"
 $BackendErrorLog = Join-Path $RuntimeDirectory "backend-error.log"
 $BackendHealthUrl = "http://127.0.0.1:8765/api/v1/health"
+
+if ($Cloud -and $LocalLegacy) {
+    throw "No se pueden combinar -Cloud y -LocalLegacy. Orion Cloud es el modo normal."
+}
 
 if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
     throw "No se encontró Node.js/npm."
@@ -31,7 +36,10 @@ function Start-OrionFrontend {
     }
 }
 
-if ($Cloud) {
+# Orion Cloud es el único modo normal. -Cloud se conserva únicamente para que los
+# accesos directos/comandos anteriores sigan funcionando. El backend local con
+# Ollama/Qwen requiere -LocalLegacy de forma explícita.
+if (-not $LocalLegacy) {
     if (-not $env:ORION_API_KEY) {
         throw "Falta ORION_API_KEY en esta terminal. Definila antes de iniciar Orion Cloud."
     }
@@ -40,11 +48,14 @@ if ($Cloud) {
     $env:NEXT_PUBLIC_ORION_API_URL = "$NormalizedCloudUrl/api/v1"
     $env:NEXT_PUBLIC_ORION_API_KEY = $env:ORION_API_KEY
 
-    Write-Host "Orion UI conectado al núcleo cloud: $NormalizedCloudUrl" -ForegroundColor Green
-    Write-Host "Modo de prueba local: no publiques esta compilación porque la API key queda disponible en el navegador local." -ForegroundColor Yellow
+    Write-Host "Orion conectado al núcleo cloud: $NormalizedCloudUrl" -ForegroundColor Green
+    Write-Host "Motor activo: Cloudflare Workers AI / gpt-oss. El backend local Qwen no se inicia." -ForegroundColor Green
+    Write-Host "Modo de prueba local de la interfaz: no publiques esta compilación porque la API key queda disponible en el navegador local." -ForegroundColor Yellow
     Start-OrionFrontend
     exit 0
 }
+
+Write-Warning "Iniciando compatibilidad LOCAL LEGACY (Ollama/Qwen). Este no es el Orion canónico actual."
 
 if (-not (Test-Path $PythonExecutable)) {
     throw "Primero ejecutá scripts\windows\Setup-Orion.ps1."
@@ -73,7 +84,7 @@ function Wait-OrionBackend {
                     $LogHint = "$LogHint$([Environment]::NewLine)$RecentErrors"
                 }
             }
-            throw "El núcleo local de Orion se cerró durante el inicio.$([Environment]::NewLine)$LogHint"
+            throw "El núcleo local legacy de Orion se cerró durante el inicio.$([Environment]::NewLine)$LogHint"
         }
 
         try {
@@ -89,12 +100,13 @@ function Wait-OrionBackend {
         Start-Sleep -Milliseconds 250
     }
 
-    throw "El núcleo local de Orion no respondió a tiempo. Revisá: $BackendErrorLog"
+    throw "El núcleo local legacy no respondió a tiempo. Revisá: $BackendErrorLog"
 }
 
 $BackendProcess = $null
 
 try {
+    $env:ORION_MODEL_PROVIDER = "ollama"
     $BackendProcess = Start-Process `
         -FilePath $PythonExecutable `
         -ArgumentList $BackendArguments `
@@ -105,7 +117,7 @@ try {
         -RedirectStandardError $BackendErrorLog
 
     Wait-OrionBackend -Process $BackendProcess
-    Write-Host "Núcleo local iniciado en segundo plano." -ForegroundColor Green
+    Write-Host "Núcleo local legacy iniciado en segundo plano." -ForegroundColor Yellow
     Start-OrionFrontend
 }
 finally {
