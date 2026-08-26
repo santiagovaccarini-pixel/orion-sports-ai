@@ -43,10 +43,12 @@ def _read_bool(name: str, default: bool) -> bool:
 
 
 def _read_provider() -> str:
-    provider = os.getenv("ORION_MODEL_PROVIDER", "ollama").strip().lower()
+    # Orion Cloud is the canonical runtime. Ollama remains available only when an
+    # explicit legacy/local environment asks for it.
+    provider = os.getenv("ORION_MODEL_PROVIDER", "cloudflare").strip().lower()
     if provider not in {"ollama", "cloudflare"}:
         raise RuntimeError(
-            "ORION_MODEL_PROVIDER debe ser 'ollama' o 'cloudflare'."
+            "ORION_MODEL_PROVIDER debe ser 'cloudflare' o 'ollama'."
         )
     return provider
 
@@ -74,6 +76,8 @@ class Settings:
     version: str = "0.4.0-audit-hardening"
     host: str = "127.0.0.1"
     port: int = 8765
+    # Dataclass defaults stay local-test friendly; get_settings() is the canonical
+    # runtime path and defaults to Cloudflare above.
     model_provider: str = "ollama"
     ollama_base_url: str = "http://127.0.0.1:11434"
     quick_model: str = "qwen3:4b-instruct"
@@ -90,9 +94,7 @@ class Settings:
     deep_context: int = 8192
     quick_threads: int = 8
     deep_threads: int = 8
-    # Ollama defaults remain 768/1536. get_settings maps the selected provider's
-    # transport budget into these compatibility fields until both clients stop sharing
-    # the legacy names; the explicit cloud fields above remain the source of truth.
+    # Ollama compatibility budgets. Cloudflare uses the explicit cloud fields above.
     quick_max_tokens: int = 768
     deep_max_tokens: int = 1536
     quick_history_characters: int = 12_000
