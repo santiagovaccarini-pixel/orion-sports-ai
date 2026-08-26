@@ -22,6 +22,7 @@ from backend.app.services.semantic_orchestrator import (
     merge_web_sources,
     review_evidence,
 )
+from backend.app.services.semantic_tools import execute_calculation, execute_csv_operation
 from backend.app.services.web_research import WebSource, research
 
 
@@ -33,6 +34,9 @@ class ReasoningBundle:
     local_evidence: tuple[LocalEvidence, ...]
     context: str
     selected_mode: SelectedMode
+    tool_evidence: tuple[LocalEvidence, ...] = ()
+    tool_context: str = ""
+    chart: dict[str, object] | None = None
     trace: DiagnosticTrace | None = None
 
 
@@ -188,6 +192,61 @@ def _normalized_query(value: str) -> str:
     return " ".join(value.casefold().split())
 
 
+def _execute_semantic_tools(
+    plan: SemanticPlan,
+    documents: Sequence[KnowledgeDocument],
+    trace: DiagnosticTrace | None,
+) -> tuple[tuple[LocalEvidence, ...], str, dict[str, object] | None]:
+    evidence: list[LocalEvidence] = []
+    context_blocks: list[str] = []
+    chart: dict[str, object] | None = None
+    tool_index = 0
+
+    if plan.use_calculator and plan.calculation_expression is not None:
+        tool_index += 1
+        execution = execute_calculation(plan.calculation_expression)
+        if execution.error:
+            if trace is not None:
+                trace.record_guard("semantic_calculator_error", execution.error)
+        elif execution.context:
+            source_id = f"T{tool_index}"
+            evidence.append(
+                LocalEvidence(
+                    source_id=source_id,
+                    document_name="Orion Calculator",
+                    content=execution.context,
+                    truncated=False,
+                    chunk_index=None,
+                )
+            )
+            context_blocks.append(f"[{source_id}] Orion Calculator\n{execution.context}")
+
+    if plan.csv_operation is not None and (plan.use_calculator or plan.use_chart):
+        tool_index += 1
+        execution = execute_csv_operation(documents, plan.csv_operation)
+        if execution.error:
+            if trace is not None:
+                trace.record_guard("semantic_csv_tool_error", execution.error)
+        elif execution.context:
+            source_id = f"T{tool_index}"
+            evidence.append(
+                LocalEvidence(
+                    source_id=source_id,
+                    document_name=plan.csv_operation.document_name,
+                    content=execution.context,
+                    truncated=False,
+                    chunk_index=None,
+                )
+            )
+            context_blocks.append(
+                f"[{source_id}] Herramienta CSV: {plan.csv_operation.document_name}\n"
+                f"{execution.context}"
+            )
+            chart = execution.chart
+
+    return tuple(evidence), "\n\n".join(context_blocks), chart
+
+
 async def build_reasoning_bundle(
     provider: ModelProvider,
     request: ChatRequest,
@@ -196,7 +255,7 @@ async def build_reasoning_bundle(
     *,
     trace: DiagnosticTrace | None = None,
 ) -> ReasoningBundle:
-    """Understand, gather evidence and review it before Orion answers."""
+    """Understand, gather evidence, execute deterministic tools and review it."""
 
     if trace is None and settings.diagnostics_enabled:
         trace = diagnostic_traces.start(
@@ -217,8 +276,12 @@ async def build_reasoning_bundle(
         original_user_request=request.messages[-1].content,
         max_characters=settings.semantic_local_context_characters,
     )
+    tool_evidence, tool_context, chart = _execute_semantic_tools(
+        plan, documents, trace
+    )
+    review_evidence_items = (*local_evidence, *tool_evidence)
     if trace is not None:
-        trace.record_local_evidence(local_evidence)
+        trace.record_local_evidence(review_evidence_items)
 
     web_sources: tuple[WebSource, ...] = ()
     rounds = 0
@@ -243,7 +306,7 @@ async def build_reasoning_bundle(
         request,
         plan,
         web_sources,
-        local_evidence,
+        review_evidence_items,
         round_number=review_round,
         trace=trace,
     )
@@ -279,7 +342,7 @@ async def build_reasoning_bundle(
             request,
             plan,
             web_sources,
-            local_evidence,
+            review_evidence_items,
             round_number=rounds,
             trace=trace,
         )
@@ -290,6 +353,7 @@ async def build_reasoning_bundle(
         web_sources,
         local_evidence,
         original_user_request=request.messages[-1].content,
+        tool_context=tool_context,
     )
     if trace is not None:
         trace.set_timing(
@@ -304,5 +368,8 @@ async def build_reasoning_bundle(
         local_evidence=local_evidence,
         context=context,
         selected_mode=selected_mode,
+        tool_evidence=tool_evidence,
+        tool_context=tool_context,
+        chart=chart,
         trace=trace,
     )
