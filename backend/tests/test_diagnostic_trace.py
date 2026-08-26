@@ -53,7 +53,7 @@ class DiagnosticTraceTests(unittest.TestCase):
         self.assertNotIn("authorization", serialized)
 
     def test_diagnostic_routes_are_mounted(self) -> None:
-        paths = {route.path for route in app.routes}
+        paths = set(app.openapi()["paths"])
         self.assertIn("/api/v1/diagnostics/traces/latest", paths)
         self.assertIn("/api/v1/diagnostics/traces/{trace_id}", paths)
 
