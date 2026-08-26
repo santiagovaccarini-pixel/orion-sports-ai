@@ -76,20 +76,17 @@ def creator_profile_answer() -> str:
 
 
 def direct_creator_answer(query: str) -> str | None:
-    """Return the institutional creator answer for explicit Orion-authorship questions.
+    """Return the institutional answer only for explicit Orion-authorship questions.
 
-    This is an intentionally narrow product-identity rule requested by Orion's owner;
-    it is not part of the semantic classifier used for ordinary user questions. Pure
-    questions about the underlying model/engine are left to the normal answer path so
-    Orion never attributes gpt-oss, Workers AI, Ollama or another engine to its creator.
+    Questions that mention the underlying model/engine/provider are deliberately left
+    to the normal reasoning path. This prevents Orion from ever attributing gpt-oss,
+    Workers AI, Ollama or another external component to Orion's creator.
     """
 
     folded = _fold(query)
     mentions_orion = "orion" in folded or "quien te" in folded or "tu creador" in folded
     asks_creator = any(_fold(term) in folded for term in _CREATOR_TERMS)
     asks_engine = any(_fold(term) in folded for term in _ENGINE_TERMS)
-    if not mentions_orion or not asks_creator:
-        return None
-    if asks_engine and "orion" not in folded:
+    if not mentions_orion or not asks_creator or asks_engine:
         return None
     return creator_profile_answer()
