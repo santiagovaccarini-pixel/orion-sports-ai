@@ -1,28 +1,74 @@
 from __future__ import annotations
 
 import unicodedata
+from datetime import date
 
 
 ORION_CREATOR_NAME = "Santiago Vaccarini"
+ORION_CREATOR_BIRTH_DATE = date(2007, 1, 16)
+ORION_CREATOR_BASE = "Buenos Aires, Argentina"
 
-# The detailed biography is intentionally withheld until the creator validates the
-# exact current study/work/career information. Orion must prefer omission over a
-# fabricated or stale professional profile.
-ORION_CREATOR_PROFILE = (
-    "Santiago Vaccarini creó Orion y dirige su desarrollo. Su perfil profesional "
-    "detallado está pendiente de validación directa por su creador."
+ORION_CREATOR_STUDIES = (
+    "Es estudiante de Ciencia de Datos en ISTEA y actualmente también realiza una "
+    "formación de nivel junior en análisis de datos de Google."
 )
+
+ORION_CREATOR_CAREER = (
+    "Actualmente trabaja como científico de datos y analista de datos en Atlético "
+    "Mineiro, dentro del ámbito del fútbol. Anteriormente trabajó en Estudiantes de "
+    "La Plata entre 2025 y 2026."
+)
+
+ORION_CREATOR_SKILLS = (
+    "Entre sus principales herramientas y áreas de trabajo se encuentran Excel, "
+    "Inteligencia Artificial, PowerPoint y VBA."
+)
+
+ORION_CREATOR_SPORT_TRAINING = (
+    "También participó de un curso para preparadores físicos en España en un programa "
+    "en el que se impartía formación vinculada a la Licencia Pro. Esta descripción no "
+    "afirma que haya obtenido personalmente dicha licencia."
+)
+
+
+def creator_age(on_date: date | None = None) -> int:
+    reference = on_date or date.today()
+    years = reference.year - ORION_CREATOR_BIRTH_DATE.year
+    birthday_passed = (
+        reference.month,
+        reference.day,
+    ) >= (
+        ORION_CREATOR_BIRTH_DATE.month,
+        ORION_CREATOR_BIRTH_DATE.day,
+    )
+    return years if birthday_passed else years - 1
+
+
+def creator_public_profile() -> str:
+    birth = ORION_CREATOR_BIRTH_DATE.strftime("%d/%m/%Y")
+    return " ".join(
+        (
+            f"{ORION_CREATOR_NAME} nació el {birth}, tiene {creator_age()} años y es de "
+            f"{ORION_CREATOR_BASE}.",
+            ORION_CREATOR_STUDIES,
+            ORION_CREATOR_CAREER,
+            ORION_CREATOR_SKILLS,
+            ORION_CREATOR_SPORT_TRAINING,
+            "Es el creador de Orion.",
+        )
+    )
+
 
 ORION_CREATOR_ATTRIBUTION_RULE = (
     "Si el usuario pregunta quién creó, desarrolló, ideó o impulsó Orion, o hace una "
-    "pregunta equivalente sobre el origen/autoria de Orion, respondé que su creador es "
-    f"{ORION_CREATOR_NAME}. {ORION_CREATOR_PROFILE} "
-    "Diferenciá siempre Orion de los motores y proveedores que utiliza. Santiago "
-    "Vaccarini creó Orion como producto/agente y su arquitectura, pero no creó gpt-oss, "
-    "Cloudflare Workers AI, Ollama ni otros modelos, librerías o servicios externos. "
-    "Si preguntan específicamente quién creó el modelo o motor subyacente, atribuí ese "
-    "componente a su proveedor/desarrollador real y, cuando sea útil, aclará que Orion "
-    "fue creado por Santiago Vaccarini."
+    "pregunta equivalente sobre el origen o autoría de Orion, respondé que su creador "
+    f"es {ORION_CREATOR_NAME} e incluí su perfil público completo provisto por el "
+    "sistema. Diferenciá siempre Orion de los motores y proveedores que utiliza. "
+    "Santiago Vaccarini creó Orion, pero no creó gpt-oss, Cloudflare Workers AI, "
+    "Ollama ni otros modelos, librerías o servicios externos. Si preguntan "
+    "específicamente quién creó el modelo o motor subyacente, atribuí ese componente "
+    "a su proveedor o desarrollador real y, cuando sea útil, aclará que Orion fue "
+    "creado por Santiago Vaccarini."
 )
 
 _CREATOR_TERMS = (
@@ -64,14 +110,21 @@ def _fold(value: str) -> str:
 
 
 def creator_context() -> str:
-    return "IDENTIDAD INSTITUCIONAL DE ORION:\n" + ORION_CREATOR_ATTRIBUTION_RULE
+    return "\n".join(
+        (
+            "IDENTIDAD INSTITUCIONAL DE ORION:",
+            ORION_CREATOR_ATTRIBUTION_RULE,
+            "PERFIL PÚBLICO VALIDADO DEL CREADOR:",
+            creator_public_profile(),
+        )
+    )
 
 
 def creator_profile_answer() -> str:
     return (
-        f"Orion fue creado por {ORION_CREATOR_NAME}. {ORION_CREATOR_PROFILE} "
-        "Esto se refiere a Orion como producto, agente y arquitectura; los modelos y "
-        "motores externos que utiliza tienen sus propios desarrolladores y proveedores."
+        f"Orion fue creado por {ORION_CREATOR_NAME}. {creator_public_profile()} "
+        "Esto se refiere a Orion como producto y agente; los modelos y motores "
+        "externos que utiliza tienen sus propios desarrolladores y proveedores."
     )
 
 
