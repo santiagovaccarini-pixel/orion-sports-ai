@@ -34,3 +34,5 @@ services:
         value: "true"
       - key: ORION_SEMANTIC_MAX_TOOL_ROUNDS
         value: "2"
+      - key: ORION_DIAGNOSTICS_ENABLED
+        value: "true"
