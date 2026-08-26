@@ -51,6 +51,10 @@ class ModelResult:
     eval_duration_ms: float | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    finish_reason: str | None = None
+    reasoning_effort: str | None = None
+    endpoint: str | None = None
     tokens_per_second: float | None = None
     thread_limit: int = 0
 
@@ -66,6 +70,10 @@ class ModelStreamEvent:
     eval_duration_ms: float | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    finish_reason: str | None = None
+    reasoning_effort: str | None = None
+    endpoint: str | None = None
     tokens_per_second: float | None = None
     thread_limit: int = 0
 
@@ -87,6 +95,7 @@ class ModelProvider(Protocol):
         messages: list[ChatMessage],
         system_prompt: str,
         structured: bool = False,
+        reasoning_effort: str | None = None,
     ) -> ModelResult: ...
 
     def chat_stream(
@@ -95,6 +104,7 @@ class ModelProvider(Protocol):
         mode: SelectedMode,
         messages: list[ChatMessage],
         system_prompt: str,
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[ModelStreamEvent]: ...
 
 
@@ -147,11 +157,11 @@ class OllamaModelProvider:
         messages: list[ChatMessage],
         system_prompt: str,
         structured: bool = False,
+        reasoning_effort: str | None = None,
     ) -> ModelResult:
-        # Ollama keeps its existing transport; the semantic prompt already requests
-        # JSON. The structured flag is accepted so the provider interface stays
-        # interchangeable with cloud providers.
-        _ = structured
+        # Ollama retains its current transport. reasoning_effort is a cloud-facing
+        # capability and is intentionally ignored by this local provider.
+        _ = (structured, reasoning_effort)
         model = self.model_for(mode)
         try:
             result = await self.client.chat(
@@ -184,7 +194,9 @@ class OllamaModelProvider:
         mode: SelectedMode,
         messages: list[ChatMessage],
         system_prompt: str,
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[ModelStreamEvent]:
+        _ = reasoning_effort
         model = self.model_for(mode)
         try:
             async for event in self.client.chat_stream(
@@ -231,17 +243,17 @@ class CloudflareModelProvider:
         )
 
     async def status(self) -> ModelProviderStatus:
-        # Avoid spending the free inference quota on periodic health checks.
-        models = tuple(dict.fromkeys((
-            self.settings.cloudflare_quick_model,
-            self.settings.cloudflare_deep_model,
-        )))
+        models = tuple(
+            dict.fromkeys(
+                (
+                    self.settings.cloudflare_quick_model,
+                    self.settings.cloudflare_deep_model,
+                )
+            )
+        )
         return ModelProviderStatus(online=True, installed_models=models)
 
     async def preflight(self, mode: SelectedMode) -> None:
-        # Construction already validates credentials. A real inference request is the
-        # authoritative availability check and should not be duplicated because the
-        # cloud prototype has a finite free daily quota.
         _ = self.model_for(mode)
 
     async def chat(
@@ -251,6 +263,7 @@ class CloudflareModelProvider:
         messages: list[ChatMessage],
         system_prompt: str,
         structured: bool = False,
+        reasoning_effort: str | None = None,
     ) -> ModelResult:
         try:
             result = await self.client.chat(
@@ -258,6 +271,7 @@ class CloudflareModelProvider:
                 messages=messages,
                 system_prompt=system_prompt,
                 structured=structured,
+                reasoning_effort=reasoning_effort,
             )
         except CloudAIConfigurationError as exc:
             raise ModelProviderConfigurationError(str(exc)) from exc
@@ -269,6 +283,10 @@ class CloudflareModelProvider:
             model=result.model,
             prompt_tokens=result.prompt_tokens,
             completion_tokens=result.completion_tokens,
+            reasoning_tokens=result.reasoning_tokens,
+            finish_reason=result.finish_reason,
+            reasoning_effort=result.reasoning_effort,
+            endpoint=result.endpoint,
             thread_limit=0,
         )
 
@@ -278,12 +296,14 @@ class CloudflareModelProvider:
         mode: SelectedMode,
         messages: list[ChatMessage],
         system_prompt: str,
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[ModelStreamEvent]:
         try:
             async for event in self.client.chat_stream(
                 mode=mode,
                 messages=messages,
                 system_prompt=system_prompt,
+                reasoning_effort=reasoning_effort,
             ):
                 yield ModelStreamEvent(
                     content=event.content,
@@ -291,6 +311,10 @@ class CloudflareModelProvider:
                     model=event.model,
                     prompt_tokens=event.prompt_tokens,
                     completion_tokens=event.completion_tokens,
+                    reasoning_tokens=event.reasoning_tokens,
+                    finish_reason=event.finish_reason,
+                    reasoning_effort=event.reasoning_effort,
+                    endpoint=event.endpoint,
                     thread_limit=0,
                 )
         except CloudAIConfigurationError as exc:
