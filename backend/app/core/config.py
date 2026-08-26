@@ -90,7 +90,9 @@ class Settings:
     deep_context: int = 8192
     quick_threads: int = 8
     deep_threads: int = 8
-    # Local Ollama output budgets. Cloudflare uses the independent fields above.
+    # Ollama defaults remain 768/1536. get_settings maps the selected provider's
+    # transport budget into these compatibility fields until both clients stop sharing
+    # the legacy names; the explicit cloud fields above remain the source of truth.
     quick_max_tokens: int = 768
     deep_max_tokens: int = 1536
     quick_history_characters: int = 12_000
@@ -114,6 +116,14 @@ class Settings:
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     provider = _read_provider()
+    cloud_quick_max_tokens = _read_positive_int(
+        "ORION_CLOUDFLARE_QUICK_MAX_TOKENS", 1536
+    )
+    cloud_deep_max_tokens = _read_positive_int(
+        "ORION_CLOUDFLARE_DEEP_MAX_TOKENS", 3072
+    )
+    local_quick_max_tokens = _read_positive_int("ORION_QUICK_MAX_TOKENS", 768)
+    local_deep_max_tokens = _read_positive_int("ORION_DEEP_MAX_TOKENS", 1536)
     origins = tuple(
         item.strip()
         for item in os.getenv("ORION_CORS_ORIGINS", "").split(",")
@@ -142,18 +152,18 @@ def get_settings() -> Settings:
         cloudflare_deep_reasoning_effort=_read_reasoning_effort(
             "ORION_CLOUDFLARE_DEEP_REASONING_EFFORT", "medium"
         ),
-        cloudflare_quick_max_tokens=_read_positive_int(
-            "ORION_CLOUDFLARE_QUICK_MAX_TOKENS", 1536
-        ),
-        cloudflare_deep_max_tokens=_read_positive_int(
-            "ORION_CLOUDFLARE_DEEP_MAX_TOKENS", 3072
-        ),
+        cloudflare_quick_max_tokens=cloud_quick_max_tokens,
+        cloudflare_deep_max_tokens=cloud_deep_max_tokens,
         quick_context=_read_positive_int("ORION_QUICK_CONTEXT", 4096),
         deep_context=_read_positive_int("ORION_DEEP_CONTEXT", 8192),
         quick_threads=_read_positive_int("ORION_QUICK_THREADS", 8),
         deep_threads=_read_positive_int("ORION_DEEP_THREADS", 8),
-        quick_max_tokens=_read_positive_int("ORION_QUICK_MAX_TOKENS", 768),
-        deep_max_tokens=_read_positive_int("ORION_DEEP_MAX_TOKENS", 1536),
+        quick_max_tokens=(
+            cloud_quick_max_tokens if provider == "cloudflare" else local_quick_max_tokens
+        ),
+        deep_max_tokens=(
+            cloud_deep_max_tokens if provider == "cloudflare" else local_deep_max_tokens
+        ),
         quick_history_characters=_read_positive_int(
             "ORION_QUICK_HISTORY_CHARACTERS", 12_000
         ),
