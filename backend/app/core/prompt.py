@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from backend.app.core.identity import creator_context
 from backend.app.domain.models import SelectedMode
 from backend.app.domain.schemas import SportContext
 
@@ -151,6 +152,7 @@ def build_system_prompt(
     return "\n\n".join(
         (
             ORION_SYSTEM_PROMPT,
+            creator_context(),
             MODE_CONTEXTS[mode],
             SPORT_CONTEXTS[sport],
         )
