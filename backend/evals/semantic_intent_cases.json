@@ -1,0 +1,173 @@
+[
+  {
+    "id": "physical_metric_not_performance",
+    "sport": "football",
+    "messages": [
+      {"role": "user", "content": "Martín corrió bastante menos que Lucas. ¿Estuvo peor?"}
+    ],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "interpretation",
+      "comparison": true,
+      "causal_claim_risk": true,
+      "domain_contains": ["physical", "performance"],
+      "concepts_any": ["external load", "carga externa", "exposure", "exposición", "performance", "rendimiento"]
+    }
+  },
+  {
+    "id": "hsr_exposure_causal_question",
+    "sport": "football",
+    "messages": [
+      {"role": "user", "content": "El HSR bajó mucho. ¿Fue porque jugó 25 minutos menos?"}
+    ],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "interpretation",
+      "causal_claim_risk": true,
+      "concepts_any": ["HSR", "high-speed running", "exposure", "exposición", "minutes", "minutos"]
+    }
+  },
+  {
+    "id": "conversation_reference_tactical",
+    "sport": "football",
+    "messages": [
+      {"role": "user", "content": "Estamos analizando la presión alta del equipo."},
+      {"role": "assistant", "content": "La presión alta depende de disparadores, alturas y comportamiento colectivo."},
+      {"role": "user", "content": "¿Y eso cambia si el rival empieza a salir largo?"}
+    ],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "interpretation",
+      "referenced_previous_context": true,
+      "domain_contains": ["tactical", "táctic"],
+      "concepts_any": ["high press", "presión alta", "build-up", "salida", "long ball", "juego largo"]
+    }
+  },
+  {
+    "id": "ambiguous_workload_question",
+    "sport": "football",
+    "messages": [
+      {"role": "user", "content": "¿Quién trabajó más?"}
+    ],
+    "has_local_documents": true,
+    "expect": {
+      "comparison": true,
+      "needs_local_data": true,
+      "requires_clarification": true,
+      "concepts_any": ["load", "carga", "external load", "carga externa"]
+    }
+  },
+  {
+    "id": "private_protocol_memory",
+    "sport": "football",
+    "messages": [
+      {"role": "user", "content": "Nosotros usamos sprint por encima de 25 km/h. ¿Cómo lo veníamos interpretando?"}
+    ],
+    "has_local_documents": false,
+    "expect": {
+      "needs_private_memory": true,
+      "referenced_previous_context": true,
+      "concepts_any": ["sprint", "threshold", "umbral"]
+    }
+  },
+  {
+    "id": "current_scientific_research",
+    "sport": "football",
+    "messages": [
+      {"role": "user", "content": "Buscá fuentes actuales y estudios recientes sobre monitoreo de carga en fútbol."}
+    ],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "research",
+      "needs_web": true,
+      "needs_global_knowledge": true,
+      "concepts_any": ["training load", "carga", "monitoring", "monitoreo"]
+    }
+  },
+  {
+    "id": "local_chart_request",
+    "sport": "football",
+    "messages": [
+      {"role": "user", "content": "Graficame la distancia total de este jugador por período en el archivo."}
+    ],
+    "has_local_documents": true,
+    "expect": {
+      "task_type": "chart",
+      "needs_local_data": true,
+      "concepts_any": ["total distance", "distancia total", "period", "período"]
+    }
+  },
+  {
+    "id": "definition_transition_not_counterattack",
+    "sport": "football",
+    "messages": [
+      {"role": "user", "content": "¿Qué es una transición ofensiva?"}
+    ],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "definition",
+      "needs_web": false,
+      "concepts_any": ["offensive transition", "transición ofensiva", "possession", "posesión"]
+    }
+  },
+  {
+    "id": "injury_causality",
+    "sport": "football",
+    "messages": [
+      {"role": "user", "content": "Las lesiones aumentaron justo cuando subimos la carga. ¿La carga causó las lesiones?"}
+    ],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "interpretation",
+      "causal_claim_risk": true,
+      "concepts_any": ["injury", "lesión", "training load", "carga", "causality", "causalidad"]
+    }
+  },
+  {
+    "id": "simple_definition_stays_quick_candidate",
+    "sport": "football",
+    "messages": [
+      {"role": "user", "content": "¿Qué significa RPE?"}
+    ],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "definition",
+      "needs_web": false,
+      "causal_claim_risk": false,
+      "concepts_any": ["RPE", "rating of perceived exertion", "esfuerzo percibido"]
+    }
+  },
+  {
+    "id": "sport_switch_mid_conversation",
+    "sport": "basketball",
+    "messages": [
+      {"role": "user", "content": "Estuvimos viendo la distancia total y el HSR de Lucas en el partido pasado de fútbol."},
+      {"role": "assistant", "content": "Son medidas de demanda externa; no equivalen por sí solas a rendimiento."},
+      {"role": "user", "content": "¿Y en básquet cuál sería el equivalente a eso que hablamos?"}
+    ],
+    "has_local_documents": false,
+    "expect": {
+      "referenced_previous_context": true,
+      "domain_contains": ["physical", "performance", "basketball"],
+      "concepts_any": ["player load", "carga externa", "external load", "physical demand", "demanda física"]
+    }
+  },
+  {
+    "id": "chained_conversational_reference",
+    "sport": "football",
+    "messages": [
+      {"role": "user", "content": "Analicemos el bloque medio del equipo."},
+      {"role": "assistant", "content": "Hay que ver alturas, disparadores y comportamiento colectivo."},
+      {"role": "user", "content": "¿Y eso cambia si el rival sale en corto?"},
+      {"role": "assistant", "content": "Sí, cambia las referencias de presión."},
+      {"role": "user", "content": "¿Y eso se combina con lo que hablamos antes de la salida larga?"}
+    ],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "interpretation",
+      "referenced_previous_context": true,
+      "domain_contains": ["tactical", "táctic"],
+      "concepts_all": [["mid block", "bloque medio"], ["long ball", "build-up", "salida larga", "juego largo"]]
+    }
+  }
+]

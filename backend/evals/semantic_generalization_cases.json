@@ -1,0 +1,281 @@
+[
+  {
+    "id": "lower_distance_not_lower_performance",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "Uno hizo casi tres kilómetros menos que el otro. ¿Podemos decir que físicamente rindió peor?"}],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "interpretation",
+      "comparison": true,
+      "causal_claim_risk": true,
+      "domain_contains": ["physical", "performance"],
+      "concepts_all": [["external load", "carga externa"], ["physical performance", "rendimiento"], ["exposure", "exposición"]]
+    }
+  },
+  {
+    "id": "hsr_exposure_direct_comparison",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "Hizo bastante menos HSR, pero estuvo media hora menos en cancha. ¿Lo puedo comparar directo con el partido anterior?"}],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "comparison",
+      "comparison": true,
+      "domain_contains": ["physical", "performance"],
+      "concepts_all": [["HSR", "high-speed running"], ["exposure", "exposición", "minutes", "minutos"]]
+    }
+  },
+  {
+    "id": "accelerations_do_not_equal_freshness",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "Hoy metió muchas más aceleraciones. ¿Eso significa que llegó más fresco al partido?"}],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "interpretation",
+      "causal_claim_risk": true,
+      "domain_contains": ["physical", "performance"],
+      "concepts_any": ["acceleration", "aceleración", "external load", "carga externa"]
+    }
+  },
+  {
+    "id": "recoveries_not_proof_of_high_press",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "Recuperamos un montón de pelotas cerca del área rival. ¿Eso alcanza para afirmar que presionamos alto?"}],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "interpretation",
+      "causal_claim_risk": true,
+      "domain_contains": ["tactical", "táctic"],
+      "concepts_any": ["high press", "presión alta", "pressing", "recovery", "recuperación"]
+    }
+  },
+  {
+    "id": "transition_not_always_counterattack",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "Si recuperamos y atacamos enseguida, ¿eso ya es contraataque? ¿Toda transición ofensiva es lo mismo?"}],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "interpretation",
+      "comparison": true,
+      "domain_contains": ["tactical", "táctic"],
+      "concepts_all": [["offensive transition", "transición ofensiva"], ["counterattack", "contraataque"]]
+    }
+  },
+  {
+    "id": "possession_not_automatic_quality",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "Tuvimos 65% de posesión. ¿Eso quiere decir que jugamos mejor que el rival?"}],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "interpretation",
+      "causal_claim_risk": true,
+      "domain_contains": ["tactical", "performance", "match"],
+      "concepts_any": ["possession", "posesión", "performance", "rendimiento"]
+    }
+  },
+  {
+    "id": "mid_block_conversation_reference",
+    "sport": "football",
+    "messages": [
+      {"role": "user", "content": "Estamos estudiando cómo defendemos en bloque medio."},
+      {"role": "assistant", "content": "Hay que mirar alturas, distancias y disparadores colectivos."},
+      {"role": "user", "content": "¿Y si nuestro nueve salta solo al central, eso cambia la interpretación?"}
+    ],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "interpretation",
+      "referenced_previous_context": true,
+      "domain_contains": ["tactical", "táctic"],
+      "concepts_any": ["mid block", "bloque medio", "pressing", "pressure", "presión"]
+    }
+  },
+  {
+    "id": "private_speed_zone_definition",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "En nuestro club la zona 5 arranca a 24 km/h. Cuando te pregunte por zona 5 quiero que uses esa definición."}],
+    "has_local_documents": false,
+    "expect": {
+      "needs_private_memory": true,
+      "domain_contains": ["physical", "performance", "sports"],
+      "concepts_any": ["speed zone", "zona 5", "threshold", "umbral"]
+    }
+  },
+  {
+    "id": "private_vs_global_sprint_definition",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "Para nosotros sprint empieza en 25 km/h. Compará nuestro criterio con lo que suele usarse en fútbol, sin asumir que hay un umbral universal."}],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "comparison",
+      "comparison": true,
+      "needs_private_memory": true,
+      "needs_global_knowledge": true,
+      "concepts_all": [["sprint"], ["threshold", "umbral"]]
+    }
+  },
+  {
+    "id": "ambiguous_local_load_metric",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "Con el archivo que cargué decime qué jugador tuvo mayor carga."}],
+    "has_local_documents": true,
+    "expect": {
+      "comparison": true,
+      "needs_local_data": true,
+      "requires_clarification": true,
+      "concepts_any": ["training load", "carga", "external load", "internal load"]
+    }
+  },
+  {
+    "id": "specific_local_rpe_average",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "En el archivo calculame el promedio de RPE de Juan durante este microciclo."}],
+    "has_local_documents": true,
+    "expect": {
+      "task_type": "calculation",
+      "needs_local_data": true,
+      "requires_clarification": false,
+      "concepts_any": ["RPE", "rating of perceived exertion", "internal load"]
+    }
+  },
+  {
+    "id": "specific_local_sprint_chart",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "Graficame los metros de sprint de Pedro por sesión usando el archivo."}],
+    "has_local_documents": true,
+    "expect": {
+      "task_type": "chart",
+      "needs_local_data": true,
+      "concepts_any": ["sprint", "speed threshold", "session", "sesión"]
+    }
+  },
+  {
+    "id": "portuguese_recent_load_research",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "Procure estudos recentes e fontes confiáveis sobre monitoramento de carga no futebol profissional."}],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "research",
+      "needs_web": true,
+      "needs_global_knowledge": true,
+      "concepts_any": ["training load", "load monitoring", "carga", "monitoramento"]
+    }
+  },
+  {
+    "id": "portuguese_rpe_definition",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "O que significa RPE no controle de treinamento?"}],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "definition",
+      "needs_web": false,
+      "causal_claim_risk": false,
+      "concepts_any": ["RPE", "rating of perceived exertion", "percepção de esforço", "internal load"]
+    }
+  },
+  {
+    "id": "three_point_internal_load_definition",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "Explicá en tres puntos qué es la carga interna en fútbol."}],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "definition",
+      "needs_web": false,
+      "complexity_max": 0.35,
+      "concepts_any": ["internal load", "carga interna"]
+    }
+  },
+  {
+    "id": "injury_timing_not_causation",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "Desde que aumentamos el volumen aparecieron más lesiones musculares. ¿Entonces el aumento fue la causa?"}],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "interpretation",
+      "causal_claim_risk": true,
+      "concepts_all": [["injury", "lesión"], ["training load", "load", "carga"], ["causality", "causalidad", "cause", "causa"]]
+    }
+  },
+  {
+    "id": "decelerations_not_direct_fatigue",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "Tuvo muchas más desaceleraciones que su promedio. ¿Eso demuestra que terminó más fatigado?"}],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "interpretation",
+      "causal_claim_risk": true,
+      "domain_contains": ["physical", "performance"],
+      "concepts_any": ["deceleration", "desaceleración", "external load", "fatigue", "fatiga"]
+    }
+  },
+  {
+    "id": "metres_per_minute_role_context",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "¿Puedo comparar metros por minuto de un lateral con un nueve y decidir quién trabajó más?"}],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "interpretation",
+      "comparison": true,
+      "domain_contains": ["physical", "performance"],
+      "concepts_all": [["external load", "carga externa"], ["position", "posición", "role", "rol"], ["metres per minute", "metros por minuto"]]
+    }
+  },
+  {
+    "id": "return_to_play_distance_not_readiness",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "En la rehabilitación ya completó la misma distancia que antes de lesionarse. ¿Eso alcanza para decir que está listo para competir?"}],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "interpretation",
+      "causal_claim_risk": true,
+      "concepts_any": ["return to play", "readiness", "rehabilitation", "rehabilitación", "external load"]
+    }
+  },
+  {
+    "id": "same_metric_different_provider",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "Un equipo usa Catapult y otro otro sistema GPS. Si ambos dicen HSR, ¿puedo comparar el número sin revisar nada más?"}],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "interpretation",
+      "comparison": true,
+      "domain_contains": ["physical", "performance"],
+      "concepts_all": [["HSR", "high-speed running"], ["provider", "proveedor", "device", "dispositivo"], ["threshold", "umbral", "definition", "definición"]]
+    }
+  },
+  {
+    "id": "long_verbose_query_readiness",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "Venimos de una semana rara: lunes regenerativo suave, martes táctico con poco volumen, miércoles algo más de intensidad con sprints cortos, jueves activación y hoy partido. Lucas viene de una lesión hace un mes y recién esta semana volvió a entrenar con el grupo completo, mientras que Nacho no paró en todo el mes y jugó los últimos tres partidos completos. Hoy Lucas corrió casi 2 km menos que Nacho en total y su HSR fue bastante más bajo. ¿Puedo decir que Lucas todavía no está tan preparado físicamente como Nacho?"}],
+    "has_local_documents": false,
+    "expect": {
+      "task_type": "interpretation",
+      "comparison": true,
+      "causal_claim_risk": true,
+      "domain_contains": ["physical", "performance"],
+      "concepts_any": ["external load", "carga externa", "HSR", "readiness", "preparación física"],
+      "complexity_min": 0.5
+    }
+  },
+  {
+    "id": "english_hsr_fitness_question",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "Is more high-speed running always the same as being fitter or in better shape?"}],
+    "has_local_documents": false,
+    "expect": {
+      "causal_claim_risk": true,
+      "domain_contains": ["physical", "performance"],
+      "concepts_any": ["HSR", "high-speed running", "external load", "physical performance"]
+    }
+  },
+  {
+    "id": "colloquial_slang_fatigue_not_fitness",
+    "sport": "football",
+    "messages": [{"role": "user", "content": "Quedó reventado y corrió como loco todo el segundo tiempo. ¿Eso quiere decir que está más en forma que el resto?"}],
+    "has_local_documents": false,
+    "expect": {
+      "comparison": true,
+      "causal_claim_risk": true,
+      "domain_contains": ["physical", "performance"],
+      "concepts_any": ["external load", "carga externa"]
+    }
+  }
+]
