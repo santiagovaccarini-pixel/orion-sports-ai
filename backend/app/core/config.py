@@ -15,6 +15,7 @@ DEFAULT_CORS_ORIGINS = (
     "http://localhost:5174",
     "http://127.0.0.1:5174",
 )
+VALID_REASONING_EFFORTS = frozenset({"low", "medium", "high"})
 
 
 def _read_int(name: str, default: int) -> int:
@@ -59,10 +60,18 @@ def _read_web_provider() -> str:
     return provider
 
 
+def _read_reasoning_effort(name: str, default: str) -> str:
+    value = os.getenv(name, default).strip().lower()
+    if value not in VALID_REASONING_EFFORTS:
+        allowed = ", ".join(sorted(VALID_REASONING_EFFORTS))
+        raise RuntimeError(f"{name} debe ser uno de: {allowed}.")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     app_name: str = "Orion Core"
-    version: str = "0.3.0-semantic-prototype"
+    version: str = "0.4.0-audit-hardening"
     host: str = "127.0.0.1"
     port: int = 8765
     model_provider: str = "ollama"
@@ -73,12 +82,16 @@ class Settings:
     cloudflare_api_token: str | None = None
     cloudflare_quick_model: str = "@cf/openai/gpt-oss-120b"
     cloudflare_deep_model: str = "@cf/openai/gpt-oss-120b"
+    cloudflare_quick_reasoning_effort: str = "low"
+    cloudflare_deep_reasoning_effort: str = "medium"
     quick_context: int = 4096
     deep_context: int = 8192
     quick_threads: int = 8
     deep_threads: int = 8
-    quick_max_tokens: int = 768
-    deep_max_tokens: int = 1536
+    # gpt-oss reasoning tokens share the generation budget with visible output.
+    # These defaults leave enough headroom while reasoning effort controls latency.
+    quick_max_tokens: int = 1536
+    deep_max_tokens: int = 3072
     quick_history_characters: int = 12_000
     deep_history_characters: int = 30_000
     keep_alive: str = "10m"
@@ -121,12 +134,18 @@ def get_settings() -> Settings:
         cloudflare_deep_model=os.getenv(
             "ORION_CLOUDFLARE_DEEP_MODEL", "@cf/openai/gpt-oss-120b"
         ),
+        cloudflare_quick_reasoning_effort=_read_reasoning_effort(
+            "ORION_CLOUDFLARE_QUICK_REASONING_EFFORT", "low"
+        ),
+        cloudflare_deep_reasoning_effort=_read_reasoning_effort(
+            "ORION_CLOUDFLARE_DEEP_REASONING_EFFORT", "medium"
+        ),
         quick_context=_read_positive_int("ORION_QUICK_CONTEXT", 4096),
         deep_context=_read_positive_int("ORION_DEEP_CONTEXT", 8192),
         quick_threads=_read_positive_int("ORION_QUICK_THREADS", 8),
         deep_threads=_read_positive_int("ORION_DEEP_THREADS", 8),
-        quick_max_tokens=_read_positive_int("ORION_QUICK_MAX_TOKENS", 768),
-        deep_max_tokens=_read_positive_int("ORION_DEEP_MAX_TOKENS", 1536),
+        quick_max_tokens=_read_positive_int("ORION_QUICK_MAX_TOKENS", 1536),
+        deep_max_tokens=_read_positive_int("ORION_DEEP_MAX_TOKENS", 3072),
         quick_history_characters=_read_positive_int(
             "ORION_QUICK_HISTORY_CHARACTERS", 12_000
         ),
