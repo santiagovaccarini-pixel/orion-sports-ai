@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import unicodedata
 from datetime import date
 
 
@@ -60,53 +59,13 @@ def creator_public_profile() -> str:
 
 
 ORION_CREATOR_ATTRIBUTION_RULE = (
-    "Si el usuario pregunta quién creó, desarrolló, ideó o impulsó Orion, o hace una "
-    "pregunta equivalente sobre el origen o autoría de Orion, respondé que su creador "
-    f"es {ORION_CREATOR_NAME} e incluí su perfil público completo provisto por el "
-    "sistema. Diferenciá siempre Orion de los motores y proveedores que utiliza. "
-    "Santiago Vaccarini creó Orion, pero no creó gpt-oss, Cloudflare Workers AI, "
-    "Ollama ni otros modelos, librerías o servicios externos. Si preguntan "
-    "específicamente quién creó el modelo o motor subyacente, atribuí ese componente "
-    "a su proveedor o desarrollador real y, cuando sea útil, aclará que Orion fue "
-    "creado por Santiago Vaccarini."
+    "Hecho institucional: Santiago Vaccarini es el creador de Orion. Orion es el "
+    "producto/agente creado por Santiago; los modelos, motores, librerías y servicios "
+    "externos que Orion utiliza conservan la autoría de sus desarrolladores reales. "
+    "Santiago Vaccarini no creó gpt-oss, Cloudflare Workers AI, Ollama ni otros "
+    "componentes externos. Interpretá semánticamente la pregunta del usuario y usá "
+    "estos hechos solo cuando sean pertinentes a lo que realmente está preguntando."
 )
-
-_CREATOR_TERMS = (
-    "quien creo",
-    "quien creó",
-    "quien hizo",
-    "creador",
-    "creadora",
-    "autor",
-    "autora",
-    "desarrollo",
-    "desarrolló",
-    "desarrollador",
-    "desarrolladora",
-    "ideo",
-    "ideó",
-    "origen",
-    "de quien es",
-    "quien te creo",
-    "quien te creó",
-)
-_ENGINE_TERMS = (
-    "motor",
-    "modelo",
-    "gpt-oss",
-    "cloudflare",
-    "workers ai",
-    "ollama",
-    "llm",
-)
-
-
-def _fold(value: str) -> str:
-    return "".join(
-        character
-        for character in unicodedata.normalize("NFKD", value.casefold())
-        if not unicodedata.combining(character)
-    )
 
 
 def creator_context() -> str:
@@ -120,26 +79,13 @@ def creator_context() -> str:
     )
 
 
-def creator_profile_answer() -> str:
-    return (
-        f"Orion fue creado por {ORION_CREATOR_NAME}. {creator_public_profile()} "
-        "Esto se refiere a Orion como producto y agente; los modelos y motores "
-        "externos que utiliza tienen sus propios desarrolladores y proveedores."
-    )
-
-
 def direct_creator_answer(query: str) -> str | None:
-    """Return the institutional answer only for explicit Orion-authorship questions.
+    """Deprecated compatibility shim: lexical identity routing is disabled.
 
-    Questions that mention the underlying model/engine/provider are deliberately left
-    to the normal reasoning path. This prevents Orion from ever attributing gpt-oss,
-    Workers AI, Ollama or another external component to Orion's creator.
+    Orion's creator information is supplied as institutional context to the model.
+    The model must interpret the user's intent semantically; Python must not decide
+    authorship questions through keywords, similar wording or phrase matching.
     """
 
-    folded = _fold(query)
-    mentions_orion = "orion" in folded or "quien te" in folded or "tu creador" in folded
-    asks_creator = any(_fold(term) in folded for term in _CREATOR_TERMS)
-    asks_engine = any(_fold(term) in folded for term in _ENGINE_TERMS)
-    if not mentions_orion or not asks_creator or asks_engine:
-        return None
-    return creator_profile_answer()
+    _ = query
+    return None
