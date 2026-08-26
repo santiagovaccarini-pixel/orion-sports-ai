@@ -70,6 +70,7 @@ class ChatResponse(BaseModel):
     recommended_mode: SelectedMode
     recommendation_reason: str
     model: str
+    trace_id: str | None = None
     total_duration_ms: float | None
     load_duration_ms: float | None
     prompt_eval_duration_ms: float | None
