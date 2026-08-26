@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 
 from backend.app.core.config import get_settings
 from backend.app.services.diagnostic_trace import diagnostic_traces
@@ -16,7 +16,10 @@ def _require_api_key(
     if configured_key is not None and api_key != configured_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "invalid_api_key", "message": "La clave de Orion no es válida."},
+            detail={
+                "code": "invalid_api_key",
+                "message": "La clave de Orion no es válida.",
+            },
         )
 
 
@@ -31,10 +34,37 @@ def _ensure_enabled() -> None:
         )
 
 
-@router.get("/diagnostics/traces/latest", dependencies=[])
-async def latest_trace(
-    _: None = _require_api_key,
-) -> dict[str, object]:
-    # FastAPI dependency injection cannot execute a plain default callable here; the
-    # explicit call below keeps this router independent from the main chat module.
-    raise RuntimeError("dependency placeholder")
+@router.get(
+    "/diagnostics/traces/latest",
+    dependencies=[Depends(_require_api_key)],
+)
+async def latest_trace() -> dict[str, object]:
+    _ensure_enabled()
+    trace = diagnostic_traces.latest()
+    if trace is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "diagnostic_trace_not_found",
+                "message": "Todavía no hay trazas de diagnóstico en este proceso.",
+            },
+        )
+    return trace.snapshot()
+
+
+@router.get(
+    "/diagnostics/traces/{trace_id}",
+    dependencies=[Depends(_require_api_key)],
+)
+async def diagnostic_trace(trace_id: str) -> dict[str, object]:
+    _ensure_enabled()
+    trace = diagnostic_traces.get(trace_id)
+    if trace is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "diagnostic_trace_not_found",
+                "message": "La traza solicitada ya no está disponible en memoria.",
+            },
+        )
+    return trace.snapshot()
