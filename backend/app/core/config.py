@@ -84,14 +84,16 @@ class Settings:
     cloudflare_deep_model: str = "@cf/openai/gpt-oss-120b"
     cloudflare_quick_reasoning_effort: str = "low"
     cloudflare_deep_reasoning_effort: str = "medium"
+    # Cloud gpt-oss needs a larger shared reasoning/output budget than local Ollama.
+    cloudflare_quick_max_tokens: int = 1536
+    cloudflare_deep_max_tokens: int = 3072
     quick_context: int = 4096
     deep_context: int = 8192
     quick_threads: int = 8
     deep_threads: int = 8
-    # gpt-oss reasoning tokens share the generation budget with visible output.
-    # These defaults leave enough headroom while reasoning effort controls latency.
-    quick_max_tokens: int = 1536
-    deep_max_tokens: int = 3072
+    # Local Ollama budgets remain unchanged; cloud has independent settings above.
+    quick_max_tokens: int = 768
+    deep_max_tokens: int = 1536
     quick_history_characters: int = 12_000
     deep_history_characters: int = 30_000
     keep_alive: str = "10m"
@@ -140,12 +142,18 @@ def get_settings() -> Settings:
         cloudflare_deep_reasoning_effort=_read_reasoning_effort(
             "ORION_CLOUDFLARE_DEEP_REASONING_EFFORT", "medium"
         ),
+        cloudflare_quick_max_tokens=_read_positive_int(
+            "ORION_CLOUDFLARE_QUICK_MAX_TOKENS", 1536
+        ),
+        cloudflare_deep_max_tokens=_read_positive_int(
+            "ORION_CLOUDFLARE_DEEP_MAX_TOKENS", 3072
+        ),
         quick_context=_read_positive_int("ORION_QUICK_CONTEXT", 4096),
         deep_context=_read_positive_int("ORION_DEEP_CONTEXT", 8192),
         quick_threads=_read_positive_int("ORION_QUICK_THREADS", 8),
         deep_threads=_read_positive_int("ORION_DEEP_THREADS", 8),
-        quick_max_tokens=_read_positive_int("ORION_QUICK_MAX_TOKENS", 1536),
-        deep_max_tokens=_read_positive_int("ORION_DEEP_MAX_TOKENS", 3072),
+        quick_max_tokens=_read_positive_int("ORION_QUICK_MAX_TOKENS", 768),
+        deep_max_tokens=_read_positive_int("ORION_DEEP_MAX_TOKENS", 1536),
         quick_history_characters=_read_positive_int(
             "ORION_QUICK_HISTORY_CHARACTERS", 12_000
         ),
