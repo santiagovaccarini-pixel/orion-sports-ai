@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Sequence
 
 from backend.app.core.config import Settings
@@ -10,6 +11,7 @@ from backend.app.providers.model_provider import (
     ModelProvider,
     ModelProviderUnavailableError,
 )
+from backend.app.services.diagnostic_trace import DiagnosticTrace
 from backend.app.services.knowledge_base import KnowledgeDocument
 from backend.app.services.semantic_orchestrator import (
     EvidenceReview,
@@ -41,23 +43,40 @@ async def _plan(
     request: ChatRequest,
     settings: Settings,
     documents: Sequence[KnowledgeDocument],
+    trace: DiagnosticTrace | None = None,
 ) -> SemanticPlan:
+    started = perf_counter()
     try:
-        return await create_semantic_plan(
+        plan = await create_semantic_plan(
             provider,
             request.messages,
             web_available=settings.web_enabled,
             documents=documents,
             sport=request.sport,
         )
-    except (SemanticOrchestrationError, ModelProviderUnavailableError):
+        if trace is not None:
+            trace.record_plan(
+                plan,
+                fallback=False,
+                duration_ms=(perf_counter() - started) * 1000,
+            )
+        return plan
+    except (SemanticOrchestrationError, ModelProviderUnavailableError) as exc:
         # An auxiliary planning failure must not take the whole chat down. The
         # fallback deliberately avoids lexical classification and gathers broadly.
-        return conservative_fallback_plan(
+        plan = conservative_fallback_plan(
             request.messages,
             web_available=settings.web_enabled,
             documents=documents,
         )
+        if trace is not None:
+            trace.record_plan(
+                plan,
+                fallback=True,
+                duration_ms=(perf_counter() - started) * 1000,
+                error=str(exc),
+            )
+        return plan
 
 
 def _selected_mode(request: ChatRequest, plan: SemanticPlan) -> SelectedMode:
@@ -89,26 +108,53 @@ async def _review(
     plan: SemanticPlan,
     web_sources: Sequence[WebSource],
     local_evidence: Sequence[LocalEvidence],
+    *,
+    round_number: int,
+    trace: DiagnosticTrace | None = None,
 ) -> EvidenceReview:
+    started = perf_counter()
     try:
-        return await review_evidence(
+        review = await review_evidence(
             provider,
             plan,
             web_sources,
             local_evidence,
             messages=request.messages,
         )
-    except (SemanticOrchestrationError, ModelProviderUnavailableError):
+        if trace is not None:
+            trace.record_review(
+                review,
+                round_number=round_number,
+                fallback=False,
+                duration_ms=(perf_counter() - started) * 1000,
+                web_sources=web_sources,
+            )
+        return review
+    except (SemanticOrchestrationError, ModelProviderUnavailableError) as exc:
         # Preserve already retrieved evidence for the final model, but do not mark
         # any source as semantically validated if the critic itself failed.
-        return _fallback_review(plan)
+        review = _fallback_review(plan)
+        if trace is not None:
+            trace.record_review(
+                review,
+                round_number=round_number,
+                fallback=True,
+                duration_ms=(perf_counter() - started) * 1000,
+                web_sources=web_sources,
+                error=str(exc),
+            )
+        return review
 
 
 async def _search(
     query: str,
     settings: Settings,
+    *,
+    round_number: int,
+    trace: DiagnosticTrace | None = None,
 ) -> tuple[WebSource, ...]:
-    return await research(
+    started = perf_counter()
+    sources = await research(
         query,
         allowed_domains=settings.web_allowed_domains,
         minimum_sources=settings.web_minimum_sources,
@@ -116,6 +162,14 @@ async def _search(
         provider=settings.web_provider,
         tavily_api_key=settings.tavily_api_key,
     )
+    if trace is not None:
+        trace.record_search(
+            round_number=round_number,
+            query=query,
+            sources=sources,
+            duration_ms=(perf_counter() - started) * 1000,
+        )
+    return sources
 
 
 async def build_reasoning_bundle(
@@ -123,6 +177,8 @@ async def build_reasoning_bundle(
     request: ChatRequest,
     settings: Settings,
     documents: Sequence[KnowledgeDocument],
+    *,
+    trace: DiagnosticTrace | None = None,
 ) -> ReasoningBundle:
     """Understand, gather evidence and review it before Orion answers.
 
@@ -130,9 +186,13 @@ async def build_reasoning_bundle(
     enforces bounded tool rounds; it does not map user words to meanings or answers.
     The critic always receives the original conversation so it can reject a plan that
     silently changed scope. Auxiliary reasoning failures degrade conservatively.
+
+    When diagnostics are enabled, ``trace`` records observable structured decisions,
+    tool results and timings. It never records hidden chain-of-thought or credentials.
     """
 
-    plan = await _plan(provider, request, settings, documents)
+    pipeline_started = perf_counter()
+    plan = await _plan(provider, request, settings, documents, trace)
     selected_mode = _selected_mode(request, plan)
 
     local_evidence = collect_local_evidence(
@@ -140,15 +200,33 @@ async def build_reasoning_bundle(
         plan,
         max_characters=settings.semantic_local_context_characters,
     )
+    if trace is not None:
+        trace.record_local_evidence(local_evidence)
+
     web_sources: tuple[WebSource, ...] = ()
+    rounds = 0
 
     if plan.use_web and settings.web_enabled:
         initial_query = plan.web_query or plan.objective
-        web_sources = await _search(initial_query, settings)
+        rounds = 1
+        web_sources = await _search(
+            initial_query,
+            settings,
+            round_number=rounds,
+            trace=trace,
+        )
 
-    review = await _review(provider, request, plan, web_sources, local_evidence)
+    review_round = max(rounds, 1)
+    review = await _review(
+        provider,
+        request,
+        plan,
+        web_sources,
+        local_evidence,
+        round_number=review_round,
+        trace=trace,
+    )
 
-    rounds = 1 if plan.use_web and settings.web_enabled else 0
     while (
         not review.sufficient
         and not review.needs_clarification
@@ -156,10 +234,23 @@ async def build_reasoning_bundle(
         and settings.web_enabled
         and rounds < settings.semantic_max_tool_rounds
     ):
-        incoming = await _search(review.follow_up_web_query, settings)
-        web_sources = merge_web_sources(web_sources, incoming)
         rounds += 1
-        review = await _review(provider, request, plan, web_sources, local_evidence)
+        incoming = await _search(
+            review.follow_up_web_query,
+            settings,
+            round_number=rounds,
+            trace=trace,
+        )
+        web_sources = merge_web_sources(web_sources, incoming)
+        review = await _review(
+            provider,
+            request,
+            plan,
+            web_sources,
+            local_evidence,
+            round_number=rounds,
+            trace=trace,
+        )
 
     context = format_reasoning_context(
         plan,
@@ -168,6 +259,11 @@ async def build_reasoning_bundle(
         local_evidence,
         original_user_request=request.messages[-1].content,
     )
+    if trace is not None:
+        trace.set_timing(
+            "reasoning_bundle_total",
+            (perf_counter() - pipeline_started) * 1000,
+        )
     return ReasoningBundle(
         plan=plan,
         review=review,
