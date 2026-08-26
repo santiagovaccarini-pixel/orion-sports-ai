@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 from dataclasses import dataclass
 from datetime import date
@@ -10,6 +12,7 @@ from backend.app.domain.schemas import ChatMessage, SportContext
 from backend.app.providers.model_provider import ModelProvider, ModelResult
 from backend.app.services.knowledge_base import KnowledgeDocument
 from backend.app.services.local_retrieval import retrieve_local_chunks
+from backend.app.services.semantic_tools import CsvFilter, CsvOperationSpec
 from backend.app.services.web_research import WebSource
 
 
@@ -41,6 +44,8 @@ class SemanticPlan:
     local_document_names: tuple[str, ...]
     recommended_mode: SelectedMode
     reason: str
+    calculation_expression: str | None = None
+    csv_operation: CsvOperationSpec | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +102,17 @@ Reglas obligatorias:
   debe forzar búsquedas solo para demostrar algo que es conocimiento general estable.
 - No inventes que un documento contiene un dato. Solo podés elegir documentos que
   aparezcan en el catálogo disponible.
+- Si necesitás una cuenta aritmética pura, poné use_calculator=true y escribí una
+  calculation_expression compuesta solo por números, paréntesis y operadores
+  aritméticos. No pongas una fórmula si antes faltan datos que deben recuperarse.
+- Para cálculos o gráficos sobre un CSV, usá csv_operation con nombres EXACTOS de
+  documento y columnas presentes en el catálogo. Los filtros son igualdades explícitas
+  de columna/valor. aggregation puede ser none, count, sum, average, min o max. Para
+  un gráfico, use_chart=true y csv_operation debe incluir chart_type="bar", x_column
+  y value_column. No inventes columnas.
+- use_calculator/use_chart significan que existe una especificación ejecutable. No los
+  actives como una promesa abstracta si no podés completar calculation_expression o
+  csv_operation con lo disponible.
 - No interrumpas automáticamente una consulta breve solo porque admita más de un
   alcance razonable. Si el contexto, el uso ordinario o la investigación permiten
   adoptar una interpretación defendible, investigá y dejá que la respuesta explicite
@@ -126,7 +142,17 @@ Devolvé exclusivamente un objeto JSON válido con estas claves:
   "web_query": "..." or null,
   "local_document_names": ["..."],
   "recommended_mode": "quick" or "deep",
-  "reason": "explicación breve de la decisión"
+  "reason": "explicación breve de la decisión",
+  "calculation_expression": "(12 + 8) / 2" or null,
+  "csv_operation": {
+    "document_name": "gps.csv",
+    "filters": [{"column": "Player", "value": "Jugador A"}],
+    "value_column": "HSR",
+    "aggregation": "average",
+    "x_column": null,
+    "chart_type": null,
+    "title": null
+  } or null
 }
 """.strip()
 
@@ -153,6 +179,9 @@ Reglas obligatorias:
   pregunta.
 - Esta etapa se usa cuando el plan requiere evidencia externa/local. No completes
   huecos de esa evidencia con conocimiento de memoria del modelo.
+- Los resultados marcados como DETERMINÍSTICOS fueron calculados por herramientas de
+  Python sobre datos concretos. No recalcules ni sustituyas esos números por una
+  estimación del modelo; sí auditá que sus filtros/columnas respondan al pedido original.
 - Si falta información y una búsqueda adicional puede resolverla, proponé UNA nueva
   consulta web semánticamente dirigida a lo que falta y al alcance original. No uses
   reglas particulares para nombres, frases, métricas o deportes.
@@ -164,7 +193,7 @@ Reglas obligatorias:
 Devolvé exclusivamente un objeto JSON válido con estas claves:
 {
   "sufficient": true,
-  "relevant_source_ids": ["W1", "L1"],
+  "relevant_source_ids": ["W1", "L1", "T1"],
   "discarded_source_ids": ["W2"],
   "missing_information": ["..."],
   "follow_up_web_query": null,
@@ -239,6 +268,59 @@ def _evidence_policy(payload: dict[str, object]) -> str:
     return value
 
 
+def _csv_operation(payload: dict[str, object]) -> CsvOperationSpec | None:
+    value = payload.get("csv_operation")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise SemanticOrchestrationError("csv_operation debe ser un objeto o null.")
+    document_name = str(value.get("document_name") or "").strip()
+    if not document_name:
+        raise SemanticOrchestrationError("csv_operation requiere document_name.")
+    raw_filters = value.get("filters", [])
+    if not isinstance(raw_filters, list):
+        raise SemanticOrchestrationError("csv_operation.filters debe ser una lista.")
+    filters: list[CsvFilter] = []
+    for item in raw_filters:
+        if not isinstance(item, dict):
+            raise SemanticOrchestrationError("Cada filtro CSV debe ser un objeto.")
+        column = str(item.get("column") or "").strip()
+        filter_value = str(item.get("value") or "").strip()
+        if not column or not filter_value:
+            raise SemanticOrchestrationError("Cada filtro CSV requiere column y value.")
+        filters.append(CsvFilter(column=column, value=filter_value))
+    aggregation = str(value.get("aggregation") or "none").strip().lower()
+    return CsvOperationSpec(
+        document_name=document_name,
+        filters=tuple(filters),
+        value_column=(
+            str(value.get("value_column")).strip()
+            if value.get("value_column") is not None
+            else None
+        )
+        or None,
+        aggregation=aggregation,
+        x_column=(
+            str(value.get("x_column")).strip()
+            if value.get("x_column") is not None
+            else None
+        )
+        or None,
+        chart_type=(
+            str(value.get("chart_type")).strip().lower()
+            if value.get("chart_type") is not None
+            else None
+        )
+        or None,
+        title=(
+            str(value.get("title")).strip()
+            if value.get("title") is not None
+            else None
+        )
+        or None,
+    )
+
+
 def parse_semantic_plan(value: str) -> SemanticPlan:
     payload = _extract_json_object(value)
     objective = str(payload.get("objective") or "").strip()
@@ -248,7 +330,7 @@ def parse_semantic_plan(value: str) -> SemanticPlan:
         recommended_mode = SelectedMode(str(payload.get("recommended_mode", "quick")))
     except ValueError as exc:
         raise SemanticOrchestrationError("El plan recomendó un modo inválido.") from exc
-    return SemanticPlan(
+    plan = SemanticPlan(
         objective=objective,
         entities=_strings(payload, "entities"),
         constraints=_strings(payload, "constraints"),
@@ -266,7 +348,22 @@ def parse_semantic_plan(value: str) -> SemanticPlan:
         local_document_names=_strings(payload, "local_document_names"),
         recommended_mode=recommended_mode,
         reason=str(payload.get("reason") or "Planificación semántica.").strip(),
+        calculation_expression=_optional_string(payload, "calculation_expression"),
+        csv_operation=_csv_operation(payload),
     )
+    if plan.use_chart and (plan.csv_operation is None or plan.csv_operation.chart_type is None):
+        raise SemanticOrchestrationError(
+            "use_chart=true requiere csv_operation con chart_type ejecutable."
+        )
+    if plan.use_calculator and plan.calculation_expression is None:
+        csv_has_calculation = bool(
+            plan.csv_operation and plan.csv_operation.aggregation != "none"
+        )
+        if not csv_has_calculation:
+            raise SemanticOrchestrationError(
+                "use_calculator=true requiere calculation_expression o agregación CSV."
+            )
+    return plan
 
 
 def parse_evidence_review(value: str) -> EvidenceReview:
@@ -284,12 +381,28 @@ def parse_evidence_review(value: str) -> EvidenceReview:
     )
 
 
+def _csv_headers(document: KnowledgeDocument) -> tuple[str, ...]:
+    if not document.name.lower().endswith(".csv"):
+        return ()
+    try:
+        rows = csv.reader(io.StringIO(document.content))
+        for row in rows:
+            if any(cell.strip() for cell in row):
+                return tuple(cell.strip() for cell in row if cell.strip())[:30]
+    except csv.Error:
+        return ()
+    return ()
+
+
 def document_catalog(documents: Sequence[KnowledgeDocument]) -> str:
     if not documents:
         return "No hay documentos locales cargados."
-    return "\n".join(
-        f"- {document.name} ({len(document.content)} caracteres)" for document in documents
-    )
+    entries: list[str] = []
+    for document in documents:
+        headers = _csv_headers(document)
+        schema = f"; columnas: {', '.join(headers)}" if headers else ""
+        entries.append(f"- {document.name} ({len(document.content)} caracteres){schema}")
+    return "\n".join(entries)
 
 
 def _capability_context(
@@ -455,12 +568,28 @@ def _review_input(
         "information_needed": list(plan.information_needed),
         "ambiguities": list(plan.ambiguities),
         "evidence_policy": plan.evidence_policy,
+        "calculation_expression": plan.calculation_expression,
+        "csv_operation": (
+            {
+                "document_name": plan.csv_operation.document_name,
+                "filters": [
+                    {"column": item.column, "value": item.value}
+                    for item in plan.csv_operation.filters
+                ],
+                "value_column": plan.csv_operation.value_column,
+                "aggregation": plan.csv_operation.aggregation,
+                "x_column": plan.csv_operation.x_column,
+                "chart_type": plan.csv_operation.chart_type,
+            }
+            if plan.csv_operation
+            else None
+        ),
     }
     parts = [
         "CONVERSACIÓN ORIGINAL (fuente de verdad sobre el pedido):\n"
         + _conversation_input(messages),
         "PLAN INTERPRETADO (puede contener errores y debe auditarse):\n"
-        + _clip(json.dumps(plan_payload, ensure_ascii=False), 3_500),
+        + _clip(json.dumps(plan_payload, ensure_ascii=False), 4_500),
     ]
 
     if web_sources:
@@ -480,9 +609,9 @@ def _review_input(
             f"{' | TRUNCADO' if item.truncated else ''}\n{_clip(item.content, 2_000)}"
             for item in local_evidence
         ]
-        parts.append("EVIDENCIA LOCAL:\n" + "\n\n".join(local_blocks))
+        parts.append("EVIDENCIA LOCAL/HERRAMIENTAS:\n" + "\n\n".join(local_blocks))
     else:
-        parts.append("EVIDENCIA LOCAL: ninguna.")
+        parts.append("EVIDENCIA LOCAL/HERRAMIENTAS: ninguna.")
 
     return _clip("\n\n".join(parts), MAX_REVIEW_INPUT_CHARACTERS)
 
@@ -546,6 +675,7 @@ def format_reasoning_context(
     local_evidence: Sequence[LocalEvidence],
     *,
     original_user_request: str | None = None,
+    tool_context: str = "",
 ) -> str:
     header = {
         "original_user_request": original_user_request,
@@ -582,6 +712,12 @@ def format_reasoning_context(
             "parcial útil, identificá exactamente qué alcance sí respalda. Citá evidencia "
             "web como [W1], [W2], etc."
         )
+    if tool_context:
+        sections.append(
+            "HERRAMIENTAS DETERMINÍSTICAS:\n"
+            + tool_context
+            + "\nUsá estos resultados tal como fueron calculados; no los reemplaces por una estimación."
+        )
     if web_sources:
         sections.append(
             "FUENTES WEB:\n"
@@ -592,7 +728,7 @@ def format_reasoning_context(
         )
     if local_evidence:
         sections.append(
-            "DATOS LOCALES:\n"
+            "DATOS LOCALES/HERRAMIENTAS:\n"
             + "\n\n".join(
                 f"[{item.source_id}] {item.document_name}"
                 f" | fragmento {item.chunk_index + 1 if item.chunk_index is not None else '?'}"
