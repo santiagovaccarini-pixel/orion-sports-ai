@@ -298,6 +298,7 @@ class CloudflareModelProvider:
         system_prompt: str,
         reasoning_effort: str | None = None,
     ) -> AsyncIterator[ModelStreamEvent]:
+        visible_content_emitted = False
         try:
             async for event in self.client.chat_stream(
                 mode=mode,
@@ -305,6 +306,8 @@ class CloudflareModelProvider:
                 system_prompt=system_prompt,
                 reasoning_effort=reasoning_effort,
             ):
+                if event.content:
+                    visible_content_emitted = True
                 yield ModelStreamEvent(
                     content=event.content,
                     done=event.done,
@@ -320,7 +323,45 @@ class CloudflareModelProvider:
         except CloudAIConfigurationError as exc:
             raise ModelProviderConfigurationError(str(exc)) from exc
         except CloudAIUnavailableError as exc:
-            raise ModelProviderUnavailableError(str(exc)) from exc
+            if visible_content_emitted:
+                raise ModelProviderUnavailableError(str(exc)) from exc
+            # Transport resilience only: if Responses streaming closes before any
+            # visible text, retry exactly once as a non-streaming Responses request.
+            # This preserves the same model, prompt and reasoning effort without
+            # duplicating a partially delivered answer.
+            try:
+                recovered = await self.client.chat(
+                    mode=mode,
+                    messages=messages,
+                    system_prompt=system_prompt,
+                    structured=False,
+                    reasoning_effort=reasoning_effort,
+                )
+            except CloudAIConfigurationError as recovery_exc:
+                raise ModelProviderConfigurationError(str(recovery_exc)) from recovery_exc
+            except CloudAIUnavailableError as recovery_exc:
+                raise ModelProviderUnavailableError(str(recovery_exc)) from recovery_exc
+
+            yield ModelStreamEvent(
+                content=recovered.content,
+                done=False,
+                model=recovered.model,
+                reasoning_effort=recovered.reasoning_effort,
+                endpoint=f"{recovered.endpoint or 'responses'}_stream_recovery",
+                thread_limit=0,
+            )
+            yield ModelStreamEvent(
+                content="",
+                done=True,
+                model=recovered.model,
+                prompt_tokens=recovered.prompt_tokens,
+                completion_tokens=recovered.completion_tokens,
+                reasoning_tokens=recovered.reasoning_tokens,
+                finish_reason=recovered.finish_reason,
+                reasoning_effort=recovered.reasoning_effort,
+                endpoint=f"{recovered.endpoint or 'responses'}_stream_recovery",
+                thread_limit=0,
+            )
 
 
 def create_model_provider(settings: Settings) -> ModelProvider:
