@@ -57,6 +57,86 @@ export type OrionChart = {
   points: ChartPoint[];
 };
 
+export type DiagnosticSource = {
+  source_id: string;
+  title: string;
+  url: string;
+  domain: string;
+  excerpt: string;
+};
+
+export type DiagnosticSearch = {
+  round: number;
+  query: string;
+  duration_ms: number;
+  raw_results: DiagnosticSource[];
+};
+
+export type DiagnosticReview = {
+  round: number;
+  fallback: boolean;
+  duration_ms: number;
+  error: string | null;
+  sufficient: boolean;
+  relevant_source_ids: string[];
+  discarded_source_ids: string[];
+  missing_information: string[];
+  follow_up_web_query: string | null;
+  needs_clarification: boolean;
+  clarifying_question: string | null;
+  resolved_scope: string | null;
+  source_catalog: DiagnosticSource[];
+};
+
+export type DiagnosticPlan = {
+  objective: string;
+  entities: string[];
+  constraints: string[];
+  references: string[];
+  information_needed: string[];
+  ambiguities: string[];
+  use_web: boolean;
+  use_local_data: boolean;
+  use_calculator: boolean;
+  use_chart: boolean;
+  needs_clarification: boolean;
+  clarifying_question: string | null;
+  web_query: string | null;
+  local_document_names: string[];
+  recommended_mode: SelectedMode | null;
+};
+
+export type DiagnosticTrace = {
+  trace_id: string;
+  created_at: string;
+  completed_at: string | null;
+  status: string;
+  question: string;
+  sport: string;
+  requested_mode: string;
+  model: string | null;
+  plan: DiagnosticPlan | null;
+  plan_fallback: boolean;
+  plan_error: string | null;
+  local_evidence: Array<{
+    source_id: string;
+    document_name: string;
+    truncated: boolean;
+    excerpt: string;
+  }>;
+  searches: DiagnosticSearch[];
+  reviews: DiagnosticReview[];
+  timings_ms: Record<string, number>;
+  final_answer: string | null;
+  error: string | null;
+  privacy: {
+    persistence: string;
+    max_traces: number;
+    hidden_chain_of_thought_recorded: boolean;
+    credentials_recorded: boolean;
+  };
+};
+
 export type ChatResult = {
   content: string;
   sport: Sport;
@@ -177,6 +257,17 @@ export async function getOrionStatus(signal?: AbortSignal): Promise<OrionStatus>
     headers: API_HEADERS,
   });
   return parseResponse<OrionStatus>(response);
+}
+
+export async function getLatestDiagnosticTrace(
+  signal?: AbortSignal,
+): Promise<DiagnosticTrace> {
+  const response = await fetch(`${API_BASE}/diagnostics/traces/latest`, {
+    cache: "no-store",
+    signal,
+    headers: API_HEADERS,
+  });
+  return parseResponse<DiagnosticTrace>(response);
 }
 
 export async function sendChat(input: {
