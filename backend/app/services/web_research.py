@@ -418,14 +418,19 @@ async def research(
         follow_redirects=True,
     ) as client:
         if configured_provider in {"auto", "tavily"} and configured_tavily_key:
-            return await _research_tavily(
+            tavily_sources = await _research_tavily(
                 client,
                 query,
                 api_key=configured_tavily_key,
                 result_limit=result_limit,
             )
+            if tavily_sources or configured_provider == "tavily":
+                return tavily_sources
         if configured_provider == "tavily":
             return ()
+        # auto means exactly that: a Tavily outage/empty response must not erase the
+        # independent legacy fallback. DuckDuckGo is only discovery fallback here;
+        # semantic review remains responsible for deciding evidence quality.
         return await _research_duckduckgo(
             client,
             query,
