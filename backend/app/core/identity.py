@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import unicodedata
+
 
 ORION_CREATOR_NAME = "Santiago Vaccarini"
 
@@ -23,6 +25,71 @@ ORION_CREATOR_ATTRIBUTION_RULE = (
     "fue creado por Santiago Vaccarini."
 )
 
+_CREATOR_TERMS = (
+    "quien creo",
+    "quien creó",
+    "quien hizo",
+    "creador",
+    "creadora",
+    "autor",
+    "autora",
+    "desarrollo",
+    "desarrolló",
+    "desarrollador",
+    "desarrolladora",
+    "ideo",
+    "ideó",
+    "origen",
+    "de quien es",
+    "quien te creo",
+    "quien te creó",
+)
+_ENGINE_TERMS = (
+    "motor",
+    "modelo",
+    "gpt-oss",
+    "cloudflare",
+    "workers ai",
+    "ollama",
+    "llm",
+)
+
+
+def _fold(value: str) -> str:
+    return "".join(
+        character
+        for character in unicodedata.normalize("NFKD", value.casefold())
+        if not unicodedata.combining(character)
+    )
+
 
 def creator_context() -> str:
     return "IDENTIDAD INSTITUCIONAL DE ORION:\n" + ORION_CREATOR_ATTRIBUTION_RULE
+
+
+def creator_profile_answer() -> str:
+    return (
+        f"Orion fue creado por {ORION_CREATOR_NAME}. {ORION_CREATOR_PROFILE} "
+        "Esto se refiere a Orion como producto, agente y arquitectura; los modelos y "
+        "motores externos que utiliza tienen sus propios desarrolladores y proveedores."
+    )
+
+
+def direct_creator_answer(query: str) -> str | None:
+    """Return the institutional creator answer for explicit Orion-authorship questions.
+
+    This is an intentionally narrow product-identity rule requested by Orion's owner;
+    it is not part of the semantic classifier used for ordinary user questions. Pure
+    questions about the underlying model/engine are left to the normal answer path so
+    Orion never attributes gpt-oss, Workers AI, Ollama or another engine to its creator.
+    """
+
+    folded = _fold(query)
+    mentions_orion = "orion" in folded or "quien te" in folded or "tu creador" in folded
+    asks_creator = any(_fold(term) in folded for term in _CREATOR_TERMS)
+    asks_engine = any(_fold(term) in folded for term in _ENGINE_TERMS)
+    if not mentions_orion or not asks_creator:
+        return None
+    if asks_engine and "orion" not in folded:
+        return None
+    return creator_profile_answer()
