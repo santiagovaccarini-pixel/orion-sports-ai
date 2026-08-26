@@ -3,16 +3,19 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import date
-from typing import Sequence
+from typing import Callable, Sequence
 
 from backend.app.domain.models import SelectedMode
 from backend.app.domain.schemas import ChatMessage, SportContext
-from backend.app.providers.model_provider import ModelProvider
+from backend.app.providers.model_provider import ModelProvider, ModelResult
 from backend.app.services.knowledge_base import KnowledgeDocument
+from backend.app.services.local_retrieval import retrieve_local_chunks
 from backend.app.services.web_research import WebSource
 
 
 MAX_REVIEW_INPUT_CHARACTERS = 19_000
+VALID_EVIDENCE_POLICIES = frozenset({"model_knowledge", "external", "local", "mixed"})
+ModelResultCallback = Callable[[str, ModelResult], None]
 
 
 class SemanticOrchestrationError(RuntimeError):
@@ -27,6 +30,7 @@ class SemanticPlan:
     references: tuple[str, ...]
     information_needed: tuple[str, ...]
     ambiguities: tuple[str, ...]
+    evidence_policy: str
     use_web: bool
     use_local_data: bool
     use_calculator: bool
@@ -45,6 +49,7 @@ class LocalEvidence:
     document_name: str
     content: str
     truncated: bool
+    chunk_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,11 +80,21 @@ Reglas obligatorias:
   período, competición, población, filtro, unidad o recorte que no surja de la
   conversación. Si el usuario no fijó una restricción temporal, no la inventes para
   adaptar la pregunta a una fuente más fácil de encontrar.
+- Elegí una política de evidencia por significado, no por palabras clave:
+  * model_knowledge: definiciones, explicaciones, razonamiento o conocimiento general
+    estable que no necesita un valor actual ni datos privados para responder.
+  * external: hechos públicos actuales/cambiantes o afirmaciones que el usuario pide
+    verificar externamente.
+  * local: la respuesta depende de documentos o datos privados/locales disponibles.
+  * mixed: hacen falta tanto evidencia externa como datos locales.
 - No supongas que un dato del modelo está actualizado. Si el hecho puede haber
-  cambiado con el tiempo y la respuesta necesita el valor actual, planificá evidencia
-  externa verificable cuando la herramienta web esté disponible.
+  cambiado con el tiempo y la respuesta necesita el valor actual, la política no puede
+  ser model_knowledge.
 - Los documentos locales y la web son herramientas complementarias. Podés elegir
   ninguna, una o ambas según lo que realmente necesite la pregunta.
+- La política y las herramientas deben ser coherentes: external requiere web si está
+  disponible; local requiere datos locales; mixed requiere ambos. model_knowledge no
+  debe forzar búsquedas solo para demostrar algo que es conocimiento general estable.
 - No inventes que un documento contiene un dato. Solo podés elegir documentos que
   aparezcan en el catálogo disponible.
 - No interrumpas automáticamente una consulta breve solo porque admita más de un
@@ -101,6 +116,7 @@ Devolvé exclusivamente un objeto JSON válido con estas claves:
   "references": ["..."],
   "information_needed": ["..."],
   "ambiguities": ["..."],
+  "evidence_policy": "model_knowledge" or "external" or "local" or "mixed",
   "use_web": true,
   "use_local_data": false,
   "use_calculator": false,
@@ -125,9 +141,6 @@ Reglas obligatorias:
 - Primero compará el plan con la conversación original. Si el plan agregó, quitó o
   cambió materialmente un período, competición, población, filtro, unidad, entidad o
   alcance que no surge de la conversación, consideralo una interpretación defectuosa.
-  En ese caso no declares evidencia suficiente para ese plan deformado: proponé una
-  nueva consulta web basada en el pedido original, salvo que realmente haga falta una
-  aclaración del usuario.
 - No uses cantidad fija de fuentes como criterio de verdad. Una fuente primaria y
   explícita puede ser suficiente; muchas fuentes irrelevantes no lo son.
 - Una fuente solo puede ser relevante si responde a la misma entidad, métrica,
@@ -138,7 +151,8 @@ Reglas obligatorias:
   distintas. No las presentes como discrepancia del mismo dato sin demostrarlo.
 - Priorizá evidencia primaria, explícita, reciente y directamente relacionada con la
   pregunta.
-- No completes huecos con conocimiento de memoria del modelo.
+- Esta etapa se usa cuando el plan requiere evidencia externa/local. No completes
+  huecos de esa evidencia con conocimiento de memoria del modelo.
 - Si falta información y una búsqueda adicional puede resolverla, proponé UNA nueva
   consulta web semánticamente dirigida a lo que falta y al alcance original. No uses
   reglas particulares para nombres, frases, métricas o deportes.
@@ -215,6 +229,16 @@ def _optional_string(payload: dict[str, object], key: str) -> str | None:
     return clean or None
 
 
+def _evidence_policy(payload: dict[str, object]) -> str:
+    value = str(payload.get("evidence_policy") or "").strip().lower()
+    if value not in VALID_EVIDENCE_POLICIES:
+        allowed = ", ".join(sorted(VALID_EVIDENCE_POLICIES))
+        raise SemanticOrchestrationError(
+            f"evidence_policy debe ser uno de: {allowed}."
+        )
+    return value
+
+
 def parse_semantic_plan(value: str) -> SemanticPlan:
     payload = _extract_json_object(value)
     objective = str(payload.get("objective") or "").strip()
@@ -231,6 +255,7 @@ def parse_semantic_plan(value: str) -> SemanticPlan:
         references=_strings(payload, "references"),
         information_needed=_strings(payload, "information_needed"),
         ambiguities=_strings(payload, "ambiguities"),
+        evidence_policy=_evidence_policy(payload),
         use_web=_boolean(payload, "use_web"),
         use_local_data=_boolean(payload, "use_local_data"),
         use_calculator=_boolean(payload, "use_calculator"),
@@ -289,6 +314,7 @@ async def create_semantic_plan(
     web_available: bool,
     documents: Sequence[KnowledgeDocument],
     sport: SportContext,
+    on_model_result: ModelResultCallback | None = None,
 ) -> SemanticPlan:
     system_prompt = PLANNER_PROMPT + "\n\n" + _capability_context(
         web_available=web_available,
@@ -301,7 +327,10 @@ async def create_semantic_plan(
         messages=recent,
         system_prompt=system_prompt,
         structured=True,
+        reasoning_effort="low",
     )
+    if on_model_result is not None:
+        on_model_result("planning", result)
     return parse_semantic_plan(result.content)
 
 
@@ -314,6 +343,14 @@ def conservative_fallback_plan(
     """Safe fallback when structured planning fails without lexical classification."""
 
     question = messages[-1].content.strip()
+    if documents and web_available:
+        policy = "mixed"
+    elif documents:
+        policy = "local"
+    elif web_available:
+        policy = "external"
+    else:
+        policy = "model_knowledge"
     return SemanticPlan(
         objective=question,
         entities=(),
@@ -321,6 +358,7 @@ def conservative_fallback_plan(
         references=(),
         information_needed=("Información suficiente para responder la pregunta original.",),
         ambiguities=(),
+        evidence_policy=policy,
         use_web=web_available,
         use_local_data=bool(documents),
         use_calculator=False,
@@ -338,35 +376,39 @@ def collect_local_evidence(
     documents: Sequence[KnowledgeDocument],
     plan: SemanticPlan,
     *,
+    original_user_request: str = "",
     max_characters: int = 12_000,
 ) -> tuple[LocalEvidence, ...]:
     if not plan.use_local_data or not documents or max_characters <= 0:
         return ()
-    wanted = {name.casefold() for name in plan.local_document_names}
-    selected = [
-        document
-        for document in documents
-        if not wanted or document.name.casefold() in wanted
-    ]
-    remaining = max_characters
-    evidence: list[LocalEvidence] = []
-    for index, document in enumerate(selected, start=1):
-        if remaining <= 0:
-            break
-        content = document.content.strip()
-        excerpt = content[:remaining]
-        if not excerpt:
-            continue
-        evidence.append(
-            LocalEvidence(
-                source_id=f"L{index}",
-                document_name=document.name,
-                content=excerpt,
-                truncated=len(excerpt) < len(content),
-            )
+    retrieval_query = "\n".join(
+        item
+        for item in (
+            original_user_request,
+            plan.objective,
+            *plan.entities,
+            *plan.constraints,
+            *plan.information_needed,
         )
-        remaining -= len(excerpt)
-    return tuple(evidence)
+        if item
+    )
+    chunks = retrieve_local_chunks(
+        documents,
+        retrieval_query,
+        selected_names=plan.local_document_names,
+        max_characters=max_characters,
+        max_chunks=12,
+    )
+    return tuple(
+        LocalEvidence(
+            source_id=f"L{index}",
+            document_name=chunk.document_name,
+            content=chunk.content,
+            truncated=chunk.truncated,
+            chunk_index=chunk.chunk_index,
+        )
+        for index, chunk in enumerate(chunks, start=1)
+    )
 
 
 def merge_web_sources(
@@ -406,14 +448,13 @@ def _review_input(
     local_evidence: Sequence[LocalEvidence],
     messages: Sequence[ChatMessage] = (),
 ) -> str:
-    """Build reviewer input below ChatMessage's 20k validation ceiling."""
-
     plan_payload = {
         "objective": plan.objective,
         "entities": list(plan.entities),
         "constraints": list(plan.constraints),
         "information_needed": list(plan.information_needed),
         "ambiguities": list(plan.ambiguities),
+        "evidence_policy": plan.evidence_policy,
     }
     parts = [
         "CONVERSACIÓN ORIGINAL (fuente de verdad sobre el pedido):\n"
@@ -435,6 +476,7 @@ def _review_input(
     if local_evidence:
         local_blocks = [
             f"{item.source_id} | {item.document_name}"
+            f" | fragmento {item.chunk_index + 1 if item.chunk_index is not None else '?'}"
             f"{' | TRUNCADO' if item.truncated else ''}\n{_clip(item.content, 2_000)}"
             for item in local_evidence
         ]
@@ -442,8 +484,7 @@ def _review_input(
     else:
         parts.append("EVIDENCIA LOCAL: ninguna.")
 
-    combined = "\n\n".join(parts)
-    return _clip(combined, MAX_REVIEW_INPUT_CHARACTERS)
+    return _clip("\n\n".join(parts), MAX_REVIEW_INPUT_CHARACTERS)
 
 
 async def review_evidence(
@@ -453,7 +494,22 @@ async def review_evidence(
     local_evidence: Sequence[LocalEvidence],
     *,
     messages: Sequence[ChatMessage] = (),
+    reasoning_effort: str = "low",
+    on_model_result: ModelResultCallback | None = None,
+    stage_name: str = "review",
 ) -> EvidenceReview:
+    if plan.evidence_policy == "model_knowledge" and not web_sources and not local_evidence:
+        return EvidenceReview(
+            sufficient=True,
+            relevant_source_ids=(),
+            discarded_source_ids=(),
+            missing_information=(),
+            follow_up_web_query=None,
+            needs_clarification=False,
+            clarifying_question=None,
+            resolved_scope="Conocimiento general estable; no requiere evidencia externa.",
+            reason="La política semántica permite responder con conocimiento general del modelo.",
+        )
     if not web_sources and not local_evidence:
         return EvidenceReview(
             sufficient=False,
@@ -464,7 +520,7 @@ async def review_evidence(
             needs_clarification=False,
             clarifying_question=None,
             resolved_scope=None,
-            reason="No se reunió evidencia para revisar.",
+            reason="No se reunió evidencia requerida para revisar.",
         )
     result = await provider.chat(
         mode=SelectedMode.QUICK,
@@ -476,7 +532,10 @@ async def review_evidence(
         ],
         system_prompt=REVIEW_PROMPT + f"\n\nFecha actual: {date.today().isoformat()}",
         structured=True,
+        reasoning_effort=reasoning_effort,
     )
+    if on_model_result is not None:
+        on_model_result(stage_name, result)
     return parse_evidence_review(result.content)
 
 
@@ -493,6 +552,7 @@ def format_reasoning_context(
         "planned_objective": plan.objective,
         "entities": list(plan.entities),
         "constraints": list(plan.constraints),
+        "evidence_policy": plan.evidence_policy,
         "resolved_scope": review.resolved_scope,
         "evidence_sufficient": review.sufficient,
         "missing_information": list(review.missing_information),
@@ -505,11 +565,23 @@ def format_reasoning_context(
         "La petición original del usuario manda sobre el plan. Si entran en conflicto, "
         "no adoptes silenciosamente el alcance del plan. Usá solo evidencia compatible "
         "con el pedido original y con la revisión. No conviertas fuentes descartadas en "
-        "hechos. Si evidence_sufficient es false, no presentes una cifra o conclusión "
-        "como confirmada; explicá brevemente qué falta o, si hay evidencia parcial útil, "
-        "identificá exactamente qué alcance sí respalda. Nunca completes huecos con "
-        "memoria del modelo. Citá evidencia web como [W1], [W2], etc.",
+        "hechos.",
     ]
+    if plan.evidence_policy == "model_knowledge":
+        sections.append(
+            "POLÍTICA DE EVIDENCIA: podés usar conocimiento general estable del modelo "
+            "para responder. No inventes fuentes ni presentes como actual un dato que "
+            "pueda haber cambiado; si durante la respuesta detectás que realmente hace "
+            "falta actualidad o datos privados que no están disponibles, explicitá ese límite."
+        )
+    else:
+        sections.append(
+            "POLÍTICA DE EVIDENCIA: esta consulta requiere evidencia externa/local. Si "
+            "evidence_sufficient es false, no presentes una cifra o conclusión como "
+            "confirmada. No completes huecos con memoria del modelo. Si hay evidencia "
+            "parcial útil, identificá exactamente qué alcance sí respalda. Citá evidencia "
+            "web como [W1], [W2], etc."
+        )
     if web_sources:
         sections.append(
             "FUENTES WEB:\n"
@@ -523,6 +595,7 @@ def format_reasoning_context(
             "DATOS LOCALES:\n"
             + "\n\n".join(
                 f"[{item.source_id}] {item.document_name}"
+                f" | fragmento {item.chunk_index + 1 if item.chunk_index is not None else '?'}"
                 f"{' (extracto truncado)' if item.truncated else ''}\n{item.content}"
                 for item in local_evidence
             )
