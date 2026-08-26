@@ -9,9 +9,9 @@ from pathlib import Path
 import httpx
 
 from backend.evals.run_local_evaluation import (
+    CASES_PATH,
     FOOTBALL_PATH,
     FOUNDATIONS_PATH,
-    CASES_PATH,
     precheck,
 )
 
@@ -37,11 +37,97 @@ def _base_url(value: str) -> str:
     return clean
 
 
+def _stream_case(
+    client: httpx.Client,
+    *,
+    base_url: str,
+    case: dict[str, object],
+) -> dict[str, object]:
+    prompt = str(case["prompt"])
+    request_payload = {
+        "messages": [{"role": "user", "content": prompt}],
+        "mode": case["mode"],
+        "sport": case.get("sport", "football"),
+        "allow_busy": False,
+    }
+    started = time.perf_counter()
+    first_text_ms: float | None = None
+    meta: dict[str, object] | None = None
+    done: dict[str, object] | None = None
+    answer_parts: list[str] = []
+    charts: list[dict[str, object]] = []
+    stream_error: dict[str, object] | None = None
+
+    with client.stream(
+        "POST",
+        f"{base_url}/chat/stream",
+        json=request_payload,
+    ) as response:
+        status_code = response.status_code
+        if status_code != 200:
+            body = response.read().decode("utf-8", errors="replace")
+            return {
+                "http_status": status_code,
+                "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+                "error": body[:2000],
+            }
+
+        for line in response.iter_lines():
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except ValueError:
+                stream_error = {
+                    "type": "invalid_ndjson",
+                    "message": line[:1000],
+                }
+                break
+            if not isinstance(event, dict):
+                stream_error = {
+                    "type": "invalid_event",
+                    "message": repr(event)[:1000],
+                }
+                break
+            event_type = event.get("type")
+            if event_type == "meta":
+                meta = event
+            elif event_type == "content":
+                content = event.get("content")
+                if isinstance(content, str) and content:
+                    if first_text_ms is None:
+                        first_text_ms = round(
+                            (time.perf_counter() - started) * 1000,
+                            2,
+                        )
+                    answer_parts.append(content)
+            elif event_type == "chart":
+                chart = event.get("chart")
+                if isinstance(chart, dict):
+                    charts.append(chart)
+            elif event_type == "done":
+                done = event
+            elif event_type == "error":
+                stream_error = event
+                break
+
+    return {
+        "http_status": 200,
+        "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+        "first_text_ms": first_text_ms,
+        "meta": meta,
+        "done": done,
+        "answer": "".join(answer_parts),
+        "charts": charts,
+        "stream_error": stream_error,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Ejecuta las baterías de Orion contra el deployment cloud real y adjunta "
-            "diagnóstico end-to-end por caso."
+            "Ejecuta las baterías de Orion contra el deployment cloud real mediante "
+            "el mismo stream NDJSON de la interfaz y adjunta la traza exacta de cada caso."
         )
     )
     parser.add_argument(
@@ -104,6 +190,7 @@ def main() -> int:
             "deep_model": status_payload.get("deep_model"),
         }
 
+        datasets_payload: dict[str, list[dict[str, object]]] = {}
         for dataset in args.datasets:
             cases = _load_cases(dataset)
             if args.limit_per_dataset > 0:
@@ -112,32 +199,24 @@ def main() -> int:
 
             for index, case in enumerate(cases, start=1):
                 prompt = str(case["prompt"])
-                started = time.perf_counter()
-                response = client.post(
-                    f"{base_url}/chat",
-                    json={
-                        "messages": [{"role": "user", "content": prompt}],
-                        "mode": case["mode"],
-                        "allow_busy": False,
-                    },
+                streamed = _stream_case(
+                    client,
+                    base_url=base_url,
+                    case=case,
                 )
-                latency_ms = round((time.perf_counter() - started) * 1000, 2)
                 item: dict[str, object] = {
                     "id": case["id"],
                     "dataset": dataset,
                     "index": index,
-                    "http_status": response.status_code,
-                    "latency_ms": latency_ms,
+                    **streamed,
                 }
 
-                if response.status_code != 200:
+                if streamed.get("http_status") != 200 or streamed.get("stream_error"):
                     infrastructure_errors += 1
-                    item["error"] = response.text[:2000]
                     dataset_results.append(item)
                     continue
 
-                payload = response.json()
-                answer = str(payload.get("content") or "")
+                answer = str(streamed.get("answer") or "")
                 missing_groups, forbidden_hits = precheck(answer, case)
                 quality_ok = not missing_groups and not forbidden_hits
                 if not quality_ok:
@@ -147,32 +226,36 @@ def main() -> int:
                         "quality_precheck_ok": quality_ok,
                         "missing_groups": missing_groups,
                         "forbidden_hits": forbidden_hits,
-                        "answer": answer,
-                        "model": payload.get("model"),
-                        "prompt_tokens": payload.get("prompt_tokens"),
-                        "completion_tokens": payload.get("completion_tokens"),
                     }
                 )
 
-                trace_response = client.get(f"{base_url}/diagnostics/traces/latest")
-                if trace_response.status_code == 200:
-                    trace = trace_response.json()
-                    if trace.get("question") == prompt:
-                        item["trace"] = trace
+                meta = streamed.get("meta")
+                trace_id = meta.get("trace_id") if isinstance(meta, dict) else None
+                if isinstance(trace_id, str) and trace_id:
+                    trace_response = client.get(
+                        f"{base_url}/diagnostics/traces/{trace_id}"
+                    )
+                    if trace_response.status_code == 200:
+                        trace = trace_response.json()
+                        if trace.get("question") == prompt:
+                            item["trace"] = trace
+                        else:
+                            item["trace_warning"] = (
+                                "La traza pedida por ID no coincide con el prompt del caso."
+                            )
                     else:
                         item["trace_warning"] = (
-                            "La última traza no coincide con la pregunta del caso; "
-                            "posible concurrencia externa durante el benchmark."
+                            f"Traza {trace_id} no disponible: HTTP "
+                            f"{trace_response.status_code}."
                         )
                 else:
-                    item["trace_warning"] = (
-                        f"Diagnóstico no disponible: HTTP {trace_response.status_code}."
-                    )
+                    item["trace_warning"] = "El stream no devolvió trace_id."
 
                 dataset_results.append(item)
 
-            report["datasets"][dataset] = dataset_results  # type: ignore[index]
+            datasets_payload[dataset] = dataset_results
 
+    report["datasets"] = datasets_payload
     report["finished_at_epoch"] = time.time()
     report["infrastructure_errors"] = infrastructure_errors
     report["quality_failures"] = quality_failures
@@ -181,9 +264,7 @@ def main() -> int:
         encoding="utf-8",
     )
 
-    total_cases = sum(
-        len(items) for items in report["datasets"].values()  # type: ignore[union-attr]
-    )
+    total_cases = sum(len(items) for items in datasets_payload.values())
     print(f"Evaluación cloud terminada: {total_cases} casos.")
     print(f"Errores de infraestructura: {infrastructure_errors}.")
     print(f"Prechequeos de calidad fallidos: {quality_failures}.")
