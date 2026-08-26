@@ -10,6 +10,7 @@ from backend.app.domain.schemas import ChatRequest, RequestedMode
 from backend.app.providers.model_provider import (
     ModelProvider,
     ModelProviderUnavailableError,
+    ModelResult,
 )
 from backend.app.services.diagnostic_trace import DiagnosticTrace, diagnostic_traces
 from backend.app.services.knowledge_base import KnowledgeDocument
@@ -36,6 +37,16 @@ class ReasoningBundle:
     local_evidence: tuple[LocalEvidence, ...]
     context: str
     selected_mode: SelectedMode
+    trace: DiagnosticTrace | None = None
+
+
+def _record_model_result(
+    trace: DiagnosticTrace | None,
+    stage: str,
+    result: ModelResult,
+) -> None:
+    if trace is not None:
+        trace.record_model_call(stage, result)
 
 
 async def _plan(
@@ -53,6 +64,9 @@ async def _plan(
             web_available=settings.web_enabled,
             documents=documents,
             sport=request.sport,
+            on_model_result=lambda stage, result: _record_model_result(
+                trace, stage, result
+            ),
         )
         if trace is not None:
             trace.record_plan(
@@ -111,6 +125,7 @@ async def _review(
     trace: DiagnosticTrace | None = None,
 ) -> EvidenceReview:
     started = perf_counter()
+    reasoning_effort = "low" if round_number <= 1 else "medium"
     try:
         review = await review_evidence(
             provider,
@@ -118,6 +133,11 @@ async def _review(
             web_sources,
             local_evidence,
             messages=request.messages,
+            reasoning_effort=reasoning_effort,
+            stage_name=f"review_{round_number}",
+            on_model_result=lambda stage, result: _record_model_result(
+                trace, stage, result
+            ),
         )
         if trace is not None:
             trace.record_review(
@@ -168,6 +188,10 @@ async def _search(
     return sources
 
 
+def _normalized_query(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
 async def build_reasoning_bundle(
     provider: ModelProvider,
     request: ChatRequest,
@@ -176,11 +200,7 @@ async def build_reasoning_bundle(
     *,
     trace: DiagnosticTrace | None = None,
 ) -> ReasoningBundle:
-    """Understand, gather evidence and review it before Orion answers.
-
-    Diagnostics record only observable structured decisions, tool results and stage
-    timings. They never record hidden chain-of-thought or provider credentials.
-    """
+    """Understand, gather evidence and review it before Orion answers."""
 
     if trace is None and settings.diagnostics_enabled:
         trace = diagnostic_traces.start(
@@ -198,6 +218,7 @@ async def build_reasoning_bundle(
     local_evidence = collect_local_evidence(
         documents,
         plan,
+        original_user_request=request.messages[-1].content,
         max_characters=settings.semantic_local_context_characters,
     )
     if trace is not None:
@@ -205,16 +226,20 @@ async def build_reasoning_bundle(
 
     web_sources: tuple[WebSource, ...] = ()
     rounds = 0
+    seen_queries: set[str] = set()
 
     if plan.use_web and settings.web_enabled:
         initial_query = plan.web_query or plan.objective
-        rounds = 1
-        web_sources = await _search(
-            initial_query,
-            settings,
-            round_number=rounds,
-            trace=trace,
-        )
+        normalized = _normalized_query(initial_query)
+        if normalized:
+            seen_queries.add(normalized)
+            rounds = 1
+            web_sources = await _search(
+                initial_query,
+                settings,
+                round_number=rounds,
+                trace=trace,
+            )
 
     review_round = max(rounds, 1)
     review = await _review(
@@ -234,9 +259,20 @@ async def build_reasoning_bundle(
         and settings.web_enabled
         and rounds < settings.semantic_max_tool_rounds
     ):
+        follow_up = review.follow_up_web_query
+        normalized = _normalized_query(follow_up)
+        if not normalized or normalized in seen_queries:
+            if trace is not None:
+                trace.record_guard(
+                    "duplicate_web_query_blocked",
+                    "El revisor propuso una consulta idéntica a una ya ejecutada; "
+                    "Orion no consumió otra ronda repitiendo la misma búsqueda.",
+                )
+            break
+        seen_queries.add(normalized)
         rounds += 1
         incoming = await _search(
-            review.follow_up_web_query,
+            follow_up,
             settings,
             round_number=rounds,
             trace=trace,
@@ -272,4 +308,5 @@ async def build_reasoning_bundle(
         local_evidence=local_evidence,
         context=context,
         selected_mode=selected_mode,
+        trace=trace,
     )
