@@ -6,6 +6,7 @@ import json
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from time import perf_counter
 from typing import AsyncIterator
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -31,6 +32,7 @@ from backend.app.providers.model_provider import (
     ModelProviderUnavailableError,
     create_model_provider,
 )
+from backend.app.services.diagnostic_trace import DiagnosticTrace, diagnostic_traces
 from backend.app.services.knowledge_base import (
     KnowledgeBase,
     KnowledgeDocument,
@@ -397,9 +399,23 @@ def _done_event() -> bytes:
             "eval_duration_ms": None,
             "prompt_tokens": None,
             "completion_tokens": None,
+            "reasoning_tokens": None,
+            "finish_reason": None,
+            "reasoning_effort": None,
+            "endpoint": None,
             "tokens_per_second": None,
             "thread_limit": 0,
         }
+    )
+
+
+def _start_trace(request: ChatRequest, enabled: bool) -> DiagnosticTrace | None:
+    if not enabled:
+        return None
+    return diagnostic_traces.start(
+        question=request.messages[-1].content,
+        sport=request.sport.value,
+        requested_mode=request.mode.value,
     )
 
 
@@ -483,15 +499,18 @@ async def system_status() -> StatusResponse:
 async def chat(request: ChatRequest) -> ChatResponse:
     settings = get_settings()
     provider = _provider_or_http_error()
+    trace: DiagnosticTrace | None = None
 
     try:
         if settings.semantic_orchestration:
+            trace = _start_trace(request, settings.diagnostics_enabled)
             await provider.preflight(SelectedMode.QUICK)
             bundle = await build_reasoning_bundle(
                 provider,
                 request,
                 settings,
                 _documents(),
+                trace=trace,
             )
             prepared = await _prepare_selected_chat(
                 request,
@@ -502,15 +521,34 @@ async def chat(request: ChatRequest) -> ChatResponse:
                 preflight_model=True,
             )
             if bundle.plan.needs_clarification and bundle.plan.clarifying_question:
+                if trace is not None:
+                    trace.complete(bundle.plan.clarifying_question)
                 return _direct_response(bundle.plan.clarifying_question, prepared)
             if bundle.review.needs_clarification and bundle.review.clarifying_question:
+                if trace is not None:
+                    trace.complete(bundle.review.clarifying_question)
                 return _direct_response(bundle.review.clarifying_question, prepared)
+            system_prompt = _semantic_prompt(request, prepared, bundle)
+            if trace is not None:
+                trace.record_prompt_metadata(
+                    system_prompt,
+                    request.messages,
+                    template_version=settings.version,
+                )
+            final_started = perf_counter()
             async with _provider_runtime(provider):
                 result = await provider.chat(
                     mode=prepared.selected_mode,
                     messages=request.messages,
-                    system_prompt=_semantic_prompt(request, prepared, bundle),
+                    system_prompt=system_prompt,
                 )
+            if trace is not None:
+                trace.record_model_call(
+                    "final_answer",
+                    result,
+                    duration_ms=(perf_counter() - final_started) * 1000,
+                )
+                trace.complete(result.content)
         else:
             prepared = await _prepare_chat(
                 request,
@@ -531,7 +569,13 @@ async def chat(request: ChatRequest) -> ChatResponse:
         ModelProviderModelError,
         ModelProviderUnavailableError,
     ) as exc:
+        if trace is not None:
+            trace.fail(str(exc))
         raise _provider_http_exception(exc) from exc
+    except Exception as exc:
+        if trace is not None:
+            trace.fail(str(exc))
+        raise
 
     return ChatResponse(
         content=result.content,
@@ -560,8 +604,10 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
     provider = _provider_or_http_error()
 
     async def generate() -> AsyncIterator[bytes]:
+        trace: DiagnosticTrace | None = None
         try:
             if settings.semantic_orchestration:
+                trace = _start_trace(request, settings.diagnostics_enabled)
                 # All potentially slow planning/search work happens inside the stream
                 # generator so the HTTP response is opened before research begins.
                 await provider.preflight(SelectedMode.QUICK)
@@ -570,6 +616,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                     request,
                     settings,
                     _documents(),
+                    trace=trace,
                 )
                 prepared = await _prepare_selected_chat(
                     request,
@@ -587,6 +634,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                         "recommendation_reason": prepared.recommendation_reason,
                         "model": prepared.model,
                         "sport": prepared.sport.value,
+                        "trace_id": trace.trace_id if trace is not None else None,
                     }
                 )
                 clarification = None
@@ -596,17 +644,37 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                     clarification = bundle.review.clarifying_question or clarification
                 if clarification:
                     yield _ndjson({"type": "content", "content": clarification})
+                    if trace is not None:
+                        trace.complete(clarification)
                     yield _done_event()
                     return
+
+                system_prompt = _semantic_prompt(request, prepared, bundle)
+                if trace is not None:
+                    trace.record_prompt_metadata(
+                        system_prompt,
+                        request.messages,
+                        template_version=settings.version,
+                    )
+                visible_parts: list[str] = []
+                final_started = perf_counter()
                 async with _provider_runtime(provider):
                     async for event in provider.chat_stream(
                         mode=prepared.selected_mode,
                         messages=request.messages,
-                        system_prompt=_semantic_prompt(request, prepared, bundle),
+                        system_prompt=system_prompt,
                     ):
                         if event.content:
+                            visible_parts.append(event.content)
                             yield _ndjson({"type": "content", "content": event.content})
                         if event.done:
+                            if trace is not None:
+                                trace.record_model_call(
+                                    "final_answer",
+                                    event,
+                                    duration_ms=(perf_counter() - final_started) * 1000,
+                                )
+                                trace.complete("".join(visible_parts))
                             yield _ndjson(
                                 {
                                     "type": "done",
@@ -616,6 +684,10 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                                     "eval_duration_ms": event.eval_duration_ms,
                                     "prompt_tokens": event.prompt_tokens,
                                     "completion_tokens": event.completion_tokens,
+                                    "reasoning_tokens": event.reasoning_tokens,
+                                    "finish_reason": event.finish_reason,
+                                    "reasoning_effort": event.reasoning_effort,
+                                    "endpoint": event.endpoint,
                                     "tokens_per_second": event.tokens_per_second,
                                     "thread_limit": event.thread_limit,
                                 }
@@ -664,13 +736,21 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                                 "eval_duration_ms": event.eval_duration_ms,
                                 "prompt_tokens": event.prompt_tokens,
                                 "completion_tokens": event.completion_tokens,
+                                "reasoning_tokens": event.reasoning_tokens,
+                                "finish_reason": event.finish_reason,
+                                "reasoning_effort": event.reasoning_effort,
+                                "endpoint": event.endpoint,
                                 "tokens_per_second": event.tokens_per_second,
                                 "thread_limit": event.thread_limit,
                             }
                         )
         except asyncio.CancelledError:
+            if trace is not None:
+                trace.fail("Solicitud cancelada por el cliente.")
             raise
         except ModelProviderModelError as exc:
+            if trace is not None:
+                trace.fail(str(exc))
             yield _ndjson(
                 {
                     "type": "error",
@@ -679,6 +759,8 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                 }
             )
         except ModelProviderConfigurationError as exc:
+            if trace is not None:
+                trace.fail(str(exc))
             yield _ndjson(
                 {
                     "type": "error",
@@ -687,6 +769,8 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                 }
             )
         except ModelProviderUnavailableError as exc:
+            if trace is not None:
+                trace.fail(str(exc))
             yield _ndjson(
                 {
                     "type": "error",
@@ -694,6 +778,10 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                     "message": str(exc),
                 }
             )
+        except Exception as exc:
+            if trace is not None:
+                trace.fail(str(exc))
+            raise
 
     return StreamingResponse(
         generate(),
