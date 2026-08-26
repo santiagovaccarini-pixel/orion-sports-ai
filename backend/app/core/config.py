@@ -84,14 +84,14 @@ class Settings:
     cloudflare_deep_model: str = "@cf/openai/gpt-oss-120b"
     cloudflare_quick_reasoning_effort: str = "low"
     cloudflare_deep_reasoning_effort: str = "medium"
-    # Cloud gpt-oss needs a larger shared reasoning/output budget than local Ollama.
     cloudflare_quick_max_tokens: int = 1536
     cloudflare_deep_max_tokens: int = 3072
     quick_context: int = 4096
     deep_context: int = 8192
     quick_threads: int = 8
     deep_threads: int = 8
-    # Local Ollama budgets remain unchanged; cloud has independent settings above.
+    # Ollama keeps its previous budgets. When settings are loaded for Cloudflare,
+    # get_settings maps the independent cloud budget into these transport fields.
     quick_max_tokens: int = 768
     deep_max_tokens: int = 1536
     quick_history_characters: int = 12_000
@@ -114,6 +114,15 @@ class Settings:
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
+    provider = _read_provider()
+    cloud_quick_max_tokens = _read_positive_int(
+        "ORION_CLOUDFLARE_QUICK_MAX_TOKENS", 1536
+    )
+    cloud_deep_max_tokens = _read_positive_int(
+        "ORION_CLOUDFLARE_DEEP_MAX_TOKENS", 3072
+    )
+    local_quick_max_tokens = _read_positive_int("ORION_QUICK_MAX_TOKENS", 768)
+    local_deep_max_tokens = _read_positive_int("ORION_DEEP_MAX_TOKENS", 1536)
     origins = tuple(
         item.strip()
         for item in os.getenv("ORION_CORS_ORIGINS", "").split(",")
@@ -122,7 +131,7 @@ def get_settings() -> Settings:
     return Settings(
         host=os.getenv("ORION_HOST", "127.0.0.1"),
         port=_read_int("ORION_PORT", 8765),
-        model_provider=_read_provider(),
+        model_provider=provider,
         ollama_base_url=os.getenv(
             "ORION_OLLAMA_URL", "http://127.0.0.1:11434"
         ).rstrip("/"),
@@ -142,18 +151,18 @@ def get_settings() -> Settings:
         cloudflare_deep_reasoning_effort=_read_reasoning_effort(
             "ORION_CLOUDFLARE_DEEP_REASONING_EFFORT", "medium"
         ),
-        cloudflare_quick_max_tokens=_read_positive_int(
-            "ORION_CLOUDFLARE_QUICK_MAX_TOKENS", 1536
-        ),
-        cloudflare_deep_max_tokens=_read_positive_int(
-            "ORION_CLOUDFLARE_DEEP_MAX_TOKENS", 3072
-        ),
+        cloudflare_quick_max_tokens=cloud_quick_max_tokens,
+        cloudflare_deep_max_tokens=cloud_deep_max_tokens,
         quick_context=_read_positive_int("ORION_QUICK_CONTEXT", 4096),
         deep_context=_read_positive_int("ORION_DEEP_CONTEXT", 8192),
         quick_threads=_read_positive_int("ORION_QUICK_THREADS", 8),
         deep_threads=_read_positive_int("ORION_DEEP_THREADS", 8),
-        quick_max_tokens=_read_positive_int("ORION_QUICK_MAX_TOKENS", 768),
-        deep_max_tokens=_read_positive_int("ORION_DEEP_MAX_TOKENS", 1536),
+        quick_max_tokens=(
+            cloud_quick_max_tokens if provider == "cloudflare" else local_quick_max_tokens
+        ),
+        deep_max_tokens=(
+            cloud_deep_max_tokens if provider == "cloudflare" else local_deep_max_tokens
+        ),
         quick_history_characters=_read_positive_int(
             "ORION_QUICK_HISTORY_CHARACTERS", 12_000
         ),
