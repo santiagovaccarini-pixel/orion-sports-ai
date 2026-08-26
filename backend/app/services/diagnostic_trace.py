@@ -26,6 +26,19 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _source_payload(source: object, source_id: str) -> dict[str, str]:
+    return {
+        "source_id": source_id,
+        "title": _clip(str(getattr(source, "title", "")), 500),
+        "url": str(getattr(source, "url", "")),
+        "domain": str(getattr(source, "domain", "")),
+        "excerpt": _clip(
+            str(getattr(source, "excerpt", "")),
+            MAX_SOURCE_EXCERPT_CHARACTERS,
+        ),
+    }
+
+
 @dataclass(slots=True)
 class DiagnosticTrace:
     """Observable execution trace for Orion development diagnostics.
@@ -123,20 +136,14 @@ class DiagnosticTrace:
                     "round": round_number,
                     "query": _clip(query, 2_000),
                     "duration_ms": round(duration_ms, 2),
-                    "sources": [
-                        {
-                            "source_id": f"W{index}",
-                            "title": _clip(str(getattr(source, "title", "")), 500),
-                            "url": str(getattr(source, "url", "")),
-                            "domain": str(getattr(source, "domain", "")),
-                            "excerpt": _clip(
-                                str(getattr(source, "excerpt", "")),
-                                MAX_SOURCE_EXCERPT_CHARACTERS,
-                            ),
-                        }
+                    "raw_results": [
+                        _source_payload(source, f"R{round_number}.{index}")
                         for index, source in enumerate(sources, start=1)
                     ],
                 }
+            )
+            self.timings_ms["web_search_total"] = round(
+                sum(float(item["duration_ms"]) for item in self.searches), 2
             )
 
     def record_review(
@@ -146,6 +153,7 @@ class DiagnosticTrace:
         round_number: int,
         fallback: bool,
         duration_ms: float,
+        web_sources: Sequence[object] = (),
         error: str | None = None,
     ) -> None:
         with self._lock:
@@ -175,6 +183,10 @@ class DiagnosticTrace:
                         review, "clarifying_question", None
                     ),
                     "resolved_scope": getattr(review, "resolved_scope", None),
+                    "source_catalog": [
+                        _source_payload(source, f"W{index}")
+                        for index, source in enumerate(web_sources, start=1)
+                    ],
                 }
             )
             self.timings_ms["review_total"] = round(
