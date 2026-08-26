@@ -11,7 +11,6 @@ from backend.app.providers.model_provider import (
     ModelProvider,
     ModelProviderUnavailableError,
 )
-from backend.app.services.diagnostic_context import activate_final_trace
 from backend.app.services.diagnostic_trace import DiagnosticTrace, diagnostic_traces
 from backend.app.services.knowledge_base import KnowledgeDocument
 from backend.app.services.semantic_orchestrator import (
@@ -265,7 +264,6 @@ async def build_reasoning_bundle(
             "reasoning_bundle_total",
             (perf_counter() - pipeline_started) * 1000,
         )
-        activate_final_trace(trace)
 
     return ReasoningBundle(
         plan=plan,
