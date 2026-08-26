@@ -10,13 +10,14 @@ from backend.app.core.identity import (
 
 
 class OrionIdentityTests(unittest.TestCase):
-    def test_explicit_orion_creator_question_returns_santiago_profile(self) -> None:
+    def test_explicit_orion_creator_question_returns_creator_without_unvalidated_career(self) -> None:
         answer = direct_creator_answer("¿Quién creó Orion?")
         self.assertIsNotNone(answer)
         assert answer is not None
         self.assertIn(ORION_CREATOR_NAME, answer)
-        self.assertIn("Universidad de la Empresa", answer)
-        self.assertIn("Club Atlético Los Andes", answer)
+        self.assertIn("pendiente de validación", answer)
+        self.assertNotIn("Universidad de la Empresa", answer)
+        self.assertNotIn("Club Atlético Los Andes", answer)
 
     def test_equivalent_self_creator_question_is_supported(self) -> None:
         answer = direct_creator_answer("¿Quién te creó?")
