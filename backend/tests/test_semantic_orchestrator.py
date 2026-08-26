@@ -52,6 +52,7 @@ class SemanticOrchestratorTests(unittest.TestCase):
               "references": [],
               "information_needed": ["estadística actual verificable"],
               "ambiguities": [],
+              "evidence_policy": "external",
               "use_web": true,
               "use_local_data": false,
               "use_calculator": false,
@@ -66,6 +67,7 @@ class SemanticOrchestratorTests(unittest.TestCase):
             """
         )
         self.assertTrue(plan.use_web)
+        self.assertEqual(plan.evidence_policy, "external")
         self.assertFalse(plan.use_local_data)
         self.assertEqual(plan.recommended_mode, SelectedMode.QUICK)
         self.assertEqual(plan.entities, ("Jugador A",))
@@ -74,13 +76,26 @@ class SemanticOrchestratorTests(unittest.TestCase):
         with self.assertRaises(SemanticOrchestrationError):
             parse_semantic_plan("esto no es json")
 
+    def test_rejects_missing_evidence_policy(self) -> None:
+        with self.assertRaises(SemanticOrchestrationError):
+            parse_semantic_plan(
+                """
+                {"objective":"probar","entities":[],"constraints":[],"references":[],
+                 "information_needed":[],"ambiguities":[],"use_web":false,
+                 "use_local_data":false,"use_calculator":false,"use_chart":false,
+                 "needs_clarification":false,"clarifying_question":null,"web_query":null,
+                 "local_document_names":[],"recommended_mode":"quick","reason":"prueba"}
+                """
+            )
+
     def test_rejects_string_boolean_instead_of_treating_false_as_true(self) -> None:
         with self.assertRaises(SemanticOrchestrationError):
             parse_semantic_plan(
                 """
                 {"objective":"probar parseo","entities":[],"constraints":[],
                  "references":[],"information_needed":[],"ambiguities":[],
-                 "use_web":"false","use_local_data":false,"use_calculator":false,
+                 "evidence_policy":"model_knowledge","use_web":"false",
+                 "use_local_data":false,"use_calculator":false,
                  "use_chart":false,"needs_clarification":false,
                  "clarifying_question":null,"web_query":null,"local_document_names":[],
                  "recommended_mode":"quick","reason":"prueba"}
@@ -93,11 +108,11 @@ class SemanticOrchestratorTests(unittest.TestCase):
                 """
                 {"objective":"comparar el período anterior con cinco partidos","entities":[],
                 "constraints":["cinco partidos"],"references":["lo mismo"],
-                "information_needed":[],"ambiguities":[],"use_web":false,
-                "use_local_data":true,"use_calculator":false,"use_chart":false,
-                "needs_clarification":false,"clarifying_question":null,"web_query":null,
-                "local_document_names":["gps.csv"],"recommended_mode":"deep",
-                "reason":"requiere conservar el contexto previo"}
+                "information_needed":[],"ambiguities":[],"evidence_policy":"local",
+                "use_web":false,"use_local_data":true,"use_calculator":false,
+                "use_chart":false,"needs_clarification":false,"clarifying_question":null,
+                "web_query":null,"local_document_names":["gps.csv"],
+                "recommended_mode":"deep","reason":"requiere conservar el contexto previo"}
                 """
             ]
         )
@@ -119,9 +134,11 @@ class SemanticOrchestratorTests(unittest.TestCase):
         )
         self.assertEqual(plan.constraints, ("cinco partidos",))
         self.assertTrue(plan.use_local_data)
+        self.assertEqual(plan.evidence_policy, "local")
         sent_messages = provider.calls[0]["messages"]
         self.assertEqual(len(sent_messages), len(messages))
         self.assertIn("Catálogo de documentos", provider.calls[0]["system_prompt"])
+        self.assertEqual(provider.calls[0]["reasoning_effort"], "low")
 
     def test_conservative_fallback_does_not_classify_by_terms(self) -> None:
         messages = [ChatMessage(role="user", content="Una pregunta totalmente nueva")]
@@ -132,29 +149,50 @@ class SemanticOrchestratorTests(unittest.TestCase):
         )
         self.assertTrue(plan.use_web)
         self.assertTrue(plan.use_local_data)
+        self.assertEqual(plan.evidence_policy, "mixed")
         self.assertEqual(plan.web_query, messages[-1].content)
 
-    def test_local_evidence_uses_model_selected_document_names(self) -> None:
+    def test_local_evidence_uses_selected_document_and_relevant_chunk_not_prefix(self) -> None:
         plan = parse_semantic_plan(
             """
-            {"objective":"analizar datos locales","entities":[],"constraints":[],
-             "references":[],"information_needed":[],"ambiguities":[],"use_web":false,
-             "use_local_data":true,"use_calculator":false,"use_chart":false,
-             "needs_clarification":false,"clarifying_question":null,"web_query":null,
-             "local_document_names":["b.csv"],"recommended_mode":"quick","reason":"datos locales"}
+            {"objective":"encontrar el valor ZETA del jugador objetivo","entities":["Jugador B"],
+             "constraints":[],"references":[],"information_needed":["ZETA"],"ambiguities":[],
+             "evidence_policy":"local","use_web":false,"use_local_data":true,
+             "use_calculator":false,"use_chart":false,"needs_clarification":false,
+             "clarifying_question":null,"web_query":null,"local_document_names":["b.csv"],
+             "recommended_mode":"quick","reason":"datos locales"}
             """
         )
+        rows = ["Player,Metric"]
+        rows.extend(f"Jugador {index},dato-{index}" for index in range(100))
+        rows.append("Jugador B,ZETA=98765")
+        document = KnowledgeDocument("2", "b.csv", "\n".join(rows))
         evidence = collect_local_evidence(
-            [
-                KnowledgeDocument("1", "a.csv", "A" * 30),
-                KnowledgeDocument("2", "b.csv", "B" * 30),
-            ],
+            [KnowledgeDocument("1", "a.csv", "irrelevante"), document],
             plan,
-            max_characters=20,
+            original_user_request="¿Cuál es ZETA para Jugador B?",
+            max_characters=4_000,
         )
-        self.assertEqual(len(evidence), 1)
-        self.assertEqual(evidence[0].document_name, "b.csv")
-        self.assertTrue(evidence[0].truncated)
+        self.assertTrue(evidence)
+        self.assertTrue(all(item.document_name == "b.csv" for item in evidence))
+        self.assertTrue(any("98765" in item.content for item in evidence))
+
+    def test_model_knowledge_policy_does_not_force_empty_evidence_failure(self) -> None:
+        plan = parse_semantic_plan(
+            """
+            {"objective":"explicar un concepto estable","entities":[],"constraints":[],
+             "references":[],"information_needed":[],"ambiguities":[],
+             "evidence_policy":"model_knowledge","use_web":false,"use_local_data":false,
+             "use_calculator":false,"use_chart":false,"needs_clarification":false,
+             "clarifying_question":null,"web_query":null,"local_document_names":[],
+             "recommended_mode":"quick","reason":"conocimiento general estable"}
+            """
+        )
+        provider = FakePlanningProvider([])
+        review = asyncio.run(review_evidence(provider, plan, [], []))
+        self.assertTrue(review.sufficient)
+        self.assertEqual(provider.calls, [])
+        self.assertIn("Conocimiento general estable", review.resolved_scope or "")
 
     def test_review_checks_scope_instead_of_requiring_fixed_source_count(self) -> None:
         review = parse_evidence_review(
@@ -208,8 +246,8 @@ class SemanticOrchestratorTests(unittest.TestCase):
             """
             {"objective":"dato de la temporada actual","entities":["Entidad"],
              "constraints":["temporada actual"],"references":[],
-             "information_needed":["dato"],"ambiguities":[],"use_web":true,
-             "use_local_data":false,"use_calculator":false,"use_chart":false,
+             "information_needed":["dato"],"ambiguities":[],"evidence_policy":"external",
+             "use_web":true,"use_local_data":false,"use_calculator":false,"use_chart":false,
              "needs_clarification":false,"clarifying_question":null,
              "web_query":"dato temporada actual entidad","local_document_names":[],
              "recommended_mode":"quick","reason":"plan deliberadamente más estrecho"}
