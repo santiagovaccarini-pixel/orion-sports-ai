@@ -22,6 +22,14 @@ services:
         value: "@cf/openai/gpt-oss-120b"
       - key: ORION_CLOUDFLARE_DEEP_MODEL
         value: "@cf/openai/gpt-oss-120b"
+      - key: ORION_CLOUDFLARE_QUICK_REASONING_EFFORT
+        value: "low"
+      - key: ORION_CLOUDFLARE_DEEP_REASONING_EFFORT
+        value: "medium"
+      - key: ORION_CLOUDFLARE_QUICK_MAX_TOKENS
+        value: "1536"
+      - key: ORION_CLOUDFLARE_DEEP_MAX_TOKENS
+        value: "3072"
       - key: ORION_WEB_ENABLED
         value: "true"
       - key: ORION_WEB_PROVIDER
@@ -33,6 +41,6 @@ services:
       - key: ORION_SEMANTIC_ORCHESTRATION
         value: "true"
       - key: ORION_SEMANTIC_MAX_TOOL_ROUNDS
-        value: "2"
+        value: "3"
       - key: ORION_DIAGNOSTICS_ENABLED
         value: "true"
