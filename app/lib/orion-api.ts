@@ -95,6 +95,7 @@ export type DiagnosticPlan = {
   references: string[];
   information_needed: string[];
   ambiguities: string[];
+  evidence_policy: "model_knowledge" | "external" | "local" | "mixed" | null;
   use_web: boolean;
   use_local_data: boolean;
   use_calculator: boolean;
@@ -104,6 +105,18 @@ export type DiagnosticPlan = {
   web_query: string | null;
   local_document_names: string[];
   recommended_mode: SelectedMode | null;
+};
+
+export type DiagnosticModelCall = {
+  stage: string;
+  model: string | null;
+  endpoint: string | null;
+  reasoning_effort: string | null;
+  finish_reason: string | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  reasoning_tokens: number | null;
+  duration_ms: number | null;
 };
 
 export type DiagnosticTrace = {
@@ -121,11 +134,22 @@ export type DiagnosticTrace = {
   local_evidence: Array<{
     source_id: string;
     document_name: string;
+    chunk_index: number | null;
     truncated: boolean;
     excerpt: string;
   }>;
   searches: DiagnosticSearch[];
   reviews: DiagnosticReview[];
+  model_calls: DiagnosticModelCall[];
+  guard_events: Array<{ event: string; detail: string }>;
+  prompt_metadata: {
+    template_version: string;
+    system_prompt_sha256: string;
+    system_prompt_characters: number;
+    message_count: number;
+    message_characters: number;
+    full_prompt_recorded: boolean;
+  } | null;
   timings_ms: Record<string, number>;
   final_answer: string | null;
   error: string | null;
@@ -134,6 +158,7 @@ export type DiagnosticTrace = {
     max_traces: number;
     hidden_chain_of_thought_recorded: boolean;
     credentials_recorded: boolean;
+    full_prompt_recorded?: boolean;
   };
 };
 
@@ -161,6 +186,7 @@ export type ChatStreamMeta = {
   recommended_mode: SelectedMode;
   recommendation_reason: string;
   model: string;
+  trace_id?: string | null;
 };
 
 export type ChatStreamDone = {
@@ -171,6 +197,10 @@ export type ChatStreamDone = {
   eval_duration_ms: number | null;
   prompt_tokens: number | null;
   completion_tokens: number | null;
+  reasoning_tokens?: number | null;
+  finish_reason?: string | null;
+  reasoning_effort?: string | null;
+  endpoint?: string | null;
   tokens_per_second: number | null;
   thread_limit: number;
 };
