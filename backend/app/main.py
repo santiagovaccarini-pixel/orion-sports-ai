@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.app.api.diagnostics import router as diagnostics_router
 from backend.app.api.routes import router
 from backend.app.core.config import get_settings
 from backend.app.services.resource_guard import lower_process_priority
@@ -37,6 +38,7 @@ app.add_middleware(
     allow_headers=["Content-Type", "X-Orion-Api-Key"],
 )
 app.include_router(router, prefix="/api/v1")
+app.include_router(diagnostics_router, prefix="/api/v1")
 
 
 @app.get("/")
