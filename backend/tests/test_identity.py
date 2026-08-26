@@ -26,6 +26,8 @@ class OrionIdentityTests(unittest.TestCase):
 
     def test_engine_creator_question_is_not_falsely_attributed_to_santiago(self) -> None:
         self.assertIsNone(direct_creator_answer("¿Quién creó el motor que usás?"))
+        self.assertIsNone(direct_creator_answer("¿Quién creó el motor de Orion?"))
+        self.assertIsNone(direct_creator_answer("¿Quién creó el modelo gpt-oss que usa Orion?"))
 
     def test_identity_context_explicitly_distinguishes_orion_from_external_models(self) -> None:
         context = creator_context()
