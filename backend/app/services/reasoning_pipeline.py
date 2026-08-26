@@ -7,11 +7,7 @@ from typing import Sequence
 from backend.app.core.config import Settings
 from backend.app.domain.models import SelectedMode
 from backend.app.domain.schemas import ChatRequest, RequestedMode
-from backend.app.providers.model_provider import (
-    ModelProvider,
-    ModelProviderUnavailableError,
-    ModelResult,
-)
+from backend.app.providers.model_provider import ModelProvider, ModelResult
 from backend.app.services.diagnostic_trace import DiagnosticTrace, diagnostic_traces
 from backend.app.services.knowledge_base import KnowledgeDocument
 from backend.app.services.semantic_orchestrator import (
@@ -75,7 +71,7 @@ async def _plan(
                 duration_ms=(perf_counter() - started) * 1000,
             )
         return plan
-    except (SemanticOrchestrationError, ModelProviderUnavailableError) as exc:
+    except SemanticOrchestrationError as exc:
         plan = conservative_fallback_plan(
             request.messages,
             web_available=settings.web_enabled,
@@ -109,7 +105,7 @@ def _fallback_review(plan: SemanticPlan) -> EvidenceReview:
         resolved_scope=None,
         reason=(
             "Fallback conservador de revisión: ninguna fuente queda validada "
-            "automáticamente cuando falla la etapa crítica."
+            "automáticamente cuando falla el parseo estructurado."
         ),
     )
 
@@ -148,7 +144,7 @@ async def _review(
                 web_sources=web_sources,
             )
         return review
-    except (SemanticOrchestrationError, ModelProviderUnavailableError) as exc:
+    except SemanticOrchestrationError as exc:
         review = _fallback_review(plan)
         if trace is not None:
             trace.record_review(
