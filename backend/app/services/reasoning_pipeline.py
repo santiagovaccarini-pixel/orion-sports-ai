@@ -23,6 +23,7 @@ from backend.app.services.semantic_orchestrator import (
     review_evidence,
 )
 from backend.app.services.semantic_tools import execute_calculation, execute_csv_operation
+from backend.app.services.web_reader import MAX_READ_PAGES, apply_page_reads, read_source_pages
 from backend.app.services.web_research import WebSource, research
 
 
@@ -192,6 +193,76 @@ def _normalized_query(value: str) -> str:
     return " ".join(value.casefold().split())
 
 
+def _web_read_candidates(
+    review: EvidenceReview,
+    *,
+    attempted_source_ids: set[str],
+    remaining: int,
+) -> tuple[str, ...]:
+    """Use the semantic reviewer's relevance decision to choose pages to open."""
+
+    if remaining <= 0:
+        return ()
+    selected: list[str] = []
+    for raw_source_id in review.relevant_source_ids:
+        source_id = raw_source_id.strip().upper()
+        if not source_id.startswith("W") or source_id in attempted_source_ids:
+            continue
+        suffix = source_id[1:]
+        if not suffix.isdigit() or int(suffix) < 1:
+            continue
+        selected.append(source_id)
+        if len(selected) >= remaining:
+            break
+    return tuple(selected)
+
+
+async def _deepen_relevant_web_sources(
+    request: ChatRequest,
+    review: EvidenceReview,
+    web_sources: tuple[WebSource, ...],
+    *,
+    attempted_source_ids: set[str],
+    trace: DiagnosticTrace | None,
+) -> tuple[tuple[WebSource, ...], bool]:
+    remaining = MAX_READ_PAGES - len(attempted_source_ids)
+    candidates = _web_read_candidates(
+        review,
+        attempted_source_ids=attempted_source_ids,
+        remaining=remaining,
+    )
+    if not candidates:
+        return web_sources, False
+
+    attempted_source_ids.update(candidates)
+    started = perf_counter()
+    reads = await read_source_pages(
+        web_sources,
+        source_ids=candidates,
+        query=request.messages[-1].content,
+        max_pages=remaining,
+    )
+    duration_ms = (perf_counter() - started) * 1000
+    if trace is not None:
+        previous = trace.timings_ms.get("web_read_total", 0.0)
+        trace.set_timing("web_read_total", previous + duration_ms)
+        if reads:
+            trace.record_guard(
+                "web_read_completed",
+                "Orion abrió directamente las páginas seleccionadas por el revisor: "
+                + ", ".join(read.source_id for read in reads),
+            )
+        else:
+            trace.record_guard(
+                "web_read_unavailable",
+                "No se pudo extraer contenido directo de las fuentes seleccionadas: "
+                + ", ".join(candidates),
+            )
+    if not reads:
+        return web_sources, False
+    return apply_page_reads(web_sources, reads), True
+
+
 def _execute_semantic_tools(
     plan: SemanticPlan,
     documents: Sequence[KnowledgeDocument],
@@ -255,7 +326,7 @@ async def build_reasoning_bundle(
     *,
     trace: DiagnosticTrace | None = None,
 ) -> ReasoningBundle:
-    """Understand, gather evidence, execute deterministic tools and review it."""
+    """Understand, gather evidence, deepen relevant pages, execute tools and review."""
 
     if trace is None and settings.diagnostics_enabled:
         trace = diagnostic_traces.start(
@@ -284,23 +355,25 @@ async def build_reasoning_bundle(
         trace.record_local_evidence(review_evidence_items)
 
     web_sources: tuple[WebSource, ...] = ()
-    rounds = 0
+    search_rounds = 0
+    review_round = 0
     seen_queries: set[str] = set()
+    attempted_page_reads: set[str] = set()
 
     if plan.use_web and settings.web_enabled:
         initial_query = plan.web_query or plan.objective
         normalized = _normalized_query(initial_query)
         if normalized:
             seen_queries.add(normalized)
-            rounds = 1
+            search_rounds = 1
             web_sources = await _search(
                 initial_query,
                 settings,
-                round_number=rounds,
+                round_number=search_rounds,
                 trace=trace,
             )
 
-    review_round = max(rounds, 1)
+    review_round += 1
     review = await _review(
         provider,
         request,
@@ -311,14 +384,38 @@ async def build_reasoning_bundle(
         trace=trace,
     )
 
-    while (
-        not review.sufficient
-        and not review.needs_clarification
-        and review.follow_up_web_query
-        and settings.web_enabled
-        and rounds < settings.semantic_max_tool_rounds
-    ):
+    while not review.sufficient and not review.needs_clarification:
+        # Before spending another search query, deepen only the web results that the
+        # semantic reviewer itself marked relevant. This makes page opening model-led
+        # while Python remains responsible for bounded/safe network execution.
+        if web_sources and len(attempted_page_reads) < MAX_READ_PAGES:
+            web_sources, deepened = await _deepen_relevant_web_sources(
+                request,
+                review,
+                web_sources,
+                attempted_source_ids=attempted_page_reads,
+                trace=trace,
+            )
+            if deepened:
+                review_round += 1
+                review = await _review(
+                    provider,
+                    request,
+                    plan,
+                    web_sources,
+                    review_evidence_items,
+                    round_number=review_round,
+                    trace=trace,
+                )
+                continue
+
         follow_up = review.follow_up_web_query
+        if (
+            not follow_up
+            or not settings.web_enabled
+            or search_rounds >= settings.semantic_max_tool_rounds
+        ):
+            break
         normalized = _normalized_query(follow_up)
         if not normalized or normalized in seen_queries:
             if trace is not None:
@@ -329,21 +426,22 @@ async def build_reasoning_bundle(
                 )
             break
         seen_queries.add(normalized)
-        rounds += 1
+        search_rounds += 1
         incoming = await _search(
             follow_up,
             settings,
-            round_number=rounds,
+            round_number=search_rounds,
             trace=trace,
         )
         web_sources = merge_web_sources(web_sources, incoming)
+        review_round += 1
         review = await _review(
             provider,
             request,
             plan,
             web_sources,
             review_evidence_items,
-            round_number=rounds,
+            round_number=review_round,
             trace=trace,
         )
 
