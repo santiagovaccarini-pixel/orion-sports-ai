@@ -53,6 +53,13 @@ class DeploymentConfigTests(unittest.TestCase):
             content,
         )
 
+    def test_cloud_prototype_enables_ephemeral_diagnostics(self) -> None:
+        content = RENDER_YAML.read_text(encoding="utf-8")
+        self.assertIn(
+            "- key: ORION_DIAGNOSTICS_ENABLED\n        value: \"true\"",
+            content,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
