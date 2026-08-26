@@ -11,6 +11,7 @@ from backend.app.core.config import Settings
 from backend.app.domain.models import SelectedMode
 from backend.app.main import app
 from backend.app.providers.model_provider import ModelProviderStatus, ModelStreamEvent
+from backend.app.services.diagnostic_trace import diagnostic_traces
 from backend.app.services.reasoning_pipeline import ReasoningBundle
 from backend.app.services.semantic_orchestrator import EvidenceReview, SemanticPlan
 
@@ -47,6 +48,10 @@ class RecordingCloudProvider:
             model="semantic-test-model",
             prompt_tokens=100,
             completion_tokens=20,
+            reasoning_tokens=7,
+            finish_reason="completed",
+            reasoning_effort="low",
+            endpoint="responses",
         )
 
 
@@ -92,11 +97,15 @@ def semantic_bundle() -> ReasoningBundle:
 
 
 class SemanticStreamRouteTests(unittest.TestCase):
+    def setUp(self) -> None:
+        diagnostic_traces.clear()
+
     def test_semantic_stream_uses_model_plan_and_skips_legacy_web_router(self) -> None:
         provider = RecordingCloudProvider()
         settings = Settings(
             model_provider="cloudflare",
             semantic_orchestration=True,
+            diagnostics_enabled=True,
             web_enabled=True,
         )
         with (
@@ -123,8 +132,11 @@ class SemanticStreamRouteTests(unittest.TestCase):
         events = [json.loads(line) for line in response.text.splitlines()]
         self.assertEqual(events[0]["selected_mode"], "deep")
         self.assertEqual(events[0]["recommended_mode"], "deep")
+        self.assertTrue(events[0]["trace_id"].startswith("orion-"))
         self.assertEqual(events[1]["content"], "Respuesta semántica")
         self.assertEqual(events[-1]["type"], "done")
+        self.assertEqual(events[-1]["finish_reason"], "completed")
+        self.assertEqual(events[-1]["reasoning_tokens"], 7)
         build_bundle.assert_awaited_once()
         legacy_web.assert_not_awaited()
         self.assertIsNotNone(provider.stream_kwargs)
@@ -132,6 +144,18 @@ class SemanticStreamRouteTests(unittest.TestCase):
             "CONTEXTO SEMÁNTICO DE PRUEBA",
             provider.stream_kwargs["system_prompt"],
         )
+
+        trace = diagnostic_traces.latest()
+        self.assertIsNotNone(trace)
+        assert trace is not None
+        snapshot = trace.snapshot()
+        self.assertEqual(snapshot["status"], "completed")
+        self.assertEqual(snapshot["final_answer"], "Respuesta semántica")
+        self.assertEqual(snapshot["model_calls"][-1]["stage"], "final_answer")
+        self.assertEqual(snapshot["model_calls"][-1]["reasoning_tokens"], 7)
+        self.assertEqual(snapshot["model_calls"][-1]["finish_reason"], "completed")
+        self.assertIsNotNone(snapshot["prompt_metadata"])
+        self.assertFalse(snapshot["privacy"]["hidden_chain_of_thought_recorded"])
 
     def test_semantic_plan_can_ask_clarification_without_final_generation(self) -> None:
         provider = RecordingCloudProvider()
@@ -149,7 +173,11 @@ class SemanticStreamRouteTests(unittest.TestCase):
             context=bundle.context,
             selected_mode=SelectedMode.DEEP,
         )
-        settings = Settings(model_provider="cloudflare", semantic_orchestration=True)
+        settings = Settings(
+            model_provider="cloudflare",
+            semantic_orchestration=True,
+            diagnostics_enabled=True,
+        )
         with (
             patch("backend.app.api.routes.get_settings", return_value=settings),
             patch("backend.app.api.routes._provider_or_http_error", return_value=provider),
@@ -168,6 +196,10 @@ class SemanticStreamRouteTests(unittest.TestCase):
         events = [json.loads(line) for line in response.text.splitlines()]
         self.assertEqual(events[1]["content"], "¿A qué período te referís?")
         self.assertIsNone(provider.stream_kwargs)
+        trace = diagnostic_traces.latest()
+        self.assertIsNotNone(trace)
+        assert trace is not None
+        self.assertEqual(trace.snapshot()["status"], "completed")
 
 
 if __name__ == "__main__":
