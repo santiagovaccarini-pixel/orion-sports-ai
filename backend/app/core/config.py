@@ -107,7 +107,7 @@ class Settings:
     web_minimum_sources: int = 4
     web_allowed_domains: tuple[str, ...] = DEFAULT_ALLOWED_DOMAINS
     semantic_orchestration: bool = False
-    semantic_max_tool_rounds: int = 2
+    semantic_max_tool_rounds: int = 3
     semantic_local_context_characters: int = 12_000
     diagnostics_enabled: bool = False
     cors_origins: tuple[str, ...] = DEFAULT_CORS_ORIGINS
@@ -188,7 +188,7 @@ def get_settings() -> Settings:
         or DEFAULT_ALLOWED_DOMAINS,
         semantic_orchestration=_read_bool("ORION_SEMANTIC_ORCHESTRATION", False),
         semantic_max_tool_rounds=_read_positive_int(
-            "ORION_SEMANTIC_MAX_TOOL_ROUNDS", 2
+            "ORION_SEMANTIC_MAX_TOOL_ROUNDS", 3
         ),
         semantic_local_context_characters=_read_positive_int(
             "ORION_SEMANTIC_LOCAL_CONTEXT_CHARACTERS", 12_000
