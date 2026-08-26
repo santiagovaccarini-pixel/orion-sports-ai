@@ -11,7 +11,8 @@ from backend.app.providers.model_provider import (
     ModelProvider,
     ModelProviderUnavailableError,
 )
-from backend.app.services.diagnostic_trace import DiagnosticTrace
+from backend.app.services.diagnostic_context import activate_final_trace
+from backend.app.services.diagnostic_trace import DiagnosticTrace, diagnostic_traces
 from backend.app.services.knowledge_base import KnowledgeDocument
 from backend.app.services.semantic_orchestrator import (
     EvidenceReview,
@@ -62,8 +63,6 @@ async def _plan(
             )
         return plan
     except (SemanticOrchestrationError, ModelProviderUnavailableError) as exc:
-        # An auxiliary planning failure must not take the whole chat down. The
-        # fallback deliberately avoids lexical classification and gathers broadly.
         plan = conservative_fallback_plan(
             request.messages,
             web_available=settings.web_enabled,
@@ -131,8 +130,6 @@ async def _review(
             )
         return review
     except (SemanticOrchestrationError, ModelProviderUnavailableError) as exc:
-        # Preserve already retrieved evidence for the final model, but do not mark
-        # any source as semantically validated if the critic itself failed.
         review = _fallback_review(plan)
         if trace is not None:
             trace.record_review(
@@ -182,18 +179,22 @@ async def build_reasoning_bundle(
 ) -> ReasoningBundle:
     """Understand, gather evidence and review it before Orion answers.
 
-    The model decides tool use semantically. Python only executes those decisions and
-    enforces bounded tool rounds; it does not map user words to meanings or answers.
-    The critic always receives the original conversation so it can reject a plan that
-    silently changed scope. Auxiliary reasoning failures degrade conservatively.
-
-    When diagnostics are enabled, ``trace`` records observable structured decisions,
-    tool results and timings. It never records hidden chain-of-thought or credentials.
+    Diagnostics record only observable structured decisions, tool results and stage
+    timings. They never record hidden chain-of-thought or provider credentials.
     """
+
+    if trace is None and settings.diagnostics_enabled:
+        trace = diagnostic_traces.start(
+            question=request.messages[-1].content,
+            sport=request.sport.value,
+            requested_mode=request.mode.value,
+        )
 
     pipeline_started = perf_counter()
     plan = await _plan(provider, request, settings, documents, trace)
     selected_mode = _selected_mode(request, plan)
+    if trace is not None:
+        trace.set_model(provider.model_for(selected_mode))
 
     local_evidence = collect_local_evidence(
         documents,
@@ -264,6 +265,8 @@ async def build_reasoning_bundle(
             "reasoning_bundle_total",
             (perf_counter() - pipeline_started) * 1000,
         )
+        activate_final_trace(trace)
+
     return ReasoningBundle(
         plan=plan,
         review=review,
