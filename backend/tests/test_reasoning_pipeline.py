@@ -45,6 +45,7 @@ PLAN = """
   "references":[],
   "information_needed":["dato actual y alcance"],
   "ambiguities":[],
+  "evidence_policy":"external",
   "use_web":true,
   "use_local_data":false,
   "use_calculator":false,
@@ -69,6 +70,20 @@ REVIEW_MORE = """
   "clarifying_question":null,
   "resolved_scope":null,
   "reason":"falta confirmar alcance"
+}
+"""
+
+REVIEW_SAME_QUERY = """
+{
+  "sufficient":false,
+  "relevant_source_ids":[],
+  "discarded_source_ids":[],
+  "missing_information":["más evidencia"],
+  "follow_up_web_query":"consulta inicial semántica",
+  "needs_clarification":false,
+  "clarifying_question":null,
+  "resolved_scope":null,
+  "reason":"propone repetir la misma búsqueda"
 }
 """
 
@@ -143,34 +158,41 @@ class ReasoningPipelineTests(unittest.TestCase):
         self.assertEqual(search.await_count, 1)
         self.assertFalse(bundle.review.sufficient)
 
-    def test_internal_model_failure_degrades_instead_of_aborting_chat(self) -> None:
+    def test_duplicate_follow_up_query_is_blocked_without_spending_round(self) -> None:
+        provider = FakeProvider([PLAN, REVIEW_SAME_QUERY])
+        settings = Settings(
+            web_enabled=True,
+            semantic_orchestration=True,
+            semantic_max_tool_rounds=3,
+        )
+        request = ChatRequest(
+            messages=[{"role": "user", "content": "Pregunta de prueba"}]
+        )
+        with patch(
+            "backend.app.services.reasoning_pipeline.research",
+            new=AsyncMock(
+                return_value=(
+                    WebSource("A", "https://a.test", "evidencia A", "a.test"),
+                )
+            ),
+        ) as search:
+            bundle = asyncio.run(
+                build_reasoning_bundle(provider, request, settings, [])
+            )
+        self.assertEqual(search.await_count, 1)
+        self.assertFalse(bundle.review.sufficient)
+
+    def test_provider_unavailability_is_not_silently_converted_to_evidence_failure(self) -> None:
         provider = FailingProvider()
         settings = Settings(
             web_enabled=True,
-            web_provider="tavily",
-            tavily_api_key="test",
             semantic_orchestration=True,
         )
         request = ChatRequest(
             messages=[{"role": "user", "content": "Pregunta sin patrón predefinido"}]
         )
-        evidence = (
-            WebSource("Fuente", "https://a.test", "dato verificable", "a.test"),
-        )
-        with patch(
-            "backend.app.services.reasoning_pipeline.research",
-            new=AsyncMock(return_value=evidence),
-        ) as search:
-            bundle = asyncio.run(
-                build_reasoning_bundle(provider, request, settings, [])
-            )
-
-        self.assertEqual(search.await_count, 1)
-        self.assertEqual(bundle.plan.web_query, request.messages[-1].content)
-        self.assertFalse(bundle.review.sufficient)
-        self.assertEqual(bundle.review.relevant_source_ids, ())
-        self.assertIn("no pudo completarse", bundle.review.missing_information[0])
-        self.assertEqual(bundle.web_sources, evidence)
+        with self.assertRaises(ModelProviderUnavailableError):
+            asyncio.run(build_reasoning_bundle(provider, request, settings, []))
 
 
 if __name__ == "__main__":
