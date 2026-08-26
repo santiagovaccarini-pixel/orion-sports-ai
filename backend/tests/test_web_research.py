@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from backend.app.core.config import get_settings
 from backend.app.services.web_research import (
@@ -13,6 +15,7 @@ from backend.app.services.web_research import (
     _tavily_sources,
     format_sources,
     is_web_request,
+    research,
 )
 
 
@@ -102,6 +105,57 @@ class WebResearchTests(unittest.TestCase):
         self.assertEqual(len(sources), 2)
         self.assertIn("club-nuevo.example", {source.domain for source in sources})
         self.assertIn("espn.com.ar", {source.domain for source in sources})
+
+    def test_auto_provider_falls_back_when_tavily_returns_no_sources(self) -> None:
+        fallback = (
+            WebSource(
+                "Fuente fallback",
+                "https://fifa.com/fallback",
+                "Contenido recuperado por el proveedor alternativo.",
+                "fifa.com",
+            ),
+        )
+        with (
+            patch(
+                "backend.app.services.web_research._research_tavily",
+                new=AsyncMock(return_value=()),
+            ) as tavily,
+            patch(
+                "backend.app.services.web_research._research_duckduckgo",
+                new=AsyncMock(return_value=fallback),
+            ) as duckduckgo,
+        ):
+            result = asyncio.run(
+                research(
+                    "consulta actual",
+                    provider="auto",
+                    tavily_api_key="secret-for-test",
+                )
+            )
+        self.assertEqual(result, fallback)
+        tavily.assert_awaited_once()
+        duckduckgo.assert_awaited_once()
+
+    def test_explicit_tavily_does_not_fall_back_silently(self) -> None:
+        with (
+            patch(
+                "backend.app.services.web_research._research_tavily",
+                new=AsyncMock(return_value=()),
+            ),
+            patch(
+                "backend.app.services.web_research._research_duckduckgo",
+                new=AsyncMock(),
+            ) as duckduckgo,
+        ):
+            result = asyncio.run(
+                research(
+                    "consulta actual",
+                    provider="tavily",
+                    tavily_api_key="secret-for-test",
+                )
+            )
+        self.assertEqual(result, ())
+        duckduckgo.assert_not_awaited()
 
 
 if __name__ == "__main__":
