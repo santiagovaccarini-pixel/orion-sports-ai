@@ -112,6 +112,22 @@
     "expected_behavior": "Determina fecha actual, identifica último partido oficial real, diferencia calendario futuro de partido jugado y aporta evidencia reciente."
   },
   {
+    "id": "web_partial_goal_totals_sum",
+    "category": "current_web",
+    "mode": "deep",
+    "sport": "football",
+    "prompt": "¿Cuántos goles lleva Merentiel en Boca?",
+    "expected_behavior": "Si ninguna fuente única confirma el total combinado pero distintas fuentes verifican, cada una, un componente disjunto (por ejemplo, un total acumulado hasta una fecha de corte y los goles anotados después de esa fecha), suma esos componentes en vez de rendirse; declara qué componentes sumó, sus fuentes, y aclara qué podría faltar o quedar desactualizado en vez de presentar la suma como un total absoluto y definitivo."
+  },
+  {
+    "id": "web_player_current_club_not_assumed",
+    "category": "current_web",
+    "mode": "deep",
+    "sport": "football",
+    "prompt": "¿Cuántos goles hizo Julián Álvarez esta temporada?",
+    "expected_behavior": "No asume el club actual del jugador a partir de conocimiento de entrenamiento potencialmente desactualizado (por ejemplo, seguir asumiendo un club del que ya se fue); si no está seguro de la afiliación vigente, la trata como algo a verificar con la búsqueda en vez de fijarla como un hecho dado en el plan o en la consulta web."
+  },
+  {
     "id": "context_change_period_three_to_five",
     "category": "conversation_context",
     "mode": "deep",

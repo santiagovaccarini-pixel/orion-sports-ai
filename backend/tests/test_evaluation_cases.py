@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 
+from backend.evals.run_cloud_evaluation import DIAGNOSTIC_PATH
 from backend.evals.run_local_evaluation import (
     CASES_PATH,
     FOOTBALL_PATH,
@@ -57,6 +58,33 @@ class EvaluationCaseTests(unittest.TestCase):
         self.assertEqual(len({case["id"] for case in cases}), 10)
         self.assertTrue(all(case["correction"].strip() for case in cases))
         self.assertIn("balón fuera del campo", cases[0]["forbidden"])
+
+    def test_diagnostic_cases_are_well_formed_and_unique(self) -> None:
+        cases = json.loads(DIAGNOSTIC_PATH.read_text(encoding="utf-8"))
+        ids = [case["id"] for case in cases]
+        self.assertEqual(len(ids), len(set(ids)))
+        for case in cases:
+            self.assertTrue(case.get("category", "").strip())
+            self.assertIn(case.get("mode"), {"quick", "deep"})
+            self.assertTrue(case.get("expected_behavior", "").strip())
+            has_prompt = bool(str(case.get("prompt", "")).strip())
+            has_messages = bool(case.get("messages"))
+            self.assertTrue(
+                has_prompt or has_messages,
+                f"Caso {case.get('id')} no tiene prompt ni conversación.",
+            )
+
+    def test_diagnostic_cases_cover_evidence_synthesis_and_stale_affiliation(
+        self,
+    ) -> None:
+        # Regression coverage for two live bugs found and fixed on 2026-08-27:
+        # the reviewer refusing to sum disjoint verified partial totals, and
+        # the planner assuming a player's club from stale training knowledge
+        # instead of treating current affiliation as something to verify.
+        cases = json.loads(DIAGNOSTIC_PATH.read_text(encoding="utf-8"))
+        ids = {case["id"] for case in cases}
+        self.assertIn("web_partial_goal_totals_sum", ids)
+        self.assertIn("web_player_current_club_not_assumed", ids)
 
 
 if __name__ == "__main__":
