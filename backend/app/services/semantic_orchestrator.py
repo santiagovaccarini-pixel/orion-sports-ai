@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Callable, Sequence
 
+from backend.app.core.identity import institutional_identity_brief
 from backend.app.domain.models import SelectedMode
 from backend.app.domain.schemas import ChatMessage, SportContext
 from backend.app.providers.model_provider import ModelProvider, ModelResult
@@ -603,6 +604,7 @@ def _capability_context(
         f"Fecha actual del sistema: {date.today().isoformat()}\n"
         f"Contexto deportivo seleccionado: {sport.value}\n"
         f"Búsqueda web disponible: {'sí' if web_available else 'no'}\n"
+        f"{institutional_identity_brief()}\n"
         "Catálogo de documentos locales disponibles:\n"
         f"{document_catalog(documents)}"
     )
@@ -871,7 +873,11 @@ async def review_evidence(
                 content=_review_input(plan, web_sources, local_evidence, messages),
             )
         ],
-        system_prompt=REVIEW_PROMPT + f"\n\nFecha actual: {date.today().isoformat()}",
+        system_prompt=(
+            REVIEW_PROMPT
+            + f"\n\nFecha actual: {date.today().isoformat()}"
+            + f"\n{institutional_identity_brief()}"
+        ),
         structured=True,
         reasoning_effort=reasoning_effort,
     )

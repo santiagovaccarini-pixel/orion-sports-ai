@@ -140,6 +140,11 @@ class SemanticOrchestratorTests(unittest.TestCase):
         self.assertEqual(len(sent_messages), len(messages))
         self.assertIn("Catálogo de documentos", provider.calls[0]["system_prompt"])
         self.assertEqual(provider.calls[0]["reasoning_effort"], "low")
+        self.assertIn("IDENTIDAD DEL PRODUCTO", provider.calls[0]["system_prompt"])
+        self.assertIn("Santiago Vaccarini", provider.calls[0]["system_prompt"])
+        self.assertIn(
+            "no requiere búsqueda externa", provider.calls[0]["system_prompt"]
+        )
 
     def test_conservative_fallback_does_not_classify_by_terms(self) -> None:
         messages = [ChatMessage(role="user", content="Una pregunta totalmente nueva")]
@@ -524,6 +529,34 @@ class SemanticOrchestratorTests(unittest.TestCase):
         self.assertIn("CONTRATO SEMÁNTICO AUDITADO", context)
         self.assertIn("respondé exactamente a resolved_request", context)
         self.assertNotIn("La petición original del usuario manda sobre el plan", context)
+
+    def test_reviewer_system_prompt_includes_product_identity(self) -> None:
+        plan = conservative_fallback_plan(
+            [ChatMessage(role="user", content="Pregunta")],
+            web_available=True,
+            documents=[],
+        )
+        provider = FakePlanningProvider(
+            [
+                """
+                {"sufficient":true,"relevant_source_ids":["W1"],
+                 "discarded_source_ids":[],"missing_information":[],
+                 "follow_up_web_query":null,"needs_clarification":false,
+                 "clarifying_question":null,"resolved_scope":"ok","reason":"ok"}
+                """
+            ]
+        )
+        asyncio.run(
+            review_evidence(
+                provider,
+                plan,
+                [WebSource("Fuente", "https://a.test", "dato", "a.test")],
+                [],
+            )
+        )
+        self.assertIn(
+            "IDENTIDAD DEL PRODUCTO", provider.calls[0]["system_prompt"]
+        )
 
     def test_reviewer_sees_dates_and_wider_clip_for_deepened_sources(self) -> None:
         plan = conservative_fallback_plan(

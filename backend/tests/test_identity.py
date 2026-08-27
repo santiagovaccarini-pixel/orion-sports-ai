@@ -8,6 +8,7 @@ from backend.app.core.identity import (
     creator_age,
     creator_context,
     direct_creator_answer,
+    institutional_identity_brief,
 )
 
 
@@ -18,7 +19,6 @@ class OrionIdentityTests(unittest.TestCase):
         self.assertIn("16/01/2007", context)
         self.assertIn("Buenos Aires, Argentina", context)
         self.assertIn("Ciencia de Datos en ISTEA", context)
-        self.assertIn("Google", context)
         self.assertIn("Atlético Mineiro", context)
         self.assertIn("Estudiantes de La Plata", context)
         self.assertIn("Excel", context)
@@ -53,6 +53,15 @@ class OrionIdentityTests(unittest.TestCase):
         self.assertIn("Cloudflare Workers AI", context)
         self.assertIn("Ollama", context)
         self.assertIn("Interpretá semánticamente", context)
+
+    def test_institutional_brief_resolves_default_referent_semantically(self) -> None:
+        brief = institutional_identity_brief()
+        self.assertIn(ORION_CREATOR_NAME, brief)
+        self.assertIn("producto Orion", brief)
+        self.assertIn("motor", brief)
+        self.assertIn("no requiere búsqueda externa", brief)
+        # Es contexto semántico, no una respuesta enlatada ni routing por frases.
+        self.assertNotIn("¿", brief)
 
 
 if __name__ == "__main__":

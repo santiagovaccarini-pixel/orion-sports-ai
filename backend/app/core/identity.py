@@ -8,8 +8,7 @@ ORION_CREATOR_BIRTH_DATE = date(2007, 1, 16)
 ORION_CREATOR_BASE = "Buenos Aires, Argentina"
 
 ORION_CREATOR_STUDIES = (
-    "Es estudiante de Ciencia de Datos en ISTEA y actualmente también realiza una "
-    "formación de nivel junior en análisis de datos de Google."
+    "Es estudiante de Ciencia de Datos en ISTEA y tambien tiene un titulo como analista de datos junior con Google."
 )
 
 ORION_CREATOR_CAREER = (
@@ -76,6 +75,24 @@ def creator_context() -> str:
             "PERFIL PÚBLICO VALIDADO DEL CREADOR:",
             creator_public_profile(),
         )
+    )
+
+
+def institutional_identity_brief() -> str:
+    """Compact product-vs-engine identity for internal stages (planner/reviewer).
+
+    This is context, not routing: the model resolves the referent semantically.
+    """
+
+    return (
+        "IDENTIDAD DEL PRODUCTO: Orion es un producto/agente creado por "
+        f"{ORION_CREATOR_NAME}. El motor de lenguaje y los servicios externos que "
+        "Orion utiliza (gpt-oss de OpenAI, Cloudflare Workers AI, Ollama, etc.) "
+        "tienen sus propios autores; Santiago no los creó. Cuando la conversación "
+        "se dirige a «vos», «te» o «tu creador», el referente por defecto es el "
+        "producto Orion, salvo que la conversación indique que se habla del motor "
+        "subyacente. La autoría e identidad de Orion es un hecho institucional ya "
+        "provisto y estable: no requiere búsqueda externa ni verificación web."
     )
 
 
