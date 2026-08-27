@@ -51,6 +51,6 @@ __pycache__/
 /work/
 
 # evaluation run artifacts (local diagnostic/battery output, not source)
-orion-cloud-diagnostic*.json
-orion-cloud-diagnostic*.log
+orion-cloud-diag*.json
+orion-cloud-diag*.log
 orion-cloud-eval*.json

@@ -235,7 +235,11 @@ class DiagnosticTrace:
                 "completion_tokens": getattr(result, "completion_tokens", None),
                 "reasoning_tokens": getattr(result, "reasoning_tokens", None),
                 "duration_ms": round(duration_ms, 2) if duration_ms is not None else None,
-                "recovery_reason": getattr(result, "recovery_reason", None),
+                "recovery_reason": (
+                    _clip(str(getattr(result, "recovery_reason")), 1_000)
+                    if getattr(result, "recovery_reason", None)
+                    else None
+                ),
             }
             self.model_calls.append(call)
 

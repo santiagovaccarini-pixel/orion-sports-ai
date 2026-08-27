@@ -669,6 +669,7 @@ class CloudflareAIClient:
             seen_event_types: set[str] = set()
             line_count = 0
             unparsed_line_count = 0
+            unrecognized_key_samples: list[tuple[str, ...]] = []
             try:
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     async with client.stream(
@@ -771,11 +772,14 @@ class CloudflareAIClient:
                                 )
                                 if label not in unrecognized_event_types:
                                     unrecognized_event_types.add(label)
+                                    keys = tuple(sorted(str(key) for key in data))
+                                    if len(unrecognized_key_samples) < 3:
+                                        unrecognized_key_samples.append(keys)
                                     logger.warning(
                                         "Evento de stream cloud no reconocido: "
                                         "type=%s claves=%s",
                                         label,
-                                        sorted(str(key) for key in data),
+                                        keys,
                                     )
 
                 if terminal_response is None:
@@ -799,7 +803,9 @@ class CloudflareAIClient:
                         f"final (líneas recibidas: {line_count}, no parseables: "
                         f"{unparsed_line_count}, tipos vistos: "
                         f"{sorted(seen_event_types) or 'ninguno'}, tipos no "
-                        f"reconocidos: {sorted(unrecognized_event_types) or 'ninguno'})."
+                        f"reconocidos: {sorted(unrecognized_event_types) or 'ninguno'}, "
+                        f"claves de eventos no reconocidos: "
+                        f"{unrecognized_key_samples or 'ninguna'})."
                     )
 
                 wrapped = {"result": terminal_response}
@@ -822,13 +828,15 @@ class CloudflareAIClient:
                     raise CloudAIUnavailableError(
                         "El modelo cloud no completó la respuesta visible "
                         f"(motivo: {finish_reason or terminal_type}; tipos vistos: "
-                        f"{sorted(seen_event_types) or 'ninguno'})."
+                        f"{sorted(seen_event_types) or 'ninguno'}; claves no "
+                        f"reconocidas: {unrecognized_key_samples or 'ninguna'})."
                     )
                 if not visible_content_emitted:
                     raise CloudAIUnavailableError(
                         "El modelo cloud terminó sin producir una respuesta visible "
                         f"(líneas recibidas: {line_count}, tipos vistos: "
-                        f"{sorted(seen_event_types) or 'ninguno'})."
+                        f"{sorted(seen_event_types) or 'ninguno'}; claves no "
+                        f"reconocidas: {unrecognized_key_samples or 'ninguna'})."
                     )
 
                 yield CloudAIStreamEvent(

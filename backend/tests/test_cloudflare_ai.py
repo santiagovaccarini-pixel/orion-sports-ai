@@ -513,6 +513,18 @@ class CloudflareAIProviderTests(unittest.TestCase):
         with self.assertRaises(CloudAIUnavailableError):
             self._collect_stream_events(body)
 
+    def test_unrecognized_event_shape_surfaces_keys_in_exception_message(self) -> None:
+        body = (
+            'data: {"id":"x","object":"chat.completion.chunk",'
+            '"choices":[{"delta":{"content":"hola"}}]}\n\n'
+        )
+        with self.assertRaises(CloudAIUnavailableError) as ctx:
+            self._collect_stream_events(body)
+        message = str(ctx.exception)
+        self.assertIn("líneas recibidas: 1", message)
+        self.assertIn("choices", message)
+        self.assertIn("object", message)
+
 
 if __name__ == "__main__":
     unittest.main()
