@@ -240,6 +240,15 @@ Reglas obligatorias:
   ni el contexto, ni el uso ordinario, ni la investigación pueden resolver.
 - La consulta de búsqueda web debe surgir del objetivo entendido, no de una regla
   escrita para un jugador, deporte, métrica o frase particular.
+- El buscador interpreta lenguaje natural, no sintaxis de motores de búsqueda como
+  Google: no uses operadores como site:, comillas para forzar coincidencia exacta,
+  OR/AND en mayúsculas ni combinaciones de palabras sueltas separadas por espacios
+  pensadas para un buscador booleano. Escribí la consulta como una pregunta o frase
+  natural completa, tal como se la dirías a una persona que va a buscar por vos.
+  Cuando lo que falta es un dato estadístico o numérico agregado, redactá la
+  consulta apuntando semánticamente a una página de referencia o estadísticas (por
+  ejemplo, la ficha del jugador o del equipo, un sitio de estadísticas oficiales),
+  no a una frase de video o titular de red social.
 - Recomendá modo quick para consultas directas y deep cuando haga falta análisis,
   comparación, varias etapas, incertidumbre sustancial o una explicación extensa.
 
@@ -333,6 +342,12 @@ Reglas obligatorias:
 - Si falta información y una búsqueda adicional puede resolverla, proponé UNA nueva
   consulta web semánticamente dirigida a lo que falta y al alcance original. No uses
   reglas particulares para nombres, frases, métricas o deportes.
+- El buscador interpreta lenguaje natural, no sintaxis de motores de búsqueda como
+  Google: follow_up_web_query nunca debe usar operadores como site:, comillas para
+  forzar coincidencia exacta ni OR/AND en mayúsculas. Escribila como una pregunta o
+  frase natural completa. Si las fuentes que recibiste fueron videos o contenido de
+  redes sociales en vez de una página de referencia/estadísticas, redirigí la nueva
+  consulta semánticamente hacia ese tipo de página en vez de repetir palabras clave.
 - Si la evidencia permite sostener una interpretación razonable del alcance original,
   marcala en resolved_scope y continuá. Pedí aclaración solo cuando buscar más no
   resolvería una ambigüedad material o cuando elegir por cuenta propia pueda producir

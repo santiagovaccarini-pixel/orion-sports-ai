@@ -758,6 +758,17 @@ class SemanticOrchestratorTests(unittest.TestCase):
             "sí podés presentarlo citando sus fuentes", context
         )
 
+    def test_planner_and_review_prompts_reject_boolean_search_syntax(self) -> None:
+        from backend.app.services.semantic_orchestrator import (
+            PLANNER_PROMPT,
+            REVIEW_PROMPT,
+        )
+
+        self.assertIn("site:", PLANNER_PROMPT)
+        self.assertIn("lenguaje natural", PLANNER_PROMPT)
+        self.assertIn("site:", REVIEW_PROMPT)
+        self.assertIn("lenguaje natural", REVIEW_PROMPT)
+
     def test_insufficient_audited_review_merges_missing_into_core(self) -> None:
         plan = conservative_fallback_plan(
             [ChatMessage(role="user", content="Pregunta actual")],
