@@ -402,6 +402,40 @@ class SemanticOrchestratorTests(unittest.TestCase):
         self.assertIn("[W2] No comparable", context)
         self.assertNotIn("otro dato", context)
 
+    def test_reasoning_context_surfaces_unresolved_source_conflict(self) -> None:
+        plan = conservative_fallback_plan(
+            [ChatMessage(role="user", content="Pregunta")],
+            web_available=True,
+            documents=[],
+        )
+        review = EvidenceReview(
+            sufficient=True,
+            relevant_source_ids=("W1", "W2"),
+            discarded_source_ids=(),
+            missing_information=(),
+            follow_up_web_query=None,
+            needs_clarification=False,
+            clarifying_question=None,
+            resolved_scope=(
+                "Las fuentes no coinciden: W1 dice 59 goles, W2 dice 60 goles; no se "
+                "pudo determinar cuál es más reciente."
+            ),
+            reason="ok",
+        )
+        context = format_reasoning_context(
+            plan,
+            review,
+            [
+                WebSource("Fuente A", "https://a.test", "59 goles", "a.test"),
+                WebSource("Fuente B", "https://b.test", "60 goles", "b.test"),
+            ],
+            [],
+            original_user_request="Pregunta original",
+        )
+        self.assertIn("ALCANCE RESUELTO POR LA REVISIÓN", context)
+        self.assertIn("no se pudo determinar cuál es más reciente", context)
+        self.assertIn("comunicásela al usuario explícitamente", context)
+
     def test_plan_parses_semantic_contract_fields(self) -> None:
         plan = parse_semantic_plan(
             """

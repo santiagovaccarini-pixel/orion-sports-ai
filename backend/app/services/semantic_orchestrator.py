@@ -337,9 +337,23 @@ Reglas obligatorias:
   cualquiera de esas dimensiones normalmente significa que la fuente no puede
   respaldar la afirmación tal cual.
 - Si dos cifras parecen contradictorias, primero evaluá si en realidad miden cosas
-  distintas. No las presentes como discrepancia del mismo dato sin demostrarlo.
+  distintas; si es así, no las presentes como discrepancia del mismo dato sin
+  demostrarlo. Si en cambio dos fuentes aceptadas realmente miden la misma entidad,
+  métrica, alcance, período y unidad pero informan valores distintos, preferí la de
+  fecha de publicación más reciente cuando las fechas sean comparables. Si no podés
+  determinar cuál es más reciente o más confiable, no elijas una en silencio: incluí
+  ambas en relevant_source_ids y describí la discrepancia en resolved_scope (qué
+  dice cada una y por qué no se pudo resolver), para que la respuesta final se lo
+  comunique al usuario en vez de mostrar un único número como si no hubiera duda.
 - Priorizá evidencia primaria, explícita, reciente y directamente relacionada con la
-  pregunta.
+  pregunta. Ante varias fuentes que podrían servir, preferí semánticamente las que
+  son páginas de referencia o estadísticas dedicadas a ese dato (ficha de jugador/
+  equipo, base de datos deportiva, sitio oficial de la competición) por sobre
+  contenido editorial, notas de mercado/rumores, redes sociales o transcripciones de
+  video: ese tipo de página suele ser más preciso y menos ambiguo para datos como
+  trayectoria, estadísticas o resultados. Juzgá esto por el tipo y el propósito de
+  la página, no por una lista fija de sitios, y aplicalo a cualquier deporte, liga
+  o idioma.
 - Esta etapa se usa cuando el plan requiere evidencia externa/local. No completes
   huecos de esa evidencia con conocimiento de memoria del modelo.
 - Los resultados marcados como DETERMINÍSTICOS fueron calculados por herramientas de
@@ -1060,6 +1074,14 @@ def format_reasoning_context(
             "conversación, priorizá el pedido del usuario y explicitá la "
             "discrepancia. Usá solo evidencia compatible con el pedido y con la "
             "revisión. No conviertas fuentes descartadas en hechos."
+        )
+    if contract.resolved_scope:
+        sections.append(
+            "ALCANCE RESUELTO POR LA REVISIÓN: " + contract.resolved_scope + "\n"
+            "Si esta descripción incluye una discrepancia entre fuentes que no pudo "
+            "resolverse (mismo dato, valores distintos), comunicásela al usuario "
+            "explícitamente —qué dice cada fuente— en vez de elegir una sola cifra "
+            "en silencio."
         )
     if contract.missing_for_core:
         sections.append(
