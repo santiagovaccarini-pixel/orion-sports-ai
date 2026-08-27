@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -374,6 +375,9 @@ async def _research_tavily(
         return ()
 
 
+DISCOVERY_TIME_BUDGET_SECONDS = 20.0
+
+
 async def _discover_duckduckgo_urls(
     client: httpx.AsyncClient,
     query: str,
@@ -391,7 +395,14 @@ async def _discover_duckduckgo_urls(
         "https://lite.duckduckgo.com/lite/?q={query}",
     )
     urls: list[str] = []
+    started = time.monotonic()
     for search_query in search_queries:
+        if time.monotonic() - started >= DISCOVERY_TIME_BUDGET_SECONDS:
+            # Sequential discovery over up to 11 queries x 2 endpoints can hit a
+            # multi-minute tail when every request stalls/times out; a query the
+            # search backends handle poorly (e.g. site:/boolean operators) must
+            # not block the whole request for minutes. Return whatever was found.
+            break
         encoded = quote_plus(search_query)
         for template in endpoints:
             try:
@@ -404,6 +415,8 @@ async def _discover_duckduckgo_urls(
                     urls.append(target)
             if len(urls) >= minimum_sources * 3:
                 return tuple(urls)
+            if time.monotonic() - started >= DISCOVERY_TIME_BUDGET_SECONDS:
+                break
     return tuple(urls)
 
 

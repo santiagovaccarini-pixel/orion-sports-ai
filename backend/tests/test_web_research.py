@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import unittest
 from datetime import date, timedelta
 from unittest.mock import AsyncMock, patch
+
+import httpx
 
 from backend.app.core.config import get_settings
 from backend.app.services.web_research import (
     DEFAULT_ALLOWED_DOMAINS,
     WebSource,
     _allowed,
+    _discover_duckduckgo_urls,
     _extract_search_urls,
     _relevant_excerpt,
     _search_domains,
@@ -192,6 +196,42 @@ class WebResearchTests(unittest.TestCase):
                 )
             )
         self.assertEqual(tavily.await_args.kwargs["recency_days"], 14)
+
+    def test_discover_duckduckgo_urls_respects_time_budget(self) -> None:
+        # Regression: a query the search backends handle poorly (e.g. site:/
+        # boolean operators) previously ran the full sequential 11-query x
+        # 2-endpoint discovery loop even when every attempt was slow/empty,
+        # producing multi-minute tail latency. A time budget caps that.
+        call_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            time.sleep(0.01)
+            return httpx.Response(200, request=request, text="<html></html>")
+
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=transport)
+
+        async def run() -> tuple[str, ...]:
+            try:
+                with patch(
+                    "backend.app.services.web_research.DISCOVERY_TIME_BUDGET_SECONDS",
+                    0.03,
+                ):
+                    return await _discover_duckduckgo_urls(
+                        client,
+                        "site:example.com \"consulta\" muy especifica 2026",
+                        allowed_domains=DEFAULT_ALLOWED_DOMAINS,
+                        minimum_sources=50,
+                    )
+            finally:
+                await client.aclose()
+
+        urls = asyncio.run(run())
+        self.assertEqual(urls, ())
+        # Worst case without a budget: 11 queries x 2 endpoints = 22 requests.
+        self.assertLess(call_count, 22)
 
     def test_explicit_tavily_does_not_fall_back_silently(self) -> None:
         with (
