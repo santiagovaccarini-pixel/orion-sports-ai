@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from typing import AsyncIterator, Protocol
@@ -111,6 +112,7 @@ class ModelProvider(Protocol):
 
 
 RECOVERY_WORDS_PER_CHUNK = 4
+RECOVERY_CHUNK_DELAY_SECONDS = 0.02
 
 
 def _chunk_recovered_text(
@@ -370,7 +372,11 @@ class CloudflareModelProvider:
                 raise ModelProviderUnavailableError(str(recovery_exc)) from recovery_exc
 
             recovery_endpoint = f"{recovered.endpoint or 'responses'}_stream_recovery"
-            for chunk in _chunk_recovered_text(recovered.content):
+            for index, chunk in enumerate(_chunk_recovered_text(recovered.content)):
+                if index > 0:
+                    # Small pacing so the client renders a visible progressive
+                    # reveal instead of every chunk landing in the same frame.
+                    await asyncio.sleep(RECOVERY_CHUNK_DELAY_SECONDS)
                 yield ModelStreamEvent(
                     content=chunk,
                     done=False,
