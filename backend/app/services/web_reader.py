@@ -377,15 +377,22 @@ def apply_page_reads(
         if not match:
             continue
         index = int(match.group(1)) - 1
-        if 0 <= index < len(enriched):
-            published = read.published_date or enriched[index].published_date
-            enriched[index] = WebSource(
-                title=read.title,
-                url=read.url,
-                excerpt=read.excerpt,
-                domain=read.domain,
-                published_date=published,
-                published_age_days=published_age_days(published),
-                deepened=True,
-            )
+        if not (0 <= index < len(enriched)):
+            continue
+        current = enriched[index]
+        if len(read.excerpt) < len(current.excerpt):
+            # Direct-page fetch yielded less text than the search snippet already
+            # had (common on login-gated social platforms). Keep the richer
+            # snippet instead of overwriting it with a worse "deepened" read.
+            continue
+        published = read.published_date or current.published_date
+        enriched[index] = WebSource(
+            title=read.title,
+            url=read.url,
+            excerpt=read.excerpt,
+            domain=read.domain,
+            published_date=published,
+            published_age_days=published_age_days(published),
+            deepened=True,
+        )
     return tuple(enriched)

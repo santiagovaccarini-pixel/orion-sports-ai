@@ -206,6 +206,12 @@ Reglas obligatorias:
 - No supongas que un dato del modelo está actualizado. Si el hecho puede haber
   cambiado con el tiempo y la respuesta necesita el valor actual, la política no puede
   ser model_knowledge.
+- Esto también aplica a la situación actual de las entidades mencionadas (a qué
+  club o equipo pertenece hoy una persona, qué cargo ocupa, en qué plantilla está),
+  no solo al valor final que se pide. No fijes esa situación como un hecho dado en
+  entities, resolved_request o web_query a partir de lo que recordás; si no estás
+  seguro de que siga vigente, formulá el objetivo y la consulta de forma que la
+  búsqueda pueda confirmarla o corregirla en vez de asumirla.
 - Marcá volatile_information=true cuando la respuesta correcta pueda haber cambiado
   y se necesite el valor vigente (resultados, totales acumulados, cargos, plantillas,
   calendarios). En ese caso estimá en recency_window_days una ventana razonable en

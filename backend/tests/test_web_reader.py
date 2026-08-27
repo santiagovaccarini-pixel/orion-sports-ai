@@ -81,6 +81,34 @@ class WebReaderTests(unittest.TestCase):
         self.assertIsInstance(enriched[0].published_age_days, int)
         self.assertTrue(enriched[0].deepened)
 
+    def test_apply_page_reads_keeps_richer_snippet_over_worse_deepened_read(
+        self,
+    ) -> None:
+        rich_snippet = (
+            "Con este tanto, alcanzó los 60 goles con la camiseta de Boca en 175"
+            " partidos."
+        )
+        sources = (
+            WebSource("Post original", "https://facebook.com/post", rich_snippet, "facebook.com"),
+        )
+        from backend.app.services.web_reader import PageRead
+
+        reads = (
+            PageRead(
+                source_id="W1",
+                title="Post original",
+                url="https://facebook.com/post",
+                domain="facebook.com",
+                excerpt="Sign up\n\nLog in",
+                published_date=None,
+            ),
+        )
+
+        enriched = apply_page_reads(sources, reads)
+
+        self.assertEqual(enriched[0].excerpt, rich_snippet)
+        self.assertFalse(enriched[0].deepened)
+
     def test_reader_validates_redirect_destination_before_following(self) -> None:
         requests: list[str] = []
 
