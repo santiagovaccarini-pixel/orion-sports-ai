@@ -49,3 +49,8 @@ __pycache__/
 /.orion-runtime/
 /outputs/
 /work/
+
+# evaluation run artifacts (local diagnostic/battery output, not source)
+orion-cloud-diagnostic*.json
+orion-cloud-diagnostic*.log
+orion-cloud-eval*.json
