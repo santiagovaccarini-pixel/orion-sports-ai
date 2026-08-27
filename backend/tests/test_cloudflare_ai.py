@@ -530,6 +530,41 @@ class CloudflareAIProviderTests(unittest.TestCase):
         self.assertEqual(events[-1].finish_reason, "completed")
         self.assertEqual(events[-1].prompt_tokens, 9)
 
+    def test_stream_handles_plain_text_response_field_with_sibling_usage(self) -> None:
+        # Real production shape confirmed via diagnostics: "response" is the
+        # cumulative plain-text answer itself, not a JSON envelope; "usage"
+        # only carries token counts, no explicit terminal/status signal.
+        body = (
+            json.dumps({"response": "", "usage": {}})
+            + "\n"
+            + json.dumps(
+                {
+                    "response": "ORION CLOUD OK",
+                    "usage": {"input_tokens": 12, "output_tokens": 4},
+                }
+            )
+            + "\n"
+        )
+        events = self._collect_stream_events(body)
+        self.assertEqual("".join(event.content for event in events), "ORION CLOUD OK")
+        self.assertTrue(events[-1].done)
+        self.assertEqual(events[-1].finish_reason, "completed")
+        self.assertEqual(events[-1].prompt_tokens, 12)
+        self.assertEqual(events[-1].completion_tokens, 4)
+
+    def test_stream_plain_text_response_emits_only_incremental_growth(self) -> None:
+        body = (
+            json.dumps({"response": "Primera", "usage": {}})
+            + "\n"
+            + json.dumps({"response": "Primera parte", "usage": {}})
+            + "\n"
+            + json.dumps({"response": "Primera parte final", "usage": {"output_tokens": 3}})
+            + "\n"
+        )
+        events = self._collect_stream_events(body)
+        contents = [event.content for event in events if event.content]
+        self.assertEqual(contents, ["Primera", " parte", " final"])
+
     def test_stream_snapshot_shape_tolerates_json_encoded_response_string(self) -> None:
         complete = _responses_json("respuesta codificada")
         body = json.dumps({"response": json.dumps(complete), "usage": {}}) + "\n"

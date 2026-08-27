@@ -685,6 +685,7 @@ class CloudflareAIClient:
             unparsed_line_count = 0
             unrecognized_key_samples: list[tuple[str, ...]] = []
             accumulated_text = ""
+            last_usage_snapshot: dict[str, object] | None = None
             try:
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     async with client.stream(
@@ -761,25 +762,34 @@ class CloudflareAIClient:
                                         if isinstance(status, str) and status
                                         else str(event_type)
                                     )
-                            elif (
-                                event_type is None
-                                and _as_dict(data.get("response")) is not None
-                            ):
+                            elif event_type is None and "response" in data:
                                 # Forma real observada en producción: Cloudflare no
-                                # emite eventos delta con "type"; cada línea es un
-                                # snapshot creciente de {"response": {...}, "usage": {...}}
-                                # con la misma forma que el resultado no-stream.
-                                snapshot = _as_dict(data["response"])
-                                assert snapshot is not None
+                                # emite eventos delta con "type". Cada línea trae un
+                                # campo "response" creciente junto a "usage".
+                                raw_response = data["response"]
                                 sibling_usage = data.get("usage")
-                                if (
-                                    "usage" not in snapshot
-                                    and isinstance(sibling_usage, dict)
-                                ):
-                                    snapshot = {**snapshot, "usage": sibling_usage}
-                                wrapped_snapshot = {"result": snapshot}
-                                full_text = _responses_content(wrapped_snapshot)
-                                if isinstance(full_text, str) and full_text:
+                                if isinstance(sibling_usage, dict) and sibling_usage:
+                                    last_usage_snapshot = sibling_usage
+                                snapshot = _as_dict(raw_response)
+                                if snapshot is not None:
+                                    # Variant: "response" is a full envelope dict
+                                    # shaped like the non-stream result.
+                                    if (
+                                        "usage" not in snapshot
+                                        and isinstance(sibling_usage, dict)
+                                    ):
+                                        snapshot = {**snapshot, "usage": sibling_usage}
+                                    full_text = _responses_content({"result": snapshot})
+                                    status = snapshot.get("status")
+                                elif isinstance(raw_response, str):
+                                    # Observed variant: "response" is just the
+                                    # cumulative plain-text answer so far.
+                                    full_text = raw_response
+                                    status = None
+                                else:
+                                    full_text = ""
+                                    status = None
+                                if full_text:
                                     new_text = (
                                         full_text[len(accumulated_text):]
                                         if full_text.startswith(accumulated_text)
@@ -795,7 +805,6 @@ class CloudflareAIClient:
                                             reasoning_effort=effort,
                                             endpoint="responses",
                                         )
-                                status = snapshot.get("status")
                                 if status in {"completed", "incomplete", "failed"}:
                                     terminal_response = snapshot
                                     terminal_type = f"response.{status}"
@@ -847,10 +856,18 @@ class CloudflareAIClient:
                             "se asume respuesta completa (tipos no reconocidos: %s).",
                             sorted(unrecognized_event_types) or "ninguno",
                         )
+                        prompt_tokens = completion_tokens = reasoning_tokens = None
+                        if last_usage_snapshot is not None:
+                            prompt_tokens, completion_tokens, reasoning_tokens = (
+                                _responses_usage({"result": {"usage": last_usage_snapshot}})
+                            )
                         yield CloudAIStreamEvent(
                             content="",
                             done=True,
                             model=model,
+                            prompt_tokens=prompt_tokens,
+                            completion_tokens=completion_tokens,
+                            reasoning_tokens=reasoning_tokens,
                             finish_reason="completed",
                             reasoning_effort=effort,
                             endpoint="responses",
