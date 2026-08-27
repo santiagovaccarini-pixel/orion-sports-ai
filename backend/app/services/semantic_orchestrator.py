@@ -318,6 +318,14 @@ Reglas obligatorias:
   corrected_resolved_request en null. La etapa final responderá al contrato tal como
   salga de esta revisión: tu corrección explícita es el único mecanismo para arreglar
   un plan equivocado; no alcanza con señalarlo en reason.
+- Revisá en particular los identificadores de entidades (nombres de personas,
+  equipos, competiciones): si el plan agregó un nombre de pila, apellido, número o
+  denominación más específica que la que dio el usuario, sin que surja de la
+  conversación, es una invención del modelo, no un dato del usuario — corregila
+  devolviendo el identificador tal como lo dio el usuario (ejemplo: si el plan dice
+  «Mariano Merentiel» y el usuario solo escribió «Merentiel», corregí a
+  «Merentiel» en corrected_resolved_request). Un identificador inventado hace que
+  fuentes correctas sobre la persona real parezcan no coincidir más adelante.
 - No uses cantidad fija de fuentes como criterio de verdad. Una fuente primaria y
   explícita puede ser suficiente; muchas fuentes irrelevantes no lo son.
 - Una fuente solo puede ser relevante si responde a la misma entidad, métrica,
