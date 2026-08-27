@@ -1,0 +1,210 @@
+[
+  {
+    "id": "general_internal_external_load",
+    "category": "general_knowledge",
+    "mode": "quick",
+    "sport": "football",
+    "prompt": "Explicame la diferencia entre carga interna y carga externa en fútbol, con un ejemplo de cada una.",
+    "expected_behavior": "Distingue respuesta interna del organismo frente a demanda externa realizada; ejemplos válidos; no necesita web salvo decisión explícita justificada."
+  },
+  {
+    "id": "general_correlation_causation",
+    "category": "general_knowledge",
+    "mode": "quick",
+    "sport": "general",
+    "prompt": "Si dos variables suben juntas durante seis semanas, ¿puedo afirmar que una causó la otra?",
+    "expected_behavior": "Niega inferencia causal automática y explica brevemente confusores, temporalidad y necesidad de diseño/evidencia adicional."
+  },
+  {
+    "id": "general_weighted_average",
+    "category": "general_knowledge",
+    "mode": "quick",
+    "sport": "general",
+    "prompt": "Tengo tres valores: 8 durante 10 minutos, 5 durante 30 minutos y 2 durante 60 minutos. ¿Cuál es el promedio ponderado por tiempo y por qué no sirve el promedio simple?",
+    "expected_behavior": "Calcula correctamente el promedio ponderado por duración y explica la diferencia con el promedio simple. Debe usar cálculo determinístico si el planner lo considera necesario."
+  },
+  {
+    "id": "general_uncertain_measurement",
+    "category": "general_knowledge",
+    "mode": "quick",
+    "sport": "general",
+    "prompt": "Un sensor me dio 17,4 hoy y 17,8 ayer. ¿Eso demuestra que realmente mejoré?",
+    "expected_behavior": "No concluye mejora sin conocer error de medición, confiabilidad, unidad, contexto y magnitud relevante."
+  },
+  {
+    "id": "football_hsr_less_minutes",
+    "category": "sports_reasoning",
+    "mode": "deep",
+    "sport": "football",
+    "prompt": "Un jugador hizo 35% menos HSR que en el partido anterior, pero esta vez jugó 30 minutos menos. ¿Eso alcanza para decir que físicamente rindió peor?",
+    "expected_behavior": "No equipara HSR absoluto con rendimiento; incorpora exposición/minutos, valores relativos y contexto del rol/partido."
+  },
+  {
+    "id": "football_accelerations_freshness",
+    "category": "sports_reasoning",
+    "mode": "deep",
+    "sport": "football",
+    "prompt": "Hoy un jugador hizo muchas más aceleraciones que su promedio. ¿Eso prueba que llegó más fresco al partido?",
+    "expected_behavior": "Evita causalidad simplista; aceleraciones describen demanda/comportamiento y no prueban estado de frescura por sí solas."
+  },
+  {
+    "id": "football_possession_quality",
+    "category": "sports_reasoning",
+    "mode": "deep",
+    "sport": "football",
+    "prompt": "Tuvimos 67% de posesión y perdimos 0-2. ¿El porcentaje de posesión demuestra que jugamos mejor?",
+    "expected_behavior": "No usa posesión como sinónimo de calidad; considera progresión, ocasiones, territorio, pérdidas, contexto y plan de juego."
+  },
+  {
+    "id": "football_recoveries_high_press",
+    "category": "sports_reasoning",
+    "mode": "deep",
+    "sport": "football",
+    "prompt": "Recuperamos 14 pelotas en campo rival. ¿Con ese dato solo puedo afirmar que nuestra presión alta funcionó bien?",
+    "expected_behavior": "No concluye eficacia de presión solo por recuperaciones; pide/propone altura, contexto, intentos, PPDA u otros indicadores y secuencias."
+  },
+  {
+    "id": "football_return_to_play_distance",
+    "category": "sports_reasoning",
+    "mode": "deep",
+    "sport": "football",
+    "prompt": "Un jugador que vuelve de lesión ya completó la misma distancia total que antes de lesionarse. ¿Eso alcanza para decir que está listo para competir?",
+    "expected_behavior": "No concluye readiness por una sola métrica; considera demandas de alta intensidad, exposición, tolerancia, síntomas y criterios multidimensionales."
+  },
+  {
+    "id": "football_provider_comparability",
+    "category": "sports_reasoning",
+    "mode": "deep",
+    "sport": "football",
+    "prompt": "Un club usa Catapult y otro un GPS diferente. Los dos reportan HSR. ¿Puedo comparar directamente los números?",
+    "expected_behavior": "Advierte diferencias de umbrales, frecuencia, procesamiento, firmware y definición de métrica antes de comparar."
+  },
+  {
+    "id": "web_merentiel_boca_goals",
+    "category": "current_web",
+    "mode": "deep",
+    "sport": "football",
+    "prompt": "¿Cuántos goles oficiales lleva Miguel Merentiel en Boca hasta hoy? Verificalo con fuentes actuales.",
+    "expected_behavior": "Reconoce dato cambiante, busca web actual, prioriza fuente oficial/primaria y fecha, y no completa huecos con memoria del modelo."
+  },
+  {
+    "id": "web_messi_inter_miami_goals",
+    "category": "current_web",
+    "mode": "deep",
+    "sport": "football",
+    "prompt": "¿Cuántos goles oficiales lleva Lionel Messi con Inter Miami hasta hoy? Quiero el total actualizado y la fuente.",
+    "expected_behavior": "Busca información actual, define claramente el alcance de 'oficiales con Inter Miami', usa fuentes suficientes y evita datos desactualizados."
+  },
+  {
+    "id": "web_atletico_mineiro_coach",
+    "category": "current_web",
+    "mode": "quick",
+    "sport": "football",
+    "prompt": "¿Quién es el entrenador actual de Atlético Mineiro? Confirmalo antes de responder.",
+    "expected_behavior": "Usa evidencia externa actual porque el cargo puede cambiar; responde nombre correcto y fuente/fecha relevante."
+  },
+  {
+    "id": "web_atletico_mineiro_latest_match",
+    "category": "current_web",
+    "mode": "deep",
+    "sport": "football",
+    "prompt": "¿Cuál fue el último partido oficial de Atlético Mineiro y cómo salió? Verificalo con información actual.",
+    "expected_behavior": "Determina fecha actual, identifica último partido oficial real, diferencia calendario futuro de partido jugado y aporta evidencia reciente."
+  },
+  {
+    "id": "context_change_period_three_to_five",
+    "category": "conversation_context",
+    "mode": "deep",
+    "sport": "football",
+    "messages": [
+      {"role": "user", "content": "Quiero analizar el HSR total y el HSR por minuto de Hulk en sus últimos 3 partidos."},
+      {"role": "assistant", "content": "Entendido: Hulk, últimos 3 partidos, comparando HSR total y HSR por minuto."},
+      {"role": "user", "content": "Hacelo con 5."}
+    ],
+    "expected_behavior": "Resuelve que '5' modifica el período/cantidad de partidos y conserva jugador y métricas; no interpreta por coincidencia lexical."
+  },
+  {
+    "id": "context_private_sprint_threshold_update",
+    "category": "conversation_context",
+    "mode": "quick",
+    "sport": "football",
+    "messages": [
+      {"role": "user", "content": "Para este análisis vamos a considerar sprint por encima de 25 km/h."},
+      {"role": "assistant", "content": "De acuerdo, para este análisis el umbral de sprint será >25 km/h."},
+      {"role": "user", "content": "Mejor bajalo a 24. ¿Qué cambia en la interpretación?"}
+    ],
+    "expected_behavior": "Actualiza el umbral contextual a 24 km/h y explica que cambiarán metros/eventos clasificados; no conserva 25 por inercia."
+  },
+  {
+    "id": "context_metric_filter",
+    "category": "conversation_context",
+    "mode": "quick",
+    "sport": "football",
+    "messages": [
+      {"role": "user", "content": "Compará distancia total y metros por minuto entre los dos jugadores."},
+      {"role": "assistant", "content": "Voy a comparar ambas métricas entre los dos jugadores."},
+      {"role": "user", "content": "Dejá únicamente la segunda."}
+    ],
+    "expected_behavior": "Entiende que 'la segunda' refiere a metros por minuto dentro de la comparación anterior."
+  },
+  {
+    "id": "context_sport_switch",
+    "category": "conversation_context",
+    "mode": "deep",
+    "sport": "basketball",
+    "messages": [
+      {"role": "user", "content": "En fútbol veníamos mirando HSR y distancia total para describir demanda externa."},
+      {"role": "assistant", "content": "Sí, son métricas de demanda externa y dependen de exposición y contexto."},
+      {"role": "user", "content": "Ahora pensalo para básquet: ¿qué variables mirarías para responder la misma pregunta?"}
+    ],
+    "expected_behavior": "Conserva el objetivo conceptual pero adapta métricas y contexto a básquet; no responde como si siguiera en fútbol."
+  },
+  {
+    "id": "ambiguity_who_worked_more",
+    "category": "ambiguity_hallucination",
+    "mode": "quick",
+    "sport": "football",
+    "prompt": "¿Quién trabajó más, Lucas o Pedro?",
+    "expected_behavior": "No inventa datos ni decide sin métrica/archivo/contexto; pide criterio o datos necesarios."
+  },
+  {
+    "id": "ambiguity_hsr_1200_good",
+    "category": "ambiguity_hallucination",
+    "mode": "quick",
+    "sport": "football",
+    "prompt": "Un jugador hizo 1200 de HSR. ¿Estuvo bien?",
+    "expected_behavior": "Detecta unidad/definición/exposición/posición/contexto faltantes y no juzga el valor aisladamente."
+  },
+  {
+    "id": "false_premise_invented_match",
+    "category": "ambiguity_hallucination",
+    "mode": "deep",
+    "sport": "football",
+    "prompt": "Ayer Juan Pérez hizo tres goles para Atlético Mineiro. Analizame su actuación y decime si fue figura.",
+    "expected_behavior": "No acepta automáticamente la premisa como hecho; si intenta análisis factual debe verificar identidad/partido o declarar que no puede sostener la premisa."
+  },
+  {
+    "id": "identity_creator",
+    "category": "identity_architecture",
+    "mode": "quick",
+    "sport": "general",
+    "prompt": "Contame quién te creó y cuál es su trayectoria actual.",
+    "expected_behavior": "Interpreta que pregunta por el creador de Orion y usa el contexto institucional validado de Santiago Vaccarini, sin shortcut lexical."
+  },
+  {
+    "id": "identity_engine_creator",
+    "category": "identity_architecture",
+    "mode": "quick",
+    "sport": "general",
+    "prompt": "¿Quién creó el motor de inteligencia artificial que estás usando para responderme ahora?",
+    "expected_behavior": "Distingue Orion de su modelo/proveedor; no atribuye gpt-oss o Cloudflare a Santiago Vaccarini."
+  },
+  {
+    "id": "identity_model_vs_product",
+    "category": "identity_architecture",
+    "mode": "deep",
+    "sport": "general",
+    "prompt": "Entonces, ¿vos sos un modelo de IA creado por Santiago Vaccarini o eso no es exactamente correcto? Explicame la diferencia.",
+    "expected_behavior": "Explica que Santiago creó Orion como producto/agente/arquitectura, mientras el modelo subyacente y servicios son de sus respectivos desarrolladores/proveedores."
+  }
+]
