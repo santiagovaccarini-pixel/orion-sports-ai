@@ -5,7 +5,12 @@ import unittest
 
 import httpx
 
-from backend.evals.run_cloud_evaluation import _base_url, _stream_case
+from backend.evals.run_cloud_evaluation import (
+    _base_url,
+    _case_messages,
+    _stream_case,
+    _trace_question,
+)
 
 
 class CloudEvaluationRunnerTests(unittest.TestCase):
@@ -18,6 +23,19 @@ class CloudEvaluationRunnerTests(unittest.TestCase):
             _base_url("https://orion.example.com/api/v1/"),
             "https://orion.example.com/api/v1",
         )
+
+    def test_multi_turn_case_preserves_conversation_and_trace_question(self) -> None:
+        case = {
+            "id": "context",
+            "mode": "quick",
+            "messages": [
+                {"role": "user", "content": "Compará A y B."},
+                {"role": "assistant", "content": "De acuerdo."},
+                {"role": "user", "content": "Solo la segunda."},
+            ],
+        }
+        self.assertEqual(len(_case_messages(case)), 3)
+        self.assertEqual(_trace_question(case), "Solo la segunda.")
 
     def test_stream_case_collects_meta_content_done_and_chart(self) -> None:
         events = [
@@ -57,6 +75,8 @@ class CloudEvaluationRunnerTests(unittest.TestCase):
 
         def handler(request: httpx.Request) -> httpx.Response:
             self.assertEqual(request.url.path, "/api/v1/chat/stream")
+            payload = json.loads(request.content.decode("utf-8"))
+            self.assertEqual(payload["messages"], [{"role": "user", "content": "Pregunta"}])
             return httpx.Response(
                 200,
                 request=request,
