@@ -17,10 +17,12 @@ from backend.evals.run_local_evaluation import (
 
 
 DEFAULT_CLOUD_URL = "https://orion-core-prototype.onrender.com/api/v1"
+DIAGNOSTIC_PATH = Path(__file__).with_name("diagnostic_24_cases.json")
 DATASETS = {
     "quality": CASES_PATH,
     "foundations": FOUNDATIONS_PATH,
     "football": FOOTBALL_PATH,
+    "diagnostic": DIAGNOSTIC_PATH,
 }
 
 
@@ -37,15 +39,41 @@ def _base_url(value: str) -> str:
     return clean
 
 
+def _case_messages(case: dict[str, object]) -> list[dict[str, str]]:
+    raw_messages = case.get("messages")
+    if isinstance(raw_messages, list) and raw_messages:
+        messages: list[dict[str, str]] = []
+        for raw in raw_messages:
+            if not isinstance(raw, dict):
+                raise ValueError(f"Caso {case.get('id')} contiene un mensaje inválido.")
+            role = raw.get("role")
+            content = raw.get("content")
+            if role not in {"user", "assistant"} or not isinstance(content, str):
+                raise ValueError(f"Caso {case.get('id')} contiene un mensaje inválido.")
+            messages.append({"role": role, "content": content})
+        return messages
+
+    prompt = case.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError(f"Caso {case.get('id')} no tiene prompt ni conversación válida.")
+    return [{"role": "user", "content": prompt}]
+
+
+def _trace_question(case: dict[str, object]) -> str:
+    for message in reversed(_case_messages(case)):
+        if message["role"] == "user":
+            return message["content"]
+    raise ValueError(f"Caso {case.get('id')} no contiene mensaje de usuario.")
+
+
 def _stream_case(
     client: httpx.Client,
     *,
     base_url: str,
     case: dict[str, object],
 ) -> dict[str, object]:
-    prompt = str(case["prompt"])
     request_payload = {
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": _case_messages(case),
         "mode": case["mode"],
         "sport": case.get("sport", "football"),
         "allow_busy": False,
@@ -155,7 +183,10 @@ def main() -> int:
     parser.add_argument(
         "--strict-quality",
         action="store_true",
-        help="Devuelve código 1 si falla cualquier prechequeo de calidad.",
+        help=(
+            "Devuelve código 1 si falla cualquier prechequeo lexical de los datasets "
+            "históricos. El dataset diagnostic siempre requiere revisión humana."
+        ),
     )
     args = parser.parse_args()
 
@@ -171,9 +202,21 @@ def main() -> int:
         "base_url": base_url,
         "started_at_epoch": time.time(),
         "datasets": {},
+        "scoring_protocol": {
+            "diagnostic": (
+                "Revisión humana 0-2 en comprensión, exactitud, razonamiento, "
+                "evidencia/herramientas, contexto y no-alucinación. No se aprueba "
+                "por coincidencia de palabras."
+            ),
+            "legacy": (
+                "Los datasets históricos conservan su prechequeo lexical únicamente "
+                "como alarma de regresión, nunca como nota final de inteligencia."
+            ),
+        },
     }
     infrastructure_errors = 0
     quality_failures = 0
+    human_review_cases = 0
 
     with httpx.Client(timeout=300.0, headers=headers) as client:
         status_response = client.get(f"{base_url}/status")
@@ -198,7 +241,7 @@ def main() -> int:
             dataset_results: list[dict[str, object]] = []
 
             for index, case in enumerate(cases, start=1):
-                prompt = str(case["prompt"])
+                question = _trace_question(case)
                 streamed = _stream_case(
                     client,
                     base_url=base_url,
@@ -208,6 +251,10 @@ def main() -> int:
                     "id": case["id"],
                     "dataset": dataset,
                     "index": index,
+                    "category": case.get("category"),
+                    "question": question,
+                    "messages": _case_messages(case),
+                    "expected_behavior": case.get("expected_behavior"),
                     **streamed,
                 }
 
@@ -217,17 +264,22 @@ def main() -> int:
                     continue
 
                 answer = str(streamed.get("answer") or "")
-                missing_groups, forbidden_hits = precheck(answer, case)
-                quality_ok = not missing_groups and not forbidden_hits
-                if not quality_ok:
-                    quality_failures += 1
-                item.update(
-                    {
-                        "quality_precheck_ok": quality_ok,
-                        "missing_groups": missing_groups,
-                        "forbidden_hits": forbidden_hits,
-                    }
-                )
+                if "required_any" in case and "forbidden" in case:
+                    missing_groups, forbidden_hits = precheck(answer, case)
+                    quality_ok = not missing_groups and not forbidden_hits
+                    if not quality_ok:
+                        quality_failures += 1
+                    item.update(
+                        {
+                            "quality_precheck_ok": quality_ok,
+                            "missing_groups": missing_groups,
+                            "forbidden_hits": forbidden_hits,
+                            "requires_human_review": True,
+                        }
+                    )
+                else:
+                    human_review_cases += 1
+                    item["requires_human_review"] = True
 
                 meta = streamed.get("meta")
                 trace_id = meta.get("trace_id") if isinstance(meta, dict) else None
@@ -237,11 +289,12 @@ def main() -> int:
                     )
                     if trace_response.status_code == 200:
                         trace = trace_response.json()
-                        if trace.get("question") == prompt:
+                        if trace.get("question") == question:
                             item["trace"] = trace
                         else:
                             item["trace_warning"] = (
-                                "La traza pedida por ID no coincide con el prompt del caso."
+                                "La traza pedida por ID no coincide con el último "
+                                "mensaje de usuario del caso."
                             )
                     else:
                         item["trace_warning"] = (
@@ -258,7 +311,8 @@ def main() -> int:
     report["datasets"] = datasets_payload
     report["finished_at_epoch"] = time.time()
     report["infrastructure_errors"] = infrastructure_errors
-    report["quality_failures"] = quality_failures
+    report["legacy_quality_precheck_failures"] = quality_failures
+    report["human_review_cases"] = human_review_cases
     args.output.write_text(
         json.dumps(report, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -267,7 +321,8 @@ def main() -> int:
     total_cases = sum(len(items) for items in datasets_payload.values())
     print(f"Evaluación cloud terminada: {total_cases} casos.")
     print(f"Errores de infraestructura: {infrastructure_errors}.")
-    print(f"Prechequeos de calidad fallidos: {quality_failures}.")
+    print(f"Casos para revisión humana: {human_review_cases}.")
+    print(f"Prechequeos históricos fallidos: {quality_failures}.")
     print(f"Reporte: {args.output}")
 
     if infrastructure_errors:
