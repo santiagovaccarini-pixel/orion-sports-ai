@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import AsyncIterator, Protocol
 
@@ -107,6 +108,31 @@ class ModelProvider(Protocol):
         system_prompt: str,
         reasoning_effort: str | None = None,
     ) -> AsyncIterator[ModelStreamEvent]: ...
+
+
+RECOVERY_WORDS_PER_CHUNK = 4
+
+
+def _chunk_recovered_text(
+    text: str, *, words_per_chunk: int = RECOVERY_WORDS_PER_CHUNK
+) -> tuple[str, ...]:
+    """Split an already-complete answer into small pieces for perceived streaming.
+
+    Cloudflare's Responses API stream for gpt-oss does not reliably deliver
+    incremental content for this deployment (confirmed empirically: the primary
+    stream consistently closes after an empty snapshot). Recovery gets the full
+    answer in one non-streaming call; splitting it here lets the client still
+    render a progressive reveal instead of the whole answer appearing at once.
+    """
+
+    tokens = re.findall(r"\S+\s*", text)
+    if not tokens:
+        return (text,) if text else ()
+    chunks = [
+        "".join(tokens[index : index + words_per_chunk])
+        for index in range(0, len(tokens), words_per_chunk)
+    ]
+    return tuple(chunk for chunk in chunks if chunk)
 
 
 def _model_is_installed(model: str, installed_models: tuple[str, ...]) -> bool:
@@ -343,15 +369,17 @@ class CloudflareModelProvider:
             except CloudAIUnavailableError as recovery_exc:
                 raise ModelProviderUnavailableError(str(recovery_exc)) from recovery_exc
 
-            yield ModelStreamEvent(
-                content=recovered.content,
-                done=False,
-                model=recovered.model,
-                reasoning_effort=recovered.reasoning_effort,
-                endpoint=f"{recovered.endpoint or 'responses'}_stream_recovery",
-                thread_limit=0,
-                recovery_reason=str(exc),
-            )
+            recovery_endpoint = f"{recovered.endpoint or 'responses'}_stream_recovery"
+            for chunk in _chunk_recovered_text(recovered.content):
+                yield ModelStreamEvent(
+                    content=chunk,
+                    done=False,
+                    model=recovered.model,
+                    reasoning_effort=recovered.reasoning_effort,
+                    endpoint=recovery_endpoint,
+                    thread_limit=0,
+                    recovery_reason=str(exc),
+                )
             yield ModelStreamEvent(
                 content="",
                 done=True,
@@ -361,7 +389,7 @@ class CloudflareModelProvider:
                 reasoning_tokens=recovered.reasoning_tokens,
                 finish_reason=recovered.finish_reason,
                 reasoning_effort=recovered.reasoning_effort,
-                endpoint=f"{recovered.endpoint or 'responses'}_stream_recovery",
+                endpoint=recovery_endpoint,
                 thread_limit=0,
                 recovery_reason=str(exc),
             )

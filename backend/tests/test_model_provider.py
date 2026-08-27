@@ -15,6 +15,7 @@ from backend.app.providers.model_provider import (
     ModelProviderModelError,
     ModelProviderUnavailableError,
     OllamaModelProvider,
+    _chunk_recovered_text,
     _model_is_installed,
     create_model_provider,
 )
@@ -128,6 +129,55 @@ class ModelProviderTests(unittest.TestCase):
             events[1].recovery_reason,
             "El modelo cloud cerró el stream antes de informar su estado final.",
         )
+
+    def test_recovered_answer_is_delivered_as_multiple_chunks(self) -> None:
+        provider = CloudflareModelProvider(
+            Settings(
+                model_provider="cloudflare",
+                cloudflare_account_id="account-test",
+                cloudflare_api_token="token-test",
+                cloudflare_quick_model="@cf/openai/gpt-oss-120b",
+            )
+        )
+
+        async def broken_stream(**_kwargs):
+            if False:
+                yield None
+            raise CloudAIUnavailableError("cerró antes de tiempo")
+
+        long_answer = " ".join(f"palabra{i}" for i in range(1, 13))
+        provider.client.chat_stream = broken_stream
+        provider.client.chat = AsyncMock(
+            return_value=SimpleNamespace(
+                content=long_answer,
+                model="@cf/openai/gpt-oss-120b",
+                prompt_tokens=50,
+                completion_tokens=20,
+                reasoning_tokens=5,
+                finish_reason="completed",
+                reasoning_effort="low",
+                endpoint="responses",
+            )
+        )
+
+        async def collect():
+            return [
+                event
+                async for event in provider.chat_stream(
+                    mode=SelectedMode.QUICK,
+                    messages=[ChatMessage(role="user", content="Pregunta")],
+                    system_prompt="Respondé.",
+                )
+            ]
+
+        events = asyncio.run(collect())
+        content_events = [event for event in events if not event.done]
+        self.assertGreater(len(content_events), 1)
+        self.assertEqual(
+            "".join(event.content for event in content_events), long_answer
+        )
+        self.assertTrue(events[-1].done)
+        self.assertEqual(events[-1].endpoint, "responses_stream_recovery")
         provider.client.chat.assert_awaited_once()
 
     def test_cloud_stream_does_not_repeat_inference_after_partial_text(self) -> None:
@@ -169,6 +219,25 @@ class ModelProviderTests(unittest.TestCase):
         with self.assertRaises(ModelProviderUnavailableError):
             asyncio.run(consume())
         provider.client.chat.assert_not_called()
+
+
+class ChunkRecoveredTextTests(unittest.TestCase):
+    def test_short_answer_stays_a_single_chunk(self) -> None:
+        self.assertEqual(_chunk_recovered_text("ORION CLOUD OK"), ("ORION CLOUD OK",))
+
+    def test_empty_answer_produces_no_chunks(self) -> None:
+        self.assertEqual(_chunk_recovered_text(""), ())
+
+    def test_long_answer_splits_preserving_exact_text(self) -> None:
+        text = " ".join(f"palabra{i}" for i in range(1, 13))
+        chunks = _chunk_recovered_text(text, words_per_chunk=4)
+        self.assertEqual(len(chunks), 3)
+        self.assertEqual("".join(chunks), text)
+
+    def test_whitespace_and_newlines_are_preserved_across_chunks(self) -> None:
+        text = "Primera línea.\nSegunda línea con  espacios.  Tercera."
+        chunks = _chunk_recovered_text(text, words_per_chunk=2)
+        self.assertEqual("".join(chunks), text)
 
 
 if __name__ == "__main__":
