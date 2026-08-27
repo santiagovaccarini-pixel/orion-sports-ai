@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import Callable, Sequence
 
@@ -15,6 +15,7 @@ from backend.app.services.semantic_orchestrator import (
     LocalEvidence,
     SemanticOrchestrationError,
     SemanticPlan,
+    build_contract,
     collect_local_evidence,
     conservative_fallback_plan,
     create_semantic_plan,
@@ -117,6 +118,7 @@ def _fallback_review(plan: SemanticPlan) -> EvidenceReview:
             "Fallback conservador de revisión: ninguna fuente queda validada "
             "automáticamente cuando falla el parseo estructurado."
         ),
+        audited=False,
     )
 
 
@@ -348,6 +350,50 @@ async def build_reasoning_bundle(
     if trace is not None:
         trace.set_model(provider.model_for(selected_mode))
 
+    if plan.needs_clarification and not plan.missing_for_core:
+        # Structural check, not lexical: without a core gap declared by the planner,
+        # a clarification would block an answerable question.
+        plan = replace(plan, needs_clarification=False)
+        if trace is not None:
+            trace.record_guard(
+                "clarification_downgraded_to_precision",
+                "El plan pidió aclaración sin declarar faltantes nucleares; Orion "
+                "responde el núcleo y trata lo demás como precisión pendiente.",
+            )
+    if plan.needs_clarification and plan.clarifying_question:
+        review = EvidenceReview(
+            sufficient=False,
+            relevant_source_ids=(),
+            discarded_source_ids=(),
+            missing_information=plan.missing_for_core,
+            follow_up_web_query=None,
+            needs_clarification=True,
+            clarifying_question=plan.clarifying_question,
+            resolved_scope=None,
+            reason="El plan requiere una aclaración del usuario antes de investigar.",
+            audited=False,
+        )
+        if trace is not None:
+            trace.record_guard(
+                "clarification_short_circuit",
+                "Orion pidió la aclaración antes de gastar búsqueda web, "
+                "herramientas y revisión.",
+            )
+            trace.record_contract(build_contract(plan, review))
+            trace.set_timing(
+                "reasoning_bundle_total",
+                (perf_counter() - pipeline_started) * 1000,
+            )
+        return ReasoningBundle(
+            plan=plan,
+            review=review,
+            web_sources=(),
+            local_evidence=(),
+            context="",
+            selected_mode=selected_mode,
+            trace=trace,
+        )
+
     local_evidence = collect_local_evidence(
         documents,
         plan,
@@ -467,6 +513,7 @@ async def build_reasoning_bundle(
         tool_context=tool_context,
     )
     if trace is not None:
+        trace.record_contract(build_contract(plan, review))
         trace.set_timing(
             "reasoning_bundle_total",
             (perf_counter() - pipeline_started) * 1000,

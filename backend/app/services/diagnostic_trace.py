@@ -59,6 +59,7 @@ class DiagnosticTrace:
     plan: dict[str, Any] | None = None
     plan_fallback: bool = False
     plan_error: str | None = None
+    contract: dict[str, Any] | None = None
     local_evidence: list[dict[str, Any]] = field(default_factory=list)
     searches: list[dict[str, Any]] = field(default_factory=list)
     reviews: list[dict[str, Any]] = field(default_factory=list)
@@ -107,6 +108,15 @@ class DiagnosticTrace:
                 "recommended_mode": getattr(
                     getattr(plan, "recommended_mode", None), "value", None
                 ),
+                "resolved_request": getattr(plan, "resolved_request", ""),
+                "missing_for_core": list(getattr(plan, "missing_for_core", ())),
+                "missing_for_precision": list(
+                    getattr(plan, "missing_for_precision", ())
+                ),
+                "volatile_information": bool(
+                    getattr(plan, "volatile_information", False)
+                ),
+                "recency_window_days": getattr(plan, "recency_window_days", None),
             }
             self.plan_fallback = fallback
             self.plan_error = _clip(error, 1_000) if error else None
@@ -189,6 +199,12 @@ class DiagnosticTrace:
                         review, "clarifying_question", None
                     ),
                     "resolved_scope": getattr(review, "resolved_scope", None),
+                    "corrected_resolved_request": getattr(
+                        review, "corrected_resolved_request", None
+                    ),
+                    "correction_reason": getattr(review, "correction_reason", None),
+                    "freshness_verified": getattr(review, "freshness_verified", None),
+                    "audited": bool(getattr(review, "audited", True)),
                     "source_catalog": [
                         _source_payload(source, f"W{index}")
                         for index, source in enumerate(web_sources, start=1)
@@ -246,6 +262,25 @@ class DiagnosticTrace:
                 "full_prompt_recorded": False,
             }
 
+    def record_contract(self, contract: object) -> None:
+        with self._lock:
+            self.contract = {
+                "resolved_request": getattr(contract, "resolved_request", ""),
+                "objective": getattr(contract, "objective", ""),
+                "entities": list(getattr(contract, "entities", ())),
+                "constraints": list(getattr(contract, "constraints", ())),
+                "ambiguities": list(getattr(contract, "ambiguities", ())),
+                "missing_for_core": list(getattr(contract, "missing_for_core", ())),
+                "missing_for_precision": list(
+                    getattr(contract, "missing_for_precision", ())
+                ),
+                "evidence_policy": getattr(contract, "evidence_policy", None),
+                "resolved_scope": getattr(contract, "resolved_scope", None),
+                "corrected": bool(getattr(contract, "corrected", False)),
+                "correction_reason": getattr(contract, "correction_reason", None),
+                "audited": bool(getattr(contract, "audited", False)),
+            }
+
     def record_guard(self, event: str, detail: str) -> None:
         with self._lock:
             self.guard_events.append(
@@ -283,6 +318,7 @@ class DiagnosticTrace:
                 "plan": self.plan,
                 "plan_fallback": self.plan_fallback,
                 "plan_error": self.plan_error,
+                "contract": dict(self.contract) if self.contract else None,
                 "local_evidence": list(self.local_evidence),
                 "searches": list(self.searches),
                 "reviews": list(self.reviews),

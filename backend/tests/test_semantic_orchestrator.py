@@ -12,6 +12,7 @@ from backend.app.services.semantic_orchestrator import (
     EvidenceReview,
     LocalEvidence,
     SemanticOrchestrationError,
+    build_contract,
     collect_local_evidence,
     conservative_fallback_plan,
     create_semantic_plan,
@@ -346,6 +347,198 @@ class SemanticOrchestratorTests(unittest.TestCase):
         self.assertIn('"discarded_source_ids": ["W2"]', context)
         self.assertIn('"original_user_request": "Pregunta original"', context)
         self.assertIn("No conviertas fuentes descartadas en hechos", context)
+
+    def test_plan_parses_semantic_contract_fields(self) -> None:
+        plan = parse_semantic_plan(
+            """
+            {"objective":"comparar métricas","entities":["Jugador A"],"constraints":[],
+             "references":[],"information_needed":[],"ambiguities":["contexto del rol"],
+             "resolved_request":"Mostrar solo los metros por minuto de Jugador A",
+             "missing_for_core":["minutos jugados"],
+             "missing_for_precision":["posición exacta"],
+             "volatile_information":true,"recency_window_days":700,
+             "evidence_policy":"external","use_web":true,"use_local_data":false,
+             "use_calculator":false,"use_chart":false,"needs_clarification":false,
+             "clarifying_question":null,"web_query":"metros por minuto Jugador A",
+             "local_document_names":[],"recommended_mode":"quick","reason":"ok"}
+            """
+        )
+        self.assertEqual(
+            plan.resolved_request,
+            "Mostrar solo los metros por minuto de Jugador A",
+        )
+        self.assertEqual(plan.missing_for_core, ("minutos jugados",))
+        self.assertEqual(plan.missing_for_precision, ("posición exacta",))
+        self.assertTrue(plan.volatile_information)
+        self.assertEqual(plan.recency_window_days, 365)
+
+    def test_plans_without_contract_fields_still_parse(self) -> None:
+        plan = parse_semantic_plan(
+            """
+            {"objective":"probar retrocompatibilidad","entities":[],"constraints":[],
+             "references":[],"information_needed":[],"ambiguities":[],
+             "evidence_policy":"model_knowledge","use_web":false,"use_local_data":false,
+             "use_calculator":false,"use_chart":false,"needs_clarification":false,
+             "clarifying_question":null,"web_query":null,"local_document_names":[],
+             "recommended_mode":"quick","reason":"ok"}
+            """
+        )
+        self.assertEqual(plan.resolved_request, "")
+        self.assertEqual(plan.missing_for_core, ())
+        self.assertFalse(plan.volatile_information)
+        self.assertIsNone(plan.recency_window_days)
+
+    def test_review_parses_explicit_correction_fields(self) -> None:
+        review = parse_evidence_review(
+            """
+            {"sufficient":true,"relevant_source_ids":["W1"],"discarded_source_ids":[],
+             "missing_information":[],"follow_up_web_query":null,
+             "needs_clarification":false,"clarifying_question":null,
+             "resolved_scope":"total acumulado",
+             "corrected_resolved_request":"Total acumulado completo, no la temporada",
+             "correction_reason":"el plan recortó el período","reason":"ok"}
+            """
+        )
+        self.assertTrue(review.audited)
+        self.assertEqual(
+            review.corrected_resolved_request,
+            "Total acumulado completo, no la temporada",
+        )
+        self.assertEqual(review.correction_reason, "el plan recortó el período")
+
+    def test_build_contract_applies_explicit_review_correction(self) -> None:
+        plan = conservative_fallback_plan(
+            [ChatMessage(role="user", content="Quiero el total completo")],
+            web_available=True,
+            documents=[],
+        )
+        review = EvidenceReview(
+            sufficient=True,
+            relevant_source_ids=("W1",),
+            discarded_source_ids=(),
+            missing_information=(),
+            follow_up_web_query=None,
+            needs_clarification=False,
+            clarifying_question=None,
+            resolved_scope="total completo",
+            reason="ok",
+            corrected_resolved_request="Total completo de la entidad, todas las competiciones",
+            correction_reason="el plan había recortado a una sola competición",
+        )
+        contract = build_contract(plan, review)
+        self.assertTrue(contract.corrected)
+        self.assertTrue(contract.audited)
+        self.assertEqual(
+            contract.resolved_request,
+            "Total completo de la entidad, todas las competiciones",
+        )
+
+    def test_model_knowledge_shortcut_review_is_not_audited(self) -> None:
+        plan = parse_semantic_plan(
+            """
+            {"objective":"explicar concepto","entities":[],"constraints":[],
+             "references":[],"information_needed":[],"ambiguities":[],
+             "evidence_policy":"model_knowledge","use_web":false,"use_local_data":false,
+             "use_calculator":false,"use_chart":false,"needs_clarification":false,
+             "clarifying_question":null,"web_query":null,"local_document_names":[],
+             "recommended_mode":"quick","reason":"ok"}
+            """
+        )
+        provider = FakePlanningProvider([])
+        review = asyncio.run(review_evidence(provider, plan, [], []))
+        self.assertTrue(review.sufficient)
+        self.assertFalse(review.audited)
+
+    def test_context_emits_core_limitation_even_for_model_knowledge(self) -> None:
+        plan = parse_semantic_plan(
+            """
+            {"objective":"evaluar si un valor aislado estuvo bien","entities":[],
+             "constraints":[],"references":[],"information_needed":[],
+             "ambiguities":["falta contexto de exposición"],
+             "resolved_request":"Evaluar si el valor reportado fue bueno",
+             "missing_for_core":["minutos de exposición","contexto del partido"],
+             "missing_for_precision":[],
+             "evidence_policy":"model_knowledge","use_web":false,"use_local_data":false,
+             "use_calculator":false,"use_chart":false,"needs_clarification":false,
+             "clarifying_question":null,"web_query":null,"local_document_names":[],
+             "recommended_mode":"quick","reason":"ok"}
+            """
+        )
+        provider = FakePlanningProvider([])
+        review = asyncio.run(review_evidence(provider, plan, [], []))
+        context = format_reasoning_context(plan, review, [], [])
+        self.assertIn("LIMITACIÓN NUCLEAR", context)
+        self.assertIn("minutos de exposición", context)
+        self.assertIn("CONTRATO SEMÁNTICO NO AUDITADO", context)
+        self.assertNotIn("La petición original del usuario manda sobre el plan", context)
+
+    def test_context_precision_gap_does_not_block_core_answer(self) -> None:
+        plan = parse_semantic_plan(
+            """
+            {"objective":"comparar HSR con distinta exposición","entities":[],
+             "constraints":[],"references":[],"information_needed":[],"ambiguities":[],
+             "resolved_request":"Determinar si menos HSR con menos minutos implica peor rendimiento",
+             "missing_for_core":[],
+             "missing_for_precision":["minutos exactos de cada partido"],
+             "evidence_policy":"model_knowledge","use_web":false,"use_local_data":false,
+             "use_calculator":false,"use_chart":false,"needs_clarification":false,
+             "clarifying_question":null,"web_query":null,"local_document_names":[],
+             "recommended_mode":"quick","reason":"ok"}
+            """
+        )
+        provider = FakePlanningProvider([])
+        review = asyncio.run(review_evidence(provider, plan, [], []))
+        context = format_reasoning_context(plan, review, [], [])
+        self.assertIn("PRECISIÓN PENDIENTE", context)
+        self.assertNotIn("LIMITACIÓN NUCLEAR", context)
+
+    def test_context_audited_contract_governs_final_stage(self) -> None:
+        plan = conservative_fallback_plan(
+            [ChatMessage(role="user", content="Pregunta")],
+            web_available=True,
+            documents=[],
+        )
+        review = EvidenceReview(
+            sufficient=True,
+            relevant_source_ids=("W1",),
+            discarded_source_ids=(),
+            missing_information=(),
+            follow_up_web_query=None,
+            needs_clarification=False,
+            clarifying_question=None,
+            resolved_scope="alcance validado",
+            reason="ok",
+        )
+        context = format_reasoning_context(
+            plan,
+            review,
+            [WebSource("Útil", "https://a.test", "dato", "a.test")],
+            [],
+            original_user_request="Pregunta",
+        )
+        self.assertIn("CONTRATO SEMÁNTICO AUDITADO", context)
+        self.assertIn("respondé exactamente a resolved_request", context)
+        self.assertNotIn("La petición original del usuario manda sobre el plan", context)
+
+    def test_insufficient_audited_review_merges_missing_into_core(self) -> None:
+        plan = conservative_fallback_plan(
+            [ChatMessage(role="user", content="Pregunta actual")],
+            web_available=True,
+            documents=[],
+        )
+        review = EvidenceReview(
+            sufficient=False,
+            relevant_source_ids=(),
+            discarded_source_ids=("W1",),
+            missing_information=("confirmación con fuente primaria",),
+            follow_up_web_query=None,
+            needs_clarification=False,
+            clarifying_question=None,
+            resolved_scope=None,
+            reason="sin respaldo",
+        )
+        contract = build_contract(plan, review)
+        self.assertIn("confirmación con fuente primaria", contract.missing_for_core)
 
 
 if __name__ == "__main__":

@@ -194,6 +194,74 @@ class ReasoningPipelineTests(unittest.TestCase):
         with self.assertRaises(ModelProviderUnavailableError):
             asyncio.run(build_reasoning_bundle(provider, request, settings, []))
 
+    def test_clarification_with_core_gap_short_circuits_before_web_and_review(self) -> None:
+        plan_with_clarification = PLAN.replace(
+            '"needs_clarification":false,\n  "clarifying_question":null,',
+            '"needs_clarification":true,\n'
+            '  "clarifying_question":"¿Sobre qué período exacto?",',
+        ).replace(
+            '"information_needed":["dato actual y alcance"],',
+            '"information_needed":["dato actual y alcance"],\n'
+            '  "missing_for_core":["período de referencia"],',
+        )
+        provider = FakeProvider([plan_with_clarification])
+        settings = Settings(
+            web_enabled=True,
+            web_provider="tavily",
+            tavily_api_key="test",
+            semantic_orchestration=True,
+        )
+        request = ChatRequest(
+            messages=[{"role": "user", "content": "Compará el rendimiento"}]
+        )
+        with patch(
+            "backend.app.services.reasoning_pipeline.research",
+            new=AsyncMock(
+                side_effect=AssertionError("no debe buscarse antes de aclarar")
+            ),
+        ) as search:
+            bundle = asyncio.run(
+                build_reasoning_bundle(provider, request, settings, [])
+            )
+        search.assert_not_awaited()
+        self.assertEqual(provider.responses, [])
+        self.assertTrue(bundle.plan.needs_clarification)
+        self.assertTrue(bundle.review.needs_clarification)
+        self.assertEqual(
+            bundle.review.clarifying_question, "¿Sobre qué período exacto?"
+        )
+        self.assertFalse(bundle.review.audited)
+        self.assertEqual(bundle.web_sources, ())
+
+    def test_clarification_without_core_gap_is_downgraded_and_pipeline_runs(self) -> None:
+        plan_with_soft_clarification = PLAN.replace(
+            '"needs_clarification":false,\n  "clarifying_question":null,',
+            '"needs_clarification":true,\n'
+            '  "clarifying_question":"¿Querés más detalle?",',
+        )
+        provider = FakeProvider([plan_with_soft_clarification, REVIEW_OK])
+        settings = Settings(
+            web_enabled=True,
+            web_provider="tavily",
+            tavily_api_key="test",
+            semantic_orchestration=True,
+        )
+        request = ChatRequest(
+            messages=[{"role": "user", "content": "Pregunta respondible"}]
+        )
+        sources = (WebSource("A", "https://a.test", "evidencia A", "a.test"),)
+        with patch(
+            "backend.app.services.reasoning_pipeline.research",
+            new=AsyncMock(return_value=sources),
+        ) as search:
+            bundle = asyncio.run(
+                build_reasoning_bundle(provider, request, settings, [])
+            )
+        search.assert_awaited_once()
+        self.assertFalse(bundle.plan.needs_clarification)
+        self.assertFalse(bundle.review.needs_clarification)
+        self.assertTrue(bundle.review.sufficient)
+
 
 if __name__ == "__main__":
     unittest.main()

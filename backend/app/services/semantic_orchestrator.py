@@ -46,6 +46,11 @@ class SemanticPlan:
     reason: str
     calculation_expression: str | None = None
     csv_operation: CsvOperationSpec | None = None
+    resolved_request: str = ""
+    missing_for_core: tuple[str, ...] = ()
+    missing_for_precision: tuple[str, ...] = ()
+    volatile_information: bool = False
+    recency_window_days: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +60,28 @@ class LocalEvidence:
     content: str
     truncated: bool
     chunk_index: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SourceCheck:
+    """Claim/evidence checklist the reviewer fills for one accepted source."""
+
+    source_id: str
+    entity: bool = False
+    metric: bool = False
+    period: bool = False
+    competition_or_context: bool = False
+    unit: bool = False
+
+    @property
+    def complete(self) -> bool:
+        return (
+            self.entity
+            and self.metric
+            and self.period
+            and self.competition_or_context
+            and self.unit
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +95,60 @@ class EvidenceReview:
     clarifying_question: str | None
     resolved_scope: str | None
     reason: str
+    corrected_resolved_request: str | None = None
+    correction_reason: str | None = None
+    freshness_verified: bool | None = None
+    source_checks: tuple[SourceCheck, ...] = ()
+    # False cuando ningún revisor real evaluó la evidencia (atajos y fallbacks):
+    # la etapa final no debe tratar el contrato como auditado en esos casos.
+    audited: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticContract:
+    """Frozen resolved meaning that travels planner → reviewer → final answer."""
+
+    resolved_request: str
+    objective: str
+    entities: tuple[str, ...]
+    constraints: tuple[str, ...]
+    ambiguities: tuple[str, ...]
+    missing_for_core: tuple[str, ...]
+    missing_for_precision: tuple[str, ...]
+    evidence_policy: str
+    resolved_scope: str | None
+    corrected: bool
+    correction_reason: str | None
+    audited: bool
+
+
+def build_contract(plan: SemanticPlan, review: EvidenceReview) -> SemanticContract:
+    resolved_request = plan.resolved_request.strip() or plan.objective
+    corrected = bool(review.corrected_resolved_request)
+    if review.corrected_resolved_request:
+        resolved_request = review.corrected_resolved_request
+    missing_for_core = plan.missing_for_core
+    if review.audited and not review.sufficient:
+        extra = tuple(
+            item
+            for item in review.missing_information
+            if item not in missing_for_core
+        )
+        missing_for_core = (*missing_for_core, *extra)
+    return SemanticContract(
+        resolved_request=resolved_request,
+        objective=plan.objective,
+        entities=plan.entities,
+        constraints=plan.constraints,
+        ambiguities=plan.ambiguities,
+        missing_for_core=missing_for_core,
+        missing_for_precision=plan.missing_for_precision,
+        evidence_policy=plan.evidence_policy,
+        resolved_scope=review.resolved_scope,
+        corrected=corrected,
+        correction_reason=review.correction_reason if corrected else None,
+        audited=review.audited,
+    )
 
 
 PLANNER_PROMPT = """
@@ -81,6 +162,14 @@ Reglas obligatorias:
   por el significado de la conversación completa.
 - Resolvé referencias conversacionales como «eso», «lo mismo», «hacelo con 5» usando
   el contexto previo cuando exista.
+- Escribí en resolved_request la petición del usuario ya resuelta: una reescritura
+  autocontenida con pronombres, elipsis y referencias conversacionales expandidas
+  («eso», «dejá únicamente la segunda», «hacelo con 5»). Es la petición exacta que la
+  respuesta final debe contestar; no agregues alcance que no surja de la conversación.
+- Distinguí por significado la información faltante: missing_for_core lista lo que
+  impide responder honestamente el núcleo de la pregunta; missing_for_precision lista
+  lo que solo mejoraría la exactitud o el detalle de una respuesta ya posible. No
+  repitas ahí la evidencia a buscar (eso va en information_needed).
 - Conservá el alcance que realmente pidió el usuario. No agregues por conveniencia un
   período, competición, población, filtro, unidad o recorte que no surja de la
   conversación. Si el usuario no fijó una restricción temporal, no la inventes para
@@ -119,6 +208,8 @@ Reglas obligatorias:
   el alcance adoptado. Pedí aclaración únicamente cuando varias interpretaciones
   sigan siendo materialmente distintas y ninguna pueda resolverse razonablemente con
   contexto o evidencia; en acciones destructivas o sensibles, preferí aclarar.
+  needs_clarification solo puede ser true cuando missing_for_core contiene algo que
+  ni el contexto, ni el uso ordinario, ni la investigación pueden resolver.
 - La consulta de búsqueda web debe surgir del objetivo entendido, no de una regla
   escrita para un jugador, deporte, métrica o frase particular.
 - Recomendá modo quick para consultas directas y deep cuando haga falta análisis,
@@ -127,11 +218,14 @@ Reglas obligatorias:
 Devolvé exclusivamente un objeto JSON válido con estas claves:
 {
   "objective": "...",
+  "resolved_request": "petición del usuario ya resuelta, con referencias expandidas",
   "entities": ["..."],
   "constraints": ["..."],
   "references": ["..."],
   "information_needed": ["..."],
   "ambiguities": ["..."],
+  "missing_for_core": ["..."],
+  "missing_for_precision": ["..."],
   "evidence_policy": "model_knowledge" or "external" or "local" or "mixed",
   "use_web": true,
   "use_local_data": false,
@@ -166,7 +260,12 @@ pidió el usuario; el plan puede estar equivocado y no debe validarse por defect
 Reglas obligatorias:
 - Primero compará el plan con la conversación original. Si el plan agregó, quitó o
   cambió materialmente un período, competición, población, filtro, unidad, entidad o
-  alcance que no surge de la conversación, consideralo una interpretación defectuosa.
+  alcance que no surge de la conversación, consideralo una interpretación defectuosa
+  y devolvé en corrected_resolved_request la petición correcta completa, con el
+  motivo en correction_reason. Si el plan interpretó bien, dejá
+  corrected_resolved_request en null. La etapa final responderá al contrato tal como
+  salga de esta revisión: tu corrección explícita es el único mecanismo para arreglar
+  un plan equivocado; no alcanza con señalarlo en reason.
 - No uses cantidad fija de fuentes como criterio de verdad. Una fuente primaria y
   explícita puede ser suficiente; muchas fuentes irrelevantes no lo son.
 - Una fuente solo puede ser relevante si responde a la misma entidad, métrica,
@@ -200,6 +299,8 @@ Devolvé exclusivamente un objeto JSON válido con estas claves:
   "needs_clarification": false,
   "clarifying_question": null,
   "resolved_scope": "alcance que realmente respalda la evidencia" or null,
+  "corrected_resolved_request": "petición correcta completa" or null,
+  "correction_reason": "por qué el plan malinterpretó el pedido" or null,
   "reason": "explicación breve"
 }
 """.strip()
@@ -256,6 +357,54 @@ def _optional_string(payload: dict[str, object], key: str) -> str | None:
         raise SemanticOrchestrationError(f"{key} debe ser texto o null.")
     clean = value.strip()
     return clean or None
+
+
+def _optional_boolean(payload: dict[str, object], key: str) -> bool | None:
+    value = payload.get(key)
+    if isinstance(value, bool):
+        return value
+    return None
+
+
+def _optional_bounded_int(
+    payload: dict[str, object],
+    key: str,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int | None:
+    value = payload.get(key)
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return max(minimum, min(maximum, parsed))
+
+
+def _source_checks(payload: dict[str, object]) -> tuple[SourceCheck, ...]:
+    value = payload.get("source_checks")
+    if not isinstance(value, list):
+        return ()
+    checks: list[SourceCheck] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        source_id = str(item.get("source_id") or "").strip()
+        if not source_id:
+            continue
+        checks.append(
+            SourceCheck(
+                source_id=source_id,
+                entity=item.get("entity") is True,
+                metric=item.get("metric") is True,
+                period=item.get("period") is True,
+                competition_or_context=item.get("competition_or_context") is True,
+                unit=item.get("unit") is True,
+            )
+        )
+    return tuple(checks)
 
 
 def _evidence_policy(payload: dict[str, object]) -> str:
@@ -350,6 +499,13 @@ def parse_semantic_plan(value: str) -> SemanticPlan:
         reason=str(payload.get("reason") or "Planificación semántica.").strip(),
         calculation_expression=_optional_string(payload, "calculation_expression"),
         csv_operation=_csv_operation(payload),
+        resolved_request=str(payload.get("resolved_request") or "").strip(),
+        missing_for_core=_strings(payload, "missing_for_core"),
+        missing_for_precision=_strings(payload, "missing_for_precision"),
+        volatile_information=_boolean(payload, "volatile_information"),
+        recency_window_days=_optional_bounded_int(
+            payload, "recency_window_days", minimum=1, maximum=365
+        ),
     )
     if plan.use_chart and (plan.csv_operation is None or plan.csv_operation.chart_type is None):
         raise SemanticOrchestrationError(
@@ -378,6 +534,13 @@ def parse_evidence_review(value: str) -> EvidenceReview:
         clarifying_question=_optional_string(payload, "clarifying_question"),
         resolved_scope=_optional_string(payload, "resolved_scope"),
         reason=str(payload.get("reason") or "Revisión semántica de evidencia.").strip(),
+        corrected_resolved_request=_optional_string(
+            payload, "corrected_resolved_request"
+        ),
+        correction_reason=_optional_string(payload, "correction_reason"),
+        freshness_verified=_optional_boolean(payload, "freshness_verified"),
+        source_checks=_source_checks(payload),
+        audited=True,
     )
 
 
@@ -466,6 +629,7 @@ def conservative_fallback_plan(
         policy = "model_knowledge"
     return SemanticPlan(
         objective=question,
+        resolved_request=question,
         entities=(),
         constraints=(),
         references=(),
@@ -563,10 +727,13 @@ def _review_input(
 ) -> str:
     plan_payload = {
         "objective": plan.objective,
+        "resolved_request": plan.resolved_request or plan.objective,
         "entities": list(plan.entities),
         "constraints": list(plan.constraints),
         "information_needed": list(plan.information_needed),
         "ambiguities": list(plan.ambiguities),
+        "missing_for_core": list(plan.missing_for_core),
+        "missing_for_precision": list(plan.missing_for_precision),
         "evidence_policy": plan.evidence_policy,
         "calculation_expression": plan.calculation_expression,
         "csv_operation": (
@@ -638,6 +805,7 @@ async def review_evidence(
             clarifying_question=None,
             resolved_scope="Conocimiento general estable; no requiere evidencia externa.",
             reason="La política semántica permite responder con conocimiento general del modelo.",
+            audited=False,
         )
     if not web_sources and not local_evidence:
         return EvidenceReview(
@@ -650,6 +818,7 @@ async def review_evidence(
             clarifying_question=None,
             resolved_scope=None,
             reason="No se reunió evidencia requerida para revisar.",
+            audited=False,
         )
     result = await provider.chat(
         mode=SelectedMode.QUICK,
@@ -677,13 +846,21 @@ def format_reasoning_context(
     original_user_request: str | None = None,
     tool_context: str = "",
 ) -> str:
+    contract = build_contract(plan, review)
     header = {
         "original_user_request": original_user_request,
+        "resolved_request": contract.resolved_request,
         "planned_objective": plan.objective,
-        "entities": list(plan.entities),
-        "constraints": list(plan.constraints),
-        "evidence_policy": plan.evidence_policy,
-        "resolved_scope": review.resolved_scope,
+        "entities": list(contract.entities),
+        "constraints": list(contract.constraints),
+        "ambiguities": list(contract.ambiguities),
+        "missing_for_core": list(contract.missing_for_core),
+        "missing_for_precision": list(contract.missing_for_precision),
+        "evidence_policy": contract.evidence_policy,
+        "resolved_scope": contract.resolved_scope,
+        "contract_audited": contract.audited,
+        "contract_corrected_by_review": contract.corrected,
+        "correction_reason": contract.correction_reason,
         "evidence_sufficient": review.sufficient,
         "missing_information": list(review.missing_information),
         "relevant_source_ids": list(review.relevant_source_ids),
@@ -692,11 +869,42 @@ def format_reasoning_context(
     sections = [
         "CONTEXTO DE ORQUESTACIÓN SEMÁNTICA (no lo repitas al usuario):\n"
         + json.dumps(header, ensure_ascii=False),
-        "La petición original del usuario manda sobre el plan. Si entran en conflicto, "
-        "no adoptes silenciosamente el alcance del plan. Usá solo evidencia compatible "
-        "con el pedido original y con la revisión. No conviertas fuentes descartadas en "
-        "hechos.",
     ]
+    if contract.audited:
+        sections.append(
+            "CONTRATO SEMÁNTICO AUDITADO: respondé exactamente a resolved_request. "
+            "El contrato ya resolvió referencias, pronombres y alcance, y fue "
+            "auditado contra la conversación por la etapa de revisión; si incluye "
+            "una corrección, esa corrección manda. No reinterpretes el alcance desde "
+            "la conversación cruda: usala solo para idioma, tono y contexto que el "
+            "contrato no cubra. Usá solo evidencia compatible con el contrato y con "
+            "la revisión. No conviertas fuentes descartadas en hechos."
+        )
+    else:
+        sections.append(
+            "CONTRATO SEMÁNTICO NO AUDITADO: respondé a resolved_request, pero si "
+            "contradice de forma evidente lo que pidió el usuario en la "
+            "conversación, priorizá el pedido del usuario y explicitá la "
+            "discrepancia. Usá solo evidencia compatible con el pedido y con la "
+            "revisión. No conviertas fuentes descartadas en hechos."
+        )
+    if contract.missing_for_core:
+        sections.append(
+            "LIMITACIÓN NUCLEAR: falta información esencial para el núcleo de la "
+            "petición: "
+            + "; ".join(contract.missing_for_core)
+            + ". Declarale esta limitación al usuario de forma explícita y no "
+            "emitas un juicio fuerte, una cifra presentada como confirmada ni una "
+            "recomendación categórica sobre ese núcleo."
+        )
+    elif contract.missing_for_precision:
+        sections.append(
+            "PRECISIÓN PENDIENTE: podés responder el núcleo con lo disponible. "
+            "Falta solo para mayor precisión: "
+            + "; ".join(contract.missing_for_precision)
+            + ". Respondé el núcleo y ofrecé la precisión adicional indicando qué "
+            "dato la habilitaría, sin bloquear la respuesta."
+        )
     if plan.evidence_policy == "model_knowledge":
         sections.append(
             "POLÍTICA DE EVIDENCIA: podés usar conocimiento general estable del modelo "
