@@ -212,6 +212,13 @@ Reglas obligatorias:
   entities, resolved_request o web_query a partir de lo que recordás; si no estás
   seguro de que siga vigente, formulá el objetivo y la consulta de forma que la
   búsqueda pueda confirmarla o corregirla en vez de asumirla.
+- No completes un identificador parcial que dio el usuario (un apellido solo, un
+  apodo, una sigla, un nombre de equipo abreviado) con detalles que no dijo —nombre
+  de pila completo, segundo apellido, número, denominación oficial— a partir de tu
+  memoria, salvo que estés genuinamente seguro. Si te dieron solo «Merentiel», usá
+  «Merentiel» en entities, objective, resolved_request y web_query; no inventes un
+  nombre de pila. Completar mal un detalle identificador hace que fuentes correctas
+  sobre la entidad real parezcan no coincidir con la entidad del plan más adelante.
 - Marcá volatile_information=true cuando la respuesta correcta pueda haber cambiado
   y se necesite el valor vigente (resultados, totales acumulados, cargos, plantillas,
   calendarios). En ese caso estimá en recency_window_days una ventana razonable en
