@@ -277,6 +277,20 @@ def _completion_finish_reason(payload: dict[str, object]) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def _as_dict(value: object) -> dict[str, object] | None:
+    """Accept a dict as-is, or a JSON-encoded string that decodes to one."""
+
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
+
+
 def _response_object(payload: dict[str, object]) -> dict[str, object]:
     result = payload.get("result")
     return result if isinstance(result, dict) else payload
@@ -749,13 +763,14 @@ class CloudflareAIClient:
                                     )
                             elif (
                                 event_type is None
-                                and isinstance(data.get("response"), dict)
+                                and _as_dict(data.get("response")) is not None
                             ):
                                 # Forma real observada en producción: Cloudflare no
                                 # emite eventos delta con "type"; cada línea es un
                                 # snapshot creciente de {"response": {...}, "usage": {...}}
                                 # con la misma forma que el resultado no-stream.
-                                snapshot = data["response"]
+                                snapshot = _as_dict(data["response"])
+                                assert snapshot is not None
                                 sibling_usage = data.get("usage")
                                 if (
                                     "usage" not in snapshot
@@ -810,7 +825,12 @@ class CloudflareAIClient:
                                 )
                                 if label not in unrecognized_event_types:
                                     unrecognized_event_types.add(label)
-                                    keys = tuple(sorted(str(key) for key in data))
+                                    keys = tuple(
+                                        f"{key}:{type(value).__name__}"
+                                        for key, value in sorted(
+                                            data.items(), key=lambda item: str(item[0])
+                                        )
+                                    )
                                     if len(unrecognized_key_samples) < 3:
                                         unrecognized_key_samples.append(keys)
                                     logger.warning(

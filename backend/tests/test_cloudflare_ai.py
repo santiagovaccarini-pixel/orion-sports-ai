@@ -530,6 +530,13 @@ class CloudflareAIProviderTests(unittest.TestCase):
         self.assertEqual(events[-1].finish_reason, "completed")
         self.assertEqual(events[-1].prompt_tokens, 9)
 
+    def test_stream_snapshot_shape_tolerates_json_encoded_response_string(self) -> None:
+        complete = _responses_json("respuesta codificada")
+        body = json.dumps({"response": json.dumps(complete), "usage": {}}) + "\n"
+        events = self._collect_stream_events(body)
+        self.assertEqual("".join(event.content for event in events), "respuesta codificada")
+        self.assertTrue(events[-1].done)
+
     def test_stream_snapshot_shape_emits_only_incremental_growth(self) -> None:
         first = _responses_json("Primera parte", status="in_progress")
         second = _responses_json("Primera parte y más", status="in_progress")
