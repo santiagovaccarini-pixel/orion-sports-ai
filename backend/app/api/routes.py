@@ -915,6 +915,20 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
         except Exception as exc:
             if trace is not None:
                 trace.fail(str(exc))
+            # An unexpected (not one of the specific provider errors above)
+            # exception must still surface to the client instead of silently
+            # closing the connection: the caller needs something to show the
+            # user and something to debug from, not a truncated empty stream.
+            try:
+                yield _ndjson(
+                    {
+                        "type": "error",
+                        "code": "internal_error",
+                        "message": str(exc) or exc.__class__.__name__,
+                    }
+                )
+            except Exception:
+                pass
             raise
 
     return StreamingResponse(

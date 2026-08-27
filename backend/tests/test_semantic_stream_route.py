@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import unittest
 from dataclasses import replace
@@ -259,6 +260,56 @@ class SemanticStreamRouteTests(unittest.TestCase):
                 for event in guard_events
             )
         )
+
+    def test_unexpected_exception_still_yields_an_error_frame(self) -> None:
+        # Regression: an unanticipated exception (not one of the specific
+        # provider errors) used to close the connection with zero bytes sent
+        # and no error frame, leaving the client with an empty, unexplained
+        # response and no diagnostic signal. Iterates the route's raw
+        # body_iterator directly so transport-level chunk buffering in the
+        # test client can't mask what the generator actually yields.
+        from backend.app.api.routes import chat_stream
+        from backend.app.domain.schemas import ChatRequest
+
+        settings = Settings(
+            model_provider="cloudflare",
+            semantic_orchestration=True,
+            diagnostics_enabled=True,
+        )
+        request = ChatRequest(messages=[{"role": "user", "content": "Pregunta"}])
+        with (
+            patch("backend.app.api.routes.get_settings", return_value=settings),
+            patch(
+                "backend.app.api.routes._provider_or_http_error",
+                return_value=RecordingCloudProvider(),
+            ),
+            patch(
+                "backend.app.api.routes.build_reasoning_bundle",
+                new=AsyncMock(side_effect=RuntimeError("boom inesperado")),
+            ),
+            patch("backend.app.api.routes._documents", return_value=[]),
+        ):
+
+            async def collect() -> list[dict]:
+                streaming_response = await chat_stream(request)
+                events: list[dict] = []
+                with self.assertRaises(RuntimeError):
+                    async for chunk in streaming_response.body_iterator:
+                        for line in chunk.decode("utf-8").splitlines():
+                            if line.strip():
+                                events.append(json.loads(line))
+                return events
+
+            events = asyncio.run(collect())
+
+        error_events = [event for event in events if event.get("type") == "error"]
+        self.assertTrue(error_events, "Debe emitirse un frame de error")
+        self.assertEqual(error_events[0]["code"], "internal_error")
+        self.assertIn("boom inesperado", error_events[0]["message"])
+        trace = diagnostic_traces.latest()
+        self.assertIsNotNone(trace)
+        assert trace is not None
+        self.assertEqual(trace.snapshot()["status"], "error")
 
 
 if __name__ == "__main__":
