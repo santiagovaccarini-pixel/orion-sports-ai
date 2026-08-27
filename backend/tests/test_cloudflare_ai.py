@@ -513,6 +513,39 @@ class CloudflareAIProviderTests(unittest.TestCase):
         with self.assertRaises(CloudAIUnavailableError):
             self._collect_stream_events(body)
 
+    def test_stream_handles_cloudflare_native_response_usage_snapshot_shape(self) -> None:
+        # Real production shape: no "type" field at all, each line is a growing
+        # snapshot of {"response": {...same as non-stream result...}, "usage": {...}}.
+        partial = _responses_json("Hola", status="in_progress")
+        complete = _responses_json("Hola mundo", input_tokens=9, output_tokens=3)
+        body = (
+            json.dumps({"response": partial, "usage": {"input_tokens": 9}})
+            + "\n"
+            + json.dumps({"response": complete})
+            + "\n"
+        )
+        events = self._collect_stream_events(body)
+        self.assertEqual("".join(event.content for event in events), "Hola mundo")
+        self.assertTrue(events[-1].done)
+        self.assertEqual(events[-1].finish_reason, "completed")
+        self.assertEqual(events[-1].prompt_tokens, 9)
+
+    def test_stream_snapshot_shape_emits_only_incremental_growth(self) -> None:
+        first = _responses_json("Primera parte", status="in_progress")
+        second = _responses_json("Primera parte y más", status="in_progress")
+        final = _responses_json("Primera parte y más texto final")
+        body = (
+            json.dumps({"response": first, "usage": {}})
+            + "\n"
+            + json.dumps({"response": second, "usage": {}})
+            + "\n"
+            + json.dumps({"response": final, "usage": {}})
+            + "\n"
+        )
+        events = self._collect_stream_events(body)
+        contents = [event.content for event in events if event.content]
+        self.assertEqual(contents, ["Primera parte", " y más", " texto final"])
+
     def test_unrecognized_event_shape_surfaces_keys_in_exception_message(self) -> None:
         body = (
             'data: {"id":"x","object":"chat.completion.chunk",'

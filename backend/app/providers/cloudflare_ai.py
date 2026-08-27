@@ -670,6 +670,7 @@ class CloudflareAIClient:
             line_count = 0
             unparsed_line_count = 0
             unrecognized_key_samples: list[tuple[str, ...]] = []
+            accumulated_text = ""
             try:
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     async with client.stream(
@@ -746,6 +747,43 @@ class CloudflareAIClient:
                                         if isinstance(status, str) and status
                                         else str(event_type)
                                     )
+                            elif (
+                                event_type is None
+                                and isinstance(data.get("response"), dict)
+                            ):
+                                # Forma real observada en producción: Cloudflare no
+                                # emite eventos delta con "type"; cada línea es un
+                                # snapshot creciente de {"response": {...}, "usage": {...}}
+                                # con la misma forma que el resultado no-stream.
+                                snapshot = data["response"]
+                                sibling_usage = data.get("usage")
+                                if (
+                                    "usage" not in snapshot
+                                    and isinstance(sibling_usage, dict)
+                                ):
+                                    snapshot = {**snapshot, "usage": sibling_usage}
+                                wrapped_snapshot = {"result": snapshot}
+                                full_text = _responses_content(wrapped_snapshot)
+                                if isinstance(full_text, str) and full_text:
+                                    new_text = (
+                                        full_text[len(accumulated_text):]
+                                        if full_text.startswith(accumulated_text)
+                                        else full_text
+                                    )
+                                    if new_text:
+                                        accumulated_text = full_text
+                                        visible_content_emitted = True
+                                        yield CloudAIStreamEvent(
+                                            content=new_text,
+                                            done=False,
+                                            model=model,
+                                            reasoning_effort=effort,
+                                            endpoint="responses",
+                                        )
+                                status = snapshot.get("status")
+                                if status in {"completed", "incomplete", "failed"}:
+                                    terminal_response = snapshot
+                                    terminal_type = f"response.{status}"
                             elif (
                                 event_type is None
                                 and "status" in data
