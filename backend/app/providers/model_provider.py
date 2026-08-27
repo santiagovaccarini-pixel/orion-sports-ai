@@ -76,6 +76,7 @@ class ModelStreamEvent:
     endpoint: str | None = None
     tokens_per_second: float | None = None
     thread_limit: int = 0
+    recovery_reason: str | None = None
 
 
 class ModelProvider(Protocol):
@@ -349,6 +350,7 @@ class CloudflareModelProvider:
                 reasoning_effort=recovered.reasoning_effort,
                 endpoint=f"{recovered.endpoint or 'responses'}_stream_recovery",
                 thread_limit=0,
+                recovery_reason=str(exc),
             )
             yield ModelStreamEvent(
                 content="",
@@ -361,6 +363,7 @@ class CloudflareModelProvider:
                 reasoning_effort=recovered.reasoning_effort,
                 endpoint=f"{recovered.endpoint or 'responses'}_stream_recovery",
                 thread_limit=0,
+                recovery_reason=str(exc),
             )
 
 

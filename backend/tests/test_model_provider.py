@@ -124,6 +124,10 @@ class ModelProviderTests(unittest.TestCase):
         self.assertEqual(events[1].finish_reason, "completed")
         self.assertEqual(events[1].reasoning_tokens, 15)
         self.assertEqual(events[1].endpoint, "responses_stream_recovery")
+        self.assertEqual(
+            events[1].recovery_reason,
+            "El modelo cloud cerró el stream antes de informar su estado final.",
+        )
         provider.client.chat.assert_awaited_once()
 
     def test_cloud_stream_does_not_repeat_inference_after_partial_text(self) -> None:

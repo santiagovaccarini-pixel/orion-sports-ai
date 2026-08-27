@@ -666,6 +666,9 @@ class CloudflareAIClient:
             terminal_response: dict[str, object] | None = None
             terminal_type: str | None = None
             unrecognized_event_types: set[str] = set()
+            seen_event_types: set[str] = set()
+            line_count = 0
+            unparsed_line_count = 0
             try:
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     async with client.stream(
@@ -676,8 +679,14 @@ class CloudflareAIClient:
                     ) as response:
                         response.raise_for_status()
                         async for line in response.aiter_lines():
+                            if line.strip():
+                                line_count += 1
                             data = parse_sse_data(line)
-                            if data is None or data.get("done") is True:
+                            if data is None:
+                                if line.strip():
+                                    unparsed_line_count += 1
+                                continue
+                            if data.get("done") is True:
                                 continue
                             if "type" not in data:
                                 # Cloudflare envuelve payloads en {"result": ...} en el
@@ -686,6 +695,8 @@ class CloudflareAIClient:
                                 if isinstance(wrapped_event, dict):
                                     data = wrapped_event
                             event_type = data.get("type")
+                            if isinstance(event_type, str) and event_type:
+                                seen_event_types.add(event_type)
                             if event_type == "response.output_text.delta":
                                 delta = data.get("delta")
                                 if not (isinstance(delta, str) and delta):
@@ -784,7 +795,11 @@ class CloudflareAIClient:
                         )
                         return
                     raise CloudAIUnavailableError(
-                        "El modelo cloud cerró el stream antes de informar su estado final."
+                        "El modelo cloud cerró el stream antes de informar su estado "
+                        f"final (líneas recibidas: {line_count}, no parseables: "
+                        f"{unparsed_line_count}, tipos vistos: "
+                        f"{sorted(seen_event_types) or 'ninguno'}, tipos no "
+                        f"reconocidos: {sorted(unrecognized_event_types) or 'ninguno'})."
                     )
 
                 wrapped = {"result": terminal_response}
@@ -806,11 +821,14 @@ class CloudflareAIClient:
                 if terminal_type != "response.completed" or finish_reason != "completed":
                     raise CloudAIUnavailableError(
                         "El modelo cloud no completó la respuesta visible "
-                        f"(motivo: {finish_reason or terminal_type})."
+                        f"(motivo: {finish_reason or terminal_type}; tipos vistos: "
+                        f"{sorted(seen_event_types) or 'ninguno'})."
                     )
                 if not visible_content_emitted:
                     raise CloudAIUnavailableError(
-                        "El modelo cloud terminó sin producir una respuesta visible."
+                        "El modelo cloud terminó sin producir una respuesta visible "
+                        f"(líneas recibidas: {line_count}, tipos vistos: "
+                        f"{sorted(seen_event_types) or 'ninguno'})."
                     )
 
                 yield CloudAIStreamEvent(
