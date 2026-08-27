@@ -324,7 +324,11 @@ Reglas obligatorias:
   componente si estás seguro de que no se superpone con los demás y de que
   corresponde exactamente a la misma entidad, unidad y alcance pedidos. No sumes
   vos los componentes: una herramienta determinística hace la suma. Si falta un
-  componente para que la suma sea completa, decilo en missing_information.
+  componente para que la suma sea completa, decilo en missing_information. Nunca
+  pongas en partial_values dos cifras que compiten por describir el mismo
+  componente (misma entidad, métrica, alcance y período) con valores distintos:
+  eso no es una suma, es un conflicto — tratalo con la regla de discrepancia de
+  abajo, no acá.
 - Comprobá fecha y actualidad cuando el dato pueda cambiar con el tiempo. Cada
   fuente incluye una línea «Fecha publicación»; usala. Poné freshness_verified=true
   solo si las fuentes que aceptaste están fechadas dentro de la ventana que el dato
@@ -345,6 +349,8 @@ Reglas obligatorias:
   ambas en relevant_source_ids y describí la discrepancia en resolved_scope (qué
   dice cada una y por qué no se pudo resolver), para que la respuesta final se lo
   comunique al usuario en vez de mostrar un único número como si no hubiera duda.
+  No pongas estas cifras en partial_values: no se están sumando, compiten entre sí
+  por el mismo dato.
 - Priorizá evidencia primaria, explícita, reciente y directamente relacionada con la
   pregunta. Ante varias fuentes que podrían servir, preferí semánticamente las que
   son páginas de referencia o estadísticas dedicadas a ese dato (ficha de jugador/
