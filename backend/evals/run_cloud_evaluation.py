@@ -66,7 +66,36 @@ def _trace_question(case: dict[str, object]) -> str:
     raise ValueError(f"Caso {case.get('id')} no contiene mensaje de usuario.")
 
 
+STREAM_TRANSPORT_RETRIES = 2
+STREAM_TRANSPORT_RETRY_DELAY_SECONDS = 3.0
+
+
 def _stream_case(
+    client: httpx.Client,
+    *,
+    base_url: str,
+    case: dict[str, object],
+) -> dict[str, object]:
+    attempts = 0
+    while True:
+        try:
+            result = _stream_case_once(client, base_url=base_url, case=case)
+        except httpx.TransportError as exc:
+            attempts += 1
+            if attempts > STREAM_TRANSPORT_RETRIES:
+                raise
+            print(
+                f"  (reintentando {case.get('id')} tras error de transporte: "
+                f"{exc!r}; intento {attempts}/{STREAM_TRANSPORT_RETRIES})"
+            )
+            time.sleep(STREAM_TRANSPORT_RETRY_DELAY_SECONDS)
+            continue
+        if attempts:
+            result["transport_retries"] = attempts
+        return result
+
+
+def _stream_case_once(
     client: httpx.Client,
     *,
     base_url: str,
