@@ -1,0 +1,77 @@
+name: Orion cloud diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cloud-prototype
+    paths:
+      - "backend/evals/diagnostic_24_cases.json"
+      - "backend/evals/run_cloud_evaluation.py"
+      - "backend/tests/test_cloud_evaluation_runner.py"
+      - ".github/workflows/cloud-diagnostic.yml"
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install -r backend/requirements.txt
+
+      - name: Verify evaluation runner
+        run: python -m unittest backend.tests.test_cloud_evaluation_runner -v
+
+      - name: Check Orion API secret
+        id: auth
+        env:
+          ORION_API_KEY: ${{ secrets.ORION_API_KEY }}
+        shell: bash
+        run: |
+          if [ -n "$ORION_API_KEY" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "ORION_API_KEY disponible para la evaluación."
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "ORION_API_KEY no está configurada como GitHub Actions secret."
+          fi
+
+      - name: Run 24-case Orion Cloud diagnostic
+        if: steps.auth.outputs.available == 'true'
+        env:
+          ORION_API_KEY: ${{ secrets.ORION_API_KEY }}
+        run: |
+          python -m backend.evals.run_cloud_evaluation \
+            --datasets diagnostic \
+            --output orion-cloud-diagnostic.json
+
+      - name: Upload diagnostic report
+        if: steps.auth.outputs.available == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orion-cloud-diagnostic
+          path: orion-cloud-diagnostic.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Explain skipped live evaluation
+        if: steps.auth.outputs.available != 'true'
+        run: |
+          echo "La batería quedó preparada pero no se ejecutó contra Render porque falta el secret ORION_API_KEY en GitHub Actions."
