@@ -204,6 +204,14 @@ class DiagnosticTrace:
                     ),
                     "correction_reason": getattr(review, "correction_reason", None),
                     "freshness_verified": getattr(review, "freshness_verified", None),
+                    "partial_values": [
+                        {
+                            "source_id": getattr(item, "source_id", ""),
+                            "label": getattr(item, "label", ""),
+                            "value": getattr(item, "value", None),
+                        }
+                        for item in getattr(review, "partial_values", ())
+                    ],
                     "audited": bool(getattr(review, "audited", True)),
                     "source_catalog": [
                         _source_payload(source, f"W{index}")

@@ -16,10 +16,12 @@ from backend.app.services.semantic_orchestrator import (
     collect_local_evidence,
     conservative_fallback_plan,
     create_semantic_plan,
+    PartialValue,
     format_reasoning_context,
     merge_web_sources,
     parse_evidence_review,
     parse_semantic_plan,
+    partial_sum_context,
     review_evidence,
 )
 from backend.app.services.web_research import WebSource
@@ -625,6 +627,128 @@ class SemanticOrchestratorTests(unittest.TestCase):
             [],
         )
         self.assertIn("Fecha publicación: 2026-08-20 (hace 7 días)", context)
+
+    def test_review_parses_partial_values(self) -> None:
+        review = parse_evidence_review(
+            """
+            {"sufficient":false,"relevant_source_ids":["W1","W2"],
+             "discarded_source_ids":[],
+             "missing_information":["confirmación de otras competiciones"],
+             "follow_up_web_query":null,"needs_clarification":false,
+             "clarifying_question":null,"resolved_scope":null,
+             "partial_values":[
+               {"source_id":"W1","label":"goles en liga","value":5},
+               {"source_id":"W2","label":"goles en copa","value":3}
+             ],
+             "reason":"no hay fuente con el total combinado"}
+            """
+        )
+        self.assertEqual(len(review.partial_values), 2)
+        self.assertEqual(review.partial_values[0].source_id, "W1")
+        self.assertEqual(review.partial_values[0].value, 5.0)
+
+    def test_partial_values_with_non_numeric_or_incomplete_entries_are_skipped(self) -> None:
+        review = parse_evidence_review(
+            """
+            {"sufficient":false,"relevant_source_ids":[],"discarded_source_ids":[],
+             "missing_information":[],"follow_up_web_query":null,
+             "needs_clarification":false,"clarifying_question":null,
+             "resolved_scope":null,
+             "partial_values":[
+               {"source_id":"W1","label":"sin valor numérico","value":"cinco"},
+               {"source_id":"","label":"sin fuente","value":3},
+               {"source_id":"W2","label":"","value":3}
+             ],
+             "reason":"ok"}
+            """
+        )
+        self.assertEqual(review.partial_values, ())
+
+    def test_partial_sum_context_computes_deterministic_total(self) -> None:
+        review = EvidenceReview(
+            sufficient=False,
+            relevant_source_ids=("W1", "W2"),
+            discarded_source_ids=(),
+            missing_information=("confirmación de otras competiciones",),
+            follow_up_web_query=None,
+            needs_clarification=False,
+            clarifying_question=None,
+            resolved_scope=None,
+            reason="ok",
+            partial_values=(
+                PartialValue(source_id="W1", label="goles en liga", value=5.0),
+                PartialValue(source_id="W2", label="goles en copa", value=3.0),
+            ),
+        )
+        context = partial_sum_context(review)
+        self.assertIn("goles en liga: 5.0 (fuente W1)", context)
+        self.assertIn("goles en copa: 3.0 (fuente W2)", context)
+        self.assertIn("Suma total = 8.0", context)
+        self.assertIn("RESULTADO DETERMINÍSTICO", context)
+
+    def test_partial_sum_context_needs_at_least_two_components(self) -> None:
+        review = EvidenceReview(
+            sufficient=False,
+            relevant_source_ids=("W1",),
+            discarded_source_ids=(),
+            missing_information=(),
+            follow_up_web_query=None,
+            needs_clarification=False,
+            clarifying_question=None,
+            resolved_scope=None,
+            reason="ok",
+            partial_values=(
+                PartialValue(source_id="W1", label="goles en liga", value=5.0),
+            ),
+        )
+        self.assertEqual(partial_sum_context(review), "")
+
+    def test_context_allows_deterministic_partial_sum_despite_core_limitation(self) -> None:
+        plan = parse_semantic_plan(
+            """
+            {"objective":"total combinado de goles del jugador","entities":[],
+             "constraints":[],"references":[],"information_needed":[],
+             "ambiguities":[],
+             "resolved_request":"Total combinado de goles del jugador en todas las competiciones",
+             "missing_for_core":["confirmación con fuente única del total combinado"],
+             "missing_for_precision":[],
+             "evidence_policy":"external","use_web":true,"use_local_data":false,
+             "use_calculator":false,"use_chart":false,"needs_clarification":false,
+             "clarifying_question":null,"web_query":"goles del jugador",
+             "local_document_names":[],"recommended_mode":"quick","reason":"ok"}
+            """
+        )
+        review = EvidenceReview(
+            sufficient=False,
+            relevant_source_ids=("W1", "W2"),
+            discarded_source_ids=(),
+            missing_information=("confirmación con fuente única del total combinado",),
+            follow_up_web_query=None,
+            needs_clarification=False,
+            clarifying_question=None,
+            resolved_scope=None,
+            reason="ok",
+            partial_values=(
+                PartialValue(source_id="W1", label="goles en liga", value=5.0),
+                PartialValue(source_id="W2", label="goles en copa", value=3.0),
+            ),
+        )
+        tool_context = partial_sum_context(review)
+        context = format_reasoning_context(
+            plan,
+            review,
+            [
+                WebSource("Liga", "https://a.test", "cinco goles en liga", "a.test"),
+                WebSource("Copa", "https://b.test", "tres goles en copa", "b.test"),
+            ],
+            [],
+            tool_context=tool_context,
+        )
+        self.assertIn("LIMITACIÓN NUCLEAR", context)
+        self.assertIn("Suma total = 8.0", context)
+        self.assertIn(
+            "sí podés presentarlo citando sus fuentes", context
+        )
 
     def test_insufficient_audited_review_merges_missing_into_core(self) -> None:
         plan = conservative_fallback_plan(

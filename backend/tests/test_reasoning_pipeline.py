@@ -346,6 +346,49 @@ class ReasoningPipelineTests(unittest.TestCase):
         self.assertTrue(bundle.review.sufficient)
         self.assertEqual(provider.responses, [])
 
+    def test_partial_values_are_summed_deterministically_into_final_context(self) -> None:
+        review_with_partial_values = """
+        {
+          "sufficient":false,
+          "relevant_source_ids":["W1","W2"],
+          "discarded_source_ids":[],
+          "missing_information":["confirmación con fuente única del total combinado"],
+          "follow_up_web_query":null,
+          "needs_clarification":false,
+          "clarifying_question":null,
+          "resolved_scope":null,
+          "partial_values":[
+            {"source_id":"W1","label":"goles en liga","value":5},
+            {"source_id":"W2","label":"goles en copa","value":3}
+          ],
+          "reason":"ninguna fuente confirma el total combinado, pero ambas partes están verificadas"
+        }
+        """
+        provider = FakeProvider([PLAN, review_with_partial_values])
+        settings = Settings(
+            web_enabled=True,
+            web_provider="tavily",
+            tavily_api_key="test",
+            semantic_orchestration=True,
+        )
+        request = ChatRequest(
+            messages=[{"role": "user", "content": "¿Cuántos goles totales lleva el jugador?"}]
+        )
+        sources = (
+            WebSource("Liga", "https://a.test", "cinco goles en liga", "a.test"),
+            WebSource("Copa", "https://b.test", "tres goles en copa", "b.test"),
+        )
+        with patch(
+            "backend.app.services.reasoning_pipeline.research",
+            new=AsyncMock(return_value=sources),
+        ):
+            bundle = asyncio.run(
+                build_reasoning_bundle(provider, request, settings, [])
+            )
+        self.assertFalse(bundle.review.sufficient)
+        self.assertIn("Suma total = 8.0", bundle.context)
+        self.assertIn("goles en liga: 5.0 (fuente W1)", bundle.context)
+
     def test_clarification_with_core_gap_short_circuits_before_web_and_review(self) -> None:
         plan_with_clarification = PLAN.replace(
             '"needs_clarification":false,\n  "clarifying_question":null,',

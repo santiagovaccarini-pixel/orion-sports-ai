@@ -13,7 +13,12 @@ from backend.app.domain.schemas import ChatMessage, SportContext
 from backend.app.providers.model_provider import ModelProvider, ModelResult
 from backend.app.services.knowledge_base import KnowledgeDocument
 from backend.app.services.local_retrieval import retrieve_local_chunks
-from backend.app.services.semantic_tools import CsvFilter, CsvOperationSpec
+from backend.app.services.semantic_tools import (
+    CsvFilter,
+    CsvOperationSpec,
+    SemanticToolError,
+    evaluate_expression,
+)
 from backend.app.services.web_research import WebSource
 
 
@@ -88,6 +93,17 @@ class SourceCheck:
 
 
 @dataclass(frozen=True, slots=True)
+class PartialValue:
+    """One verified, disjoint component of a total the reviewer could not find
+    confirmed in a single source (e.g. goals per competition when no source
+    states the combined figure)."""
+
+    source_id: str
+    label: str
+    value: float
+
+
+@dataclass(frozen=True, slots=True)
 class EvidenceReview:
     sufficient: bool
     relevant_source_ids: tuple[str, ...]
@@ -102,6 +118,7 @@ class EvidenceReview:
     correction_reason: str | None = None
     freshness_verified: bool | None = None
     source_checks: tuple[SourceCheck, ...] = ()
+    partial_values: tuple[PartialValue, ...] = ()
     # False cuando ningún revisor real evaluó la evidencia (atajos y fallbacks):
     # la etapa final no debe tratar el contrato como auditado en esos casos.
     audited: bool = True
@@ -282,6 +299,15 @@ Reglas obligatorias:
 - Una fuente solo puede ser relevante si responde a la misma entidad, métrica,
   alcance, período, competición/contexto y unidad que requiere la conversación. Un
   dato de un subconjunto no demuestra automáticamente el total del conjunto.
+- Cuando ninguna fuente única confirma el total combinado pedido, pero distintas
+  fuentes aceptadas verifican, cada una, un componente disjunto y sumable de ese
+  total (por ejemplo, cifras por sub-competición, sub-período u otra categoría que
+  en conjunto arman lo pedido), no descartes todo como insuficiente: completá
+  partial_values con cada componente verificado y su fuente. Solo incluí un
+  componente si estás seguro de que no se superpone con los demás y de que
+  corresponde exactamente a la misma entidad, unidad y alcance pedidos. No sumes
+  vos los componentes: una herramienta determinística hace la suma. Si falta un
+  componente para que la suma sea completa, decilo en missing_information.
 - Comprobá fecha y actualidad cuando el dato pueda cambiar con el tiempo. Cada
   fuente incluye una línea «Fecha publicación»; usala. Poné freshness_verified=true
   solo si las fuentes que aceptaste están fechadas dentro de la ventana que el dato
@@ -326,6 +352,9 @@ Devolvé exclusivamente un objeto JSON válido con estas claves:
   "source_checks": [
     {"source_id": "W1", "entity": true, "metric": true, "period": true,
      "competition_or_context": true, "unit": true}
+  ],
+  "partial_values": [
+    {"source_id": "W1", "label": "goles en liga", "value": 5}
   ],
   "reason": "explicación breve"
 }
@@ -431,6 +460,25 @@ def _source_checks(payload: dict[str, object]) -> tuple[SourceCheck, ...]:
             )
         )
     return tuple(checks)
+
+
+def _partial_values(payload: dict[str, object]) -> tuple[PartialValue, ...]:
+    value = payload.get("partial_values")
+    if not isinstance(value, list):
+        return ()
+    items: list[PartialValue] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        source_id = str(item.get("source_id") or "").strip()
+        label = str(item.get("label") or "").strip()
+        raw_value = item.get("value")
+        if not source_id or not label or isinstance(raw_value, bool):
+            continue
+        if not isinstance(raw_value, (int, float)):
+            continue
+        items.append(PartialValue(source_id=source_id, label=label, value=float(raw_value)))
+    return tuple(items)
 
 
 def _evidence_policy(payload: dict[str, object]) -> str:
@@ -566,6 +614,7 @@ def parse_evidence_review(value: str) -> EvidenceReview:
         correction_reason=_optional_string(payload, "correction_reason"),
         freshness_verified=_optional_boolean(payload, "freshness_verified"),
         source_checks=_source_checks(payload),
+        partial_values=_partial_values(payload),
         audited=True,
     )
 
@@ -745,6 +794,33 @@ def _source_date_line(source: WebSource) -> str:
     if source.published_date:
         return f"Fecha publicación: {source.published_date} (no interpretable)"
     return "Fecha publicación: no detectable"
+
+
+def partial_sum_context(review: EvidenceReview) -> str:
+    """Deterministically sum reviewer-verified disjoint components of a total
+    that no single accepted source stated combined (e.g. goals per
+    competition). The model never does this arithmetic itself."""
+
+    if len(review.partial_values) < 2:
+        return ""
+    expression = " + ".join(repr(item.value) for item in review.partial_values)
+    try:
+        total = evaluate_expression(expression)
+    except SemanticToolError:
+        return ""
+    breakdown = "\n".join(
+        f"- {item.label}: {item.value} (fuente {item.source_id})"
+        for item in review.partial_values
+    )
+    return (
+        "RESULTADO DETERMINÍSTICO (suma de componentes verificados por la "
+        "revisión; no fue calculado ni debe ser recalculado por el modelo):\n"
+        f"{breakdown}\nSuma total = {total}\n"
+        "Esta suma cubre únicamente los componentes verificados arriba. Si el "
+        "alcance pedido podría incluir otras categorías que no se encontraron, "
+        "aclaralo explícitamente en vez de presentar esta suma como el total "
+        "absoluto y definitivo."
+    )
 
 
 def _conversation_input(messages: Sequence[ChatMessage]) -> str:
@@ -944,7 +1020,11 @@ def format_reasoning_context(
             + "; ".join(contract.missing_for_core)
             + ". Declarale esta limitación al usuario de forma explícita y no "
             "emitas un juicio fuerte, una cifra presentada como confirmada ni una "
-            "recomendación categórica sobre ese núcleo."
+            "recomendación categórica sobre ese núcleo. Excepción: si más abajo hay "
+            "un RESULTADO DETERMINÍSTICO (suma de componentes verificados), sí "
+            "podés presentarlo citando sus fuentes, aclarando explícitamente qué "
+            "alcance cubre y que podría no ser el total absoluto si existen "
+            "categorías no encontradas."
         )
     elif contract.missing_for_precision:
         sections.append(
@@ -965,9 +1045,11 @@ def format_reasoning_context(
         sections.append(
             "POLÍTICA DE EVIDENCIA: esta consulta requiere evidencia externa/local. Si "
             "evidence_sufficient es false, no presentes una cifra o conclusión como "
-            "confirmada. No completes huecos con memoria del modelo. Si hay evidencia "
-            "parcial útil, identificá exactamente qué alcance sí respalda. Citá evidencia "
-            "web como [W1], [W2], etc."
+            "confirmada, salvo un RESULTADO DETERMINÍSTICO (suma de componentes "
+            "verificados) más abajo, que sí podés presentar citando sus fuentes y "
+            "aclarando su alcance. No completes huecos con memoria del modelo. Si hay "
+            "evidencia parcial útil, identificá exactamente qué alcance sí respalda. "
+            "Citá evidencia web como [W1], [W2], etc."
         )
     if tool_context:
         sections.append(

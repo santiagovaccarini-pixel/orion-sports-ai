@@ -21,6 +21,7 @@ from backend.app.services.semantic_orchestrator import (
     create_semantic_plan,
     format_reasoning_context,
     merge_web_sources,
+    partial_sum_context,
     review_evidence,
 )
 from backend.app.services.semantic_tools import execute_calculation, execute_csv_operation
@@ -619,6 +620,16 @@ async def build_reasoning_bundle(
                 "source_check_incomplete",
                 "Fuentes aceptadas sin coincidencia completa de entidad/métrica/"
                 "período/competición/unidad: " + ", ".join(incomplete_checks),
+            )
+
+    partial_sum = partial_sum_context(review)
+    if partial_sum:
+        tool_context = f"{tool_context}\n\n{partial_sum}" if tool_context else partial_sum
+        if trace is not None:
+            trace.record_guard(
+                "partial_sum_computed",
+                f"{len(review.partial_values)} componentes verificados sumados "
+                "determinísticamente porque ninguna fuente única confirmó el total.",
             )
 
     context = format_reasoning_context(
