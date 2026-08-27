@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from datetime import date, timedelta
 from unittest.mock import AsyncMock, patch
 
 from backend.app.core.config import Settings
@@ -11,6 +12,7 @@ from backend.app.providers.model_provider import (
     ModelResult,
 )
 from backend.app.services.reasoning_pipeline import build_reasoning_bundle
+from backend.app.services.web_reader import PageRead
 from backend.app.services.web_research import WebSource
 
 
@@ -193,6 +195,156 @@ class ReasoningPipelineTests(unittest.TestCase):
         )
         with self.assertRaises(ModelProviderUnavailableError):
             asyncio.run(build_reasoning_bundle(provider, request, settings, []))
+
+    def test_freshness_backstop_demotes_stale_acceptance_and_deepens(self) -> None:
+        volatile_plan = PLAN.replace(
+            '"evidence_policy":"external",',
+            '"evidence_policy":"external",\n'
+            '  "volatile_information":true,\n'
+            '  "recency_window_days":7,',
+        )
+        review_accepts_stale = """
+        {"sufficient":true,"relevant_source_ids":["W1"],"discarded_source_ids":[],
+         "missing_information":[],"follow_up_web_query":null,
+         "needs_clarification":false,"clarifying_question":null,
+         "resolved_scope":"resultado reciente","freshness_verified":true,
+         "reason":"acepta una fuente sin fecha comprobable"}
+        """
+        provider = FakeProvider([volatile_plan, review_accepts_stale, review_accepts_stale])
+        settings = Settings(
+            web_enabled=True,
+            web_provider="tavily",
+            tavily_api_key="test",
+            semantic_orchestration=True,
+            semantic_max_tool_rounds=2,
+        )
+        request = ChatRequest(
+            messages=[{"role": "user", "content": "¿Cómo salió el último partido?"}]
+        )
+        undated = (WebSource("Sin fecha", "https://a.test", "resultado", "a.test"),)
+        dated_read = PageRead(
+            source_id="W1",
+            title="Crónica",
+            url="https://a.test",
+            domain="a.test",
+            excerpt="resultado actualizado del partido",
+            published_date=(date.today() - timedelta(days=1)).isoformat(),
+        )
+        with (
+            patch(
+                "backend.app.services.reasoning_pipeline.research",
+                new=AsyncMock(return_value=undated),
+            ) as search,
+            patch(
+                "backend.app.services.reasoning_pipeline.read_source_pages",
+                new=AsyncMock(return_value=(dated_read,)),
+            ) as reader,
+        ):
+            bundle = asyncio.run(
+                build_reasoning_bundle(provider, request, settings, [])
+            )
+        # La primera aceptación sin fuente fechada se demueve una vez; la ronda
+        # extra abre la página, obtiene la fecha y la segunda revisión pasa.
+        self.assertEqual(search.await_count, 1)
+        reader.assert_awaited_once()
+        self.assertTrue(bundle.review.sufficient)
+        self.assertEqual(provider.responses, [])
+        self.assertTrue(bundle.web_sources[0].deepened)
+        self.assertEqual(
+            search.await_args.kwargs.get("recency_days"), 7
+        )
+
+    def test_freshness_backstop_leaves_insufficient_when_no_dated_source_found(self) -> None:
+        volatile_plan = PLAN.replace(
+            '"evidence_policy":"external",',
+            '"evidence_policy":"external",\n'
+            '  "volatile_information":true,\n'
+            '  "recency_window_days":7,',
+        )
+        review_accepts_stale = """
+        {"sufficient":true,"relevant_source_ids":["W1"],"discarded_source_ids":[],
+         "missing_information":[],"follow_up_web_query":null,
+         "needs_clarification":false,"clarifying_question":null,
+         "resolved_scope":"resultado reciente","freshness_verified":true,
+         "reason":"acepta una fuente sin fecha comprobable"}
+        """
+        provider = FakeProvider([volatile_plan, review_accepts_stale])
+        settings = Settings(
+            web_enabled=True,
+            web_provider="tavily",
+            tavily_api_key="test",
+            semantic_orchestration=True,
+        )
+        request = ChatRequest(
+            messages=[{"role": "user", "content": "¿Cómo salió el último partido?"}]
+        )
+        undated = (WebSource("Sin fecha", "https://a.test", "resultado", "a.test"),)
+        with (
+            patch(
+                "backend.app.services.reasoning_pipeline.research",
+                new=AsyncMock(return_value=undated),
+            ),
+            patch(
+                "backend.app.services.reasoning_pipeline.read_source_pages",
+                new=AsyncMock(return_value=()),
+            ),
+        ):
+            bundle = asyncio.run(
+                build_reasoning_bundle(provider, request, settings, [])
+            )
+        # Sin página fechada disponible, la democión persiste: la respuesta final
+        # recibe evidencia insuficiente y debe declarar la limitación.
+        self.assertFalse(bundle.review.sufficient)
+        self.assertTrue(
+            any(
+                "recencia" in item
+                for item in bundle.review.missing_information
+            )
+        )
+
+    def test_freshness_backstop_passes_with_dated_accepted_source(self) -> None:
+        volatile_plan = PLAN.replace(
+            '"evidence_policy":"external",',
+            '"evidence_policy":"external",\n'
+            '  "volatile_information":true,\n'
+            '  "recency_window_days":7,',
+        )
+        review_fresh = """
+        {"sufficient":true,"relevant_source_ids":["W1"],"discarded_source_ids":[],
+         "missing_information":[],"follow_up_web_query":null,
+         "needs_clarification":false,"clarifying_question":null,
+         "resolved_scope":"resultado reciente","freshness_verified":true,
+         "reason":"fuente fechada dentro de la ventana"}
+        """
+        provider = FakeProvider([volatile_plan, review_fresh])
+        settings = Settings(
+            web_enabled=True,
+            web_provider="tavily",
+            tavily_api_key="test",
+            semantic_orchestration=True,
+        )
+        request = ChatRequest(
+            messages=[{"role": "user", "content": "¿Cómo salió el último partido?"}]
+        )
+        dated = (
+            WebSource(
+                "Crónica",
+                "https://a.test",
+                "resultado",
+                "a.test",
+                published_date="2026-08-26",
+                published_age_days=1,
+            ),
+        )
+        with patch(
+            "backend.app.services.reasoning_pipeline.research",
+            new=AsyncMock(return_value=dated),
+        ):
+            bundle = asyncio.run(
+                build_reasoning_bundle(provider, request, settings, [])
+            )
+        self.assertTrue(bundle.review.sufficient)
+        self.assertEqual(provider.responses, [])
 
     def test_clarification_with_core_gap_short_circuits_before_web_and_review(self) -> None:
         plan_with_clarification = PLAN.replace(

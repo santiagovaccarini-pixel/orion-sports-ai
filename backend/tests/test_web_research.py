@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from datetime import date, timedelta
 from unittest.mock import AsyncMock, patch
 
 from backend.app.core.config import get_settings
@@ -13,8 +14,10 @@ from backend.app.services.web_research import (
     _relevant_excerpt,
     _search_domains,
     _tavily_sources,
+    _tavily_time_range,
     format_sources,
     is_web_request,
+    parse_published_date,
     research,
 )
 
@@ -135,6 +138,60 @@ class WebResearchTests(unittest.TestCase):
         self.assertEqual(result, fallback)
         tavily.assert_awaited_once()
         duckduckgo.assert_awaited_once()
+
+    def test_parse_published_date_accepts_common_formats(self) -> None:
+        self.assertEqual(
+            parse_published_date("2026-08-25T18:30:00Z"), date(2026, 8, 25)
+        )
+        self.assertEqual(parse_published_date("2026-08-25"), date(2026, 8, 25))
+        self.assertEqual(parse_published_date("25/08/2026"), date(2026, 8, 25))
+        self.assertIsNone(parse_published_date("hace dos días"))
+        self.assertIsNone(parse_published_date(None))
+        self.assertIsNone(parse_published_date("   "))
+
+    def test_tavily_sources_capture_published_date_and_age(self) -> None:
+        recent = (date.today() - timedelta(days=3)).isoformat()
+        payload = {
+            "results": [
+                {
+                    "title": "Crónica del partido",
+                    "url": "https://diario.example/cronica",
+                    "content": "Contenido del partido con longitud suficiente para revisión.",
+                    "published_date": recent,
+                },
+                {
+                    "title": "Página sin fecha",
+                    "url": "https://otro.example/nota",
+                    "content": "Contenido alternativo suficientemente extenso para revisar.",
+                },
+            ]
+        }
+        sources = _tavily_sources(payload, limit=6)
+        self.assertEqual(sources[0].published_date, recent)
+        self.assertEqual(sources[0].published_age_days, 3)
+        self.assertIsNone(sources[1].published_date)
+        self.assertIsNone(sources[1].published_age_days)
+
+    def test_tavily_time_range_maps_window_days(self) -> None:
+        self.assertEqual(_tavily_time_range(1), "day")
+        self.assertEqual(_tavily_time_range(7), "week")
+        self.assertEqual(_tavily_time_range(30), "month")
+        self.assertEqual(_tavily_time_range(200), "year")
+
+    def test_research_propagates_recency_window_to_tavily(self) -> None:
+        with patch(
+            "backend.app.services.web_research._research_tavily",
+            new=AsyncMock(return_value=(WebSource("A", "https://a.test", "x" * 50, "a.test"),)),
+        ) as tavily:
+            asyncio.run(
+                research(
+                    "consulta volátil",
+                    provider="tavily",
+                    tavily_api_key="secret-for-test",
+                    recency_days=14,
+                )
+            )
+        self.assertEqual(tavily.await_args.kwargs["recency_days"], 14)
 
     def test_explicit_tavily_does_not_fall_back_silently(self) -> None:
         with (

@@ -28,6 +28,9 @@ from backend.app.services.web_reader import MAX_READ_PAGES, apply_page_reads, re
 from backend.app.services.web_research import WebSource, research
 
 
+DEFAULT_FRESHNESS_WINDOW_DAYS = 30
+
+
 @dataclass(frozen=True, slots=True)
 class ReasoningBundle:
     plan: SemanticPlan
@@ -176,6 +179,7 @@ async def _search(
     *,
     round_number: int,
     trace: DiagnosticTrace | None = None,
+    recency_days: int | None = None,
 ) -> tuple[WebSource, ...]:
     started = perf_counter()
     sources = await research(
@@ -185,8 +189,15 @@ async def _search(
         result_limit=max(6, settings.web_minimum_sources * 2),
         provider=settings.web_provider,
         tavily_api_key=settings.tavily_api_key,
+        recency_days=recency_days,
     )
     if trace is not None:
+        if recency_days is not None:
+            trace.record_guard(
+                "recency_window_applied",
+                f"Búsqueda acotada a los últimos {recency_days} días porque el plan "
+                "declaró información volátil.",
+            )
         trace.record_search(
             round_number=round_number,
             query=query,
@@ -194,6 +205,72 @@ async def _search(
             duration_ms=(perf_counter() - started) * 1000,
         )
     return sources
+
+
+def _sorted_by_recency(sources: tuple[WebSource, ...]) -> tuple[WebSource, ...]:
+    """Stable sort: dated sources first (newest first), undated ones keep order."""
+
+    return tuple(
+        sorted(
+            sources,
+            key=lambda source: (
+                source.published_age_days is None,
+                source.published_age_days
+                if source.published_age_days is not None
+                else 0,
+            ),
+        )
+    )
+
+
+def _apply_freshness_backstop(
+    plan: SemanticPlan,
+    review: EvidenceReview,
+    web_sources: tuple[WebSource, ...],
+    *,
+    already_triggered: bool,
+    trace: DiagnosticTrace | None,
+) -> tuple[EvidenceReview, bool]:
+    """Deterministic check on structured dates: a volatile answer cannot be accepted
+    without a dated, in-window accepted source. Demotes sufficiency at most once."""
+
+    if (
+        already_triggered
+        or not plan.volatile_information
+        or not review.audited
+        or not review.sufficient
+        or review.needs_clarification
+    ):
+        return review, already_triggered
+    window = plan.recency_window_days or DEFAULT_FRESHNESS_WINDOW_DAYS
+    accepted_ids = {
+        source_id.strip().upper() for source_id in review.relevant_source_ids
+    }
+    fresh_accepted = any(
+        source.published_age_days is not None
+        and source.published_age_days <= window
+        for index, source in enumerate(web_sources, start=1)
+        if f"W{index}" in accepted_ids
+    )
+    if review.freshness_verified is True and fresh_accepted:
+        return review, already_triggered
+    demoted = replace(
+        review,
+        sufficient=False,
+        missing_information=(
+            *review.missing_information,
+            "Confirmación con una fuente fechada dentro de la ventana de "
+            "recencia requerida.",
+        ),
+    )
+    if trace is not None:
+        trace.record_guard(
+            "freshness_backstop_triggered",
+            "La revisión aceptó información volátil sin fuente fechada dentro de "
+            f"la ventana de {window} días; Orion exige una verificación más antes "
+            "de darla por suficiente.",
+        )
+    return demoted, True
 
 
 def _normalized_query(value: str) -> str:
@@ -412,6 +489,8 @@ async def build_reasoning_bundle(
     review_round = 0
     seen_queries: set[str] = set()
     attempted_page_reads: set[str] = set()
+    recency_days = plan.recency_window_days if plan.volatile_information else None
+    freshness_backstop_used = False
 
     if plan.use_web and settings.web_enabled:
         initial_query = plan.web_query or plan.objective
@@ -425,7 +504,12 @@ async def build_reasoning_bundle(
                 settings,
                 round_number=search_rounds,
                 trace=trace,
+                recency_days=recency_days,
             )
+            if plan.volatile_information and web_sources:
+                # Only before the first review: W ids become positional references
+                # for reviewer, page reader and final answer after that.
+                web_sources = _sorted_by_recency(web_sources)
 
     review_round += 1
     _notify_stage(on_stage, "reviewing")
@@ -436,6 +520,13 @@ async def build_reasoning_bundle(
         web_sources,
         review_evidence_items,
         round_number=review_round,
+        trace=trace,
+    )
+    review, freshness_backstop_used = _apply_freshness_backstop(
+        plan,
+        review,
+        web_sources,
+        already_triggered=freshness_backstop_used,
         trace=trace,
     )
 
@@ -464,6 +555,13 @@ async def build_reasoning_bundle(
                     round_number=review_round,
                     trace=trace,
                 )
+                review, freshness_backstop_used = _apply_freshness_backstop(
+                    plan,
+                    review,
+                    web_sources,
+                    already_triggered=freshness_backstop_used,
+                    trace=trace,
+                )
                 continue
 
         follow_up = review.follow_up_web_query
@@ -490,6 +588,7 @@ async def build_reasoning_bundle(
             settings,
             round_number=search_rounds,
             trace=trace,
+            recency_days=recency_days,
         )
         web_sources = merge_web_sources(web_sources, incoming)
         review_round += 1
@@ -503,6 +602,24 @@ async def build_reasoning_bundle(
             round_number=review_round,
             trace=trace,
         )
+        review, freshness_backstop_used = _apply_freshness_backstop(
+            plan,
+            review,
+            web_sources,
+            already_triggered=freshness_backstop_used,
+            trace=trace,
+        )
+
+    if trace is not None and review.source_checks:
+        incomplete_checks = [
+            check.source_id for check in review.source_checks if not check.complete
+        ]
+        if incomplete_checks:
+            trace.record_guard(
+                "source_check_incomplete",
+                "Fuentes aceptadas sin coincidencia completa de entidad/métrica/"
+                "período/competición/unidad: " + ", ".join(incomplete_checks),
+            )
 
     context = format_reasoning_context(
         plan,

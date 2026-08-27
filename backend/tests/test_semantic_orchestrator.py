@@ -347,6 +347,11 @@ class SemanticOrchestratorTests(unittest.TestCase):
         self.assertIn('"discarded_source_ids": ["W2"]', context)
         self.assertIn('"original_user_request": "Pregunta original"', context)
         self.assertIn("No conviertas fuentes descartadas en hechos", context)
+        self.assertIn("[W1] Útil", context)
+        self.assertIn("dato", context)
+        self.assertIn("FUENTES DESCARTADAS POR LA REVISIÓN", context)
+        self.assertIn("[W2] No comparable", context)
+        self.assertNotIn("otro dato", context)
 
     def test_plan_parses_semantic_contract_fields(self) -> None:
         plan = parse_semantic_plan(
@@ -519,6 +524,74 @@ class SemanticOrchestratorTests(unittest.TestCase):
         self.assertIn("CONTRATO SEMÁNTICO AUDITADO", context)
         self.assertIn("respondé exactamente a resolved_request", context)
         self.assertNotIn("La petición original del usuario manda sobre el plan", context)
+
+    def test_reviewer_sees_dates_and_wider_clip_for_deepened_sources(self) -> None:
+        plan = conservative_fallback_plan(
+            [ChatMessage(role="user", content="Pregunta")],
+            web_available=True,
+            documents=[],
+        )
+        provider = FakePlanningProvider(
+            [
+                """
+                {"sufficient":true,"relevant_source_ids":["W1"],
+                 "discarded_source_ids":[],"missing_information":[],
+                 "follow_up_web_query":null,"needs_clarification":false,
+                 "clarifying_question":null,"resolved_scope":"ok","reason":"ok"}
+                """
+            ]
+        )
+        deepened = WebSource(
+            "Profunda",
+            "https://a.test/nota",
+            "D" * 5_000,
+            "a.test",
+            published_date="2026-08-25",
+            published_age_days=2,
+            deepened=True,
+        )
+        shallow = WebSource("Superficial", "https://b.test/x", "S" * 5_000, "b.test")
+        asyncio.run(review_evidence(provider, plan, [deepened, shallow], []))
+        sent = provider.calls[0]["messages"][0].content
+        self.assertIn("Fecha publicación: 2026-08-25 (hace 2 días)", sent)
+        self.assertIn("Fecha publicación: no detectable", sent)
+        self.assertIn("D" * 2_900, sent)
+        self.assertNotIn("D" * 3_100, sent)
+        self.assertNotIn("S" * 1_200, sent)
+
+    def test_context_includes_date_line_for_relevant_sources(self) -> None:
+        plan = conservative_fallback_plan(
+            [ChatMessage(role="user", content="Pregunta")],
+            web_available=True,
+            documents=[],
+        )
+        review = EvidenceReview(
+            sufficient=True,
+            relevant_source_ids=("W1",),
+            discarded_source_ids=(),
+            missing_information=(),
+            follow_up_web_query=None,
+            needs_clarification=False,
+            clarifying_question=None,
+            resolved_scope="ok",
+            reason="ok",
+        )
+        context = format_reasoning_context(
+            plan,
+            review,
+            [
+                WebSource(
+                    "Con fecha",
+                    "https://a.test",
+                    "dato fechado",
+                    "a.test",
+                    published_date="2026-08-20",
+                    published_age_days=7,
+                )
+            ],
+            [],
+        )
+        self.assertIn("Fecha publicación: 2026-08-20 (hace 7 días)", context)
 
     def test_insufficient_audited_review_merges_missing_into_core(self) -> None:
         plan = conservative_fallback_plan(

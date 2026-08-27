@@ -13,7 +13,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
-from backend.app.services.web_research import WebSource
+from backend.app.services.web_research import WebSource, published_age_days
 
 
 MAX_PAGE_BYTES = 750_000
@@ -378,10 +378,14 @@ def apply_page_reads(
             continue
         index = int(match.group(1)) - 1
         if 0 <= index < len(enriched):
+            published = read.published_date or enriched[index].published_date
             enriched[index] = WebSource(
                 title=read.title,
                 url=read.url,
                 excerpt=read.excerpt,
                 domain=read.domain,
+                published_date=published,
+                published_age_days=published_age_days(published),
+                deepened=True,
             )
     return tuple(enriched)

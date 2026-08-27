@@ -77,6 +77,9 @@ class WebReaderTests(unittest.TestCase):
         enriched = apply_page_reads(sources, reads)
         self.assertEqual(len(enriched), 1)
         self.assertIn("95 goles oficiales", enriched[0].excerpt)
+        self.assertEqual(enriched[0].published_date, "2026-08-25T10:00:00Z")
+        self.assertIsInstance(enriched[0].published_age_days, int)
+        self.assertTrue(enriched[0].deepened)
 
     def test_reader_validates_redirect_destination_before_following(self) -> None:
         requests: list[str] = []

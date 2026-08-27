@@ -4,7 +4,7 @@ import os
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from html import unescape
 from urllib.parse import parse_qs, quote_plus, urlparse
 
@@ -53,6 +53,40 @@ class WebSource:
     url: str
     excerpt: str
     domain: str
+    published_date: str | None = None
+    published_age_days: int | None = None
+    deepened: bool = False
+
+
+def parse_published_date(value: str | None) -> date | None:
+    """Parse a detected publication date string into a date, or None."""
+
+    if not value:
+        return None
+    clean = value.strip()
+    if not clean:
+        return None
+    try:
+        return datetime.fromisoformat(clean.replace("Z", "+00:00")).date()
+    except ValueError:
+        pass
+    try:
+        return date.fromisoformat(clean[:10])
+    except ValueError:
+        pass
+    for pattern in ("%d/%m/%Y", "%Y/%m/%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(clean[:10], pattern).date()
+        except ValueError:
+            continue
+    return None
+
+
+def published_age_days(value: str | None) -> int | None:
+    parsed = parse_published_date(value)
+    if parsed is None:
+        return None
+    return max(0, (date.today() - parsed).days)
 
 
 def _fold(value: str) -> str:
@@ -284,10 +318,30 @@ def _tavily_sources(
         if not domain:
             continue
         seen_urls.add(url)
-        sources.append(WebSource(title, url, excerpt[:1800], domain))
+        published = str(item.get("published_date") or "").strip() or None
+        sources.append(
+            WebSource(
+                title,
+                url,
+                excerpt[:1800],
+                domain,
+                published_date=published,
+                published_age_days=published_age_days(published),
+            )
+        )
         if len(sources) >= limit:
             break
     return tuple(sources)
+
+
+def _tavily_time_range(recency_days: int) -> str:
+    if recency_days <= 1:
+        return "day"
+    if recency_days <= 7:
+        return "week"
+    if recency_days <= 31:
+        return "month"
+    return "year"
 
 
 async def _research_tavily(
@@ -296,17 +350,23 @@ async def _research_tavily(
     *,
     api_key: str,
     result_limit: int,
+    recency_days: int | None = None,
 ) -> tuple[WebSource, ...]:
+    payload: dict[str, object] = {
+        "query": query,
+        "search_depth": "basic",
+        "max_results": max(result_limit, 6),
+        "include_answer": False,
+    }
+    if recency_days is not None:
+        # Structural recency constraint: the planner declared the answer volatile,
+        # so the search itself is bounded in time instead of trusting ranking.
+        payload["time_range"] = _tavily_time_range(recency_days)
     try:
         response = await client.post(
             "https://api.tavily.com/search",
             headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "query": query,
-                "search_depth": "basic",
-                "max_results": max(result_limit, 6),
-                "include_answer": False,
-            },
+            json=payload,
         )
         response.raise_for_status()
         return _tavily_sources(response.json(), limit=result_limit)
@@ -406,6 +466,7 @@ async def research(
     result_limit: int = 6,
     provider: str = "auto",
     tavily_api_key: str | None = None,
+    recency_days: int | None = None,
 ) -> tuple[WebSource, ...]:
     configured_provider = os.getenv("ORION_WEB_PROVIDER", provider).strip().lower()
     if configured_provider not in {"auto", "tavily", "duckduckgo"}:
@@ -423,6 +484,7 @@ async def research(
                 query,
                 api_key=configured_tavily_key,
                 result_limit=result_limit,
+                recency_days=recency_days,
             )
             if tavily_sources or configured_provider == "tavily":
                 return tavily_sources

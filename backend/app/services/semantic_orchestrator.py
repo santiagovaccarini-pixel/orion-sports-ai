@@ -16,7 +16,9 @@ from backend.app.services.semantic_tools import CsvFilter, CsvOperationSpec
 from backend.app.services.web_research import WebSource
 
 
-MAX_REVIEW_INPUT_CHARACTERS = 19_000
+MAX_REVIEW_INPUT_CHARACTERS = 28_000
+REVIEW_SOURCE_CLIP = 1_100
+REVIEW_DEEPENED_SOURCE_CLIP = 3_000
 VALID_EVIDENCE_POLICIES = frozenset({"model_knowledge", "external", "local", "mixed"})
 ModelResultCallback = Callable[[str, ModelResult], None]
 
@@ -184,6 +186,12 @@ Reglas obligatorias:
 - No supongas que un dato del modelo está actualizado. Si el hecho puede haber
   cambiado con el tiempo y la respuesta necesita el valor actual, la política no puede
   ser model_knowledge.
+- Marcá volatile_information=true cuando la respuesta correcta pueda haber cambiado
+  y se necesite el valor vigente (resultados, totales acumulados, cargos, plantillas,
+  calendarios). En ese caso estimá en recency_window_days una ventana razonable en
+  días para el tipo de dato (un resultado reciente: pocos días; un total acumulado o
+  un cargo: semanas). Si el conocimiento pedido es estable, volatile_information=false
+  y recency_window_days=null.
 - Los documentos locales y la web son herramientas complementarias. Podés elegir
   ninguna, una o ambas según lo que realmente necesite la pregunta.
 - La política y las herramientas deben ser coherentes: external requiere web si está
@@ -226,6 +234,8 @@ Devolvé exclusivamente un objeto JSON válido con estas claves:
   "ambiguities": ["..."],
   "missing_for_core": ["..."],
   "missing_for_precision": ["..."],
+  "volatile_information": false,
+  "recency_window_days": null,
   "evidence_policy": "model_knowledge" or "external" or "local" or "mixed",
   "use_web": true,
   "use_local_data": false,
@@ -271,7 +281,17 @@ Reglas obligatorias:
 - Una fuente solo puede ser relevante si responde a la misma entidad, métrica,
   alcance, período, competición/contexto y unidad que requiere la conversación. Un
   dato de un subconjunto no demuestra automáticamente el total del conjunto.
-- Comprobá fecha y actualidad cuando el dato pueda cambiar con el tiempo.
+- Comprobá fecha y actualidad cuando el dato pueda cambiar con el tiempo. Cada
+  fuente incluye una línea «Fecha publicación»; usala. Poné freshness_verified=true
+  solo si las fuentes que aceptaste están fechadas dentro de la ventana que el dato
+  requiere; si el dato no es volátil, dejá freshness_verified=null. Para afirmar que
+  algo es «lo último» (último partido, total actual), la evidencia debe mostrar que
+  no existe un evento posterior, no solo un evento reciente.
+- Completá source_checks para cada fuente que aceptes: confirmá una por una que la
+  fuente habla de la misma entidad, la misma métrica, el mismo período, la misma
+  competición/contexto y la misma unidad que la conversación requiere. Un false en
+  cualquiera de esas dimensiones normalmente significa que la fuente no puede
+  respaldar la afirmación tal cual.
 - Si dos cifras parecen contradictorias, primero evaluá si en realidad miden cosas
   distintas. No las presentes como discrepancia del mismo dato sin demostrarlo.
 - Priorizá evidencia primaria, explícita, reciente y directamente relacionada con la
@@ -301,6 +321,11 @@ Devolvé exclusivamente un objeto JSON válido con estas claves:
   "resolved_scope": "alcance que realmente respalda la evidencia" or null,
   "corrected_resolved_request": "petición correcta completa" or null,
   "correction_reason": "por qué el plan malinterpretó el pedido" or null,
+  "freshness_verified": true or false or null,
+  "source_checks": [
+    {"source_id": "W1", "entity": true, "metric": true, "period": true,
+     "competition_or_context": true, "unit": true}
+  ],
   "reason": "explicación breve"
 }
 """.strip()
@@ -709,6 +734,17 @@ def _clip(value: str, limit: int) -> str:
     return value[: limit - 1].rstrip() + "…"
 
 
+def _source_date_line(source: WebSource) -> str:
+    if source.published_date and source.published_age_days is not None:
+        return (
+            f"Fecha publicación: {source.published_date} "
+            f"(hace {source.published_age_days} días)"
+        )
+    if source.published_date:
+        return f"Fecha publicación: {source.published_date} (no interpretable)"
+    return "Fecha publicación: no detectable"
+
+
 def _conversation_input(messages: Sequence[ChatMessage]) -> str:
     if not messages:
         return "(no disponible)"
@@ -762,7 +798,14 @@ def _review_input(
     if web_sources:
         web_blocks = [
             f"W{index} | {source.title}\nURL: {source.url}\n"
-            f"Dominio: {source.domain}\nExtracto: {_clip(source.excerpt, 1_100)}"
+            f"Dominio: {source.domain}\n{_source_date_line(source)}\n"
+            "Extracto: "
+            + _clip(
+                source.excerpt,
+                REVIEW_DEEPENED_SOURCE_CLIP
+                if source.deepened
+                else REVIEW_SOURCE_CLIP,
+            )
             for index, source in enumerate(web_sources, start=1)
         ]
         parts.append("EVIDENCIA WEB:\n" + "\n\n".join(web_blocks))
@@ -927,13 +970,31 @@ def format_reasoning_context(
             + "\nUsá estos resultados tal como fueron calculados; no los reemplaces por una estimación."
         )
     if web_sources:
-        sections.append(
-            "FUENTES WEB:\n"
-            + "\n\n".join(
-                f"[W{index}] {source.title}\nURL: {source.url}\nExtracto: {source.excerpt}"
-                for index, source in enumerate(web_sources, start=1)
+        relevant_ids = {
+            source_id.strip().upper() for source_id in review.relevant_source_ids
+        }
+        # Conservative fallback: with no real audit and no relevance decision the
+        # final stage still needs the evidence, guarded by the insufficiency block.
+        include_all = not relevant_ids and not review.audited
+        included_blocks: list[str] = []
+        excluded_blocks: list[str] = []
+        for index, source in enumerate(web_sources, start=1):
+            source_id = f"W{index}"
+            if include_all or source_id in relevant_ids:
+                included_blocks.append(
+                    f"[{source_id}] {source.title}\nURL: {source.url}\n"
+                    f"{_source_date_line(source)}\nExtracto: {source.excerpt}"
+                )
+            else:
+                excluded_blocks.append(f"[{source_id}] {source.title}")
+        if included_blocks:
+            sections.append("FUENTES WEB:\n" + "\n\n".join(included_blocks))
+        if excluded_blocks:
+            sections.append(
+                "FUENTES DESCARTADAS POR LA REVISIÓN (solo referencia; su contenido "
+                "no está disponible y no pueden citarse como hechos):\n"
+                + "\n".join(excluded_blocks)
             )
-        )
     if local_evidence:
         sections.append(
             "DATOS LOCALES/HERRAMIENTAS:\n"
