@@ -667,16 +667,45 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
         try:
             if settings.semantic_orchestration:
                 trace = _start_trace(request, settings.diagnostics_enabled)
-                # All potentially slow planning/search work happens inside the stream
-                # generator so the HTTP response is opened before research begins.
+                # First visible byte before any slow work: the client sees activity
+                # while planning/search/review still run inside the generator.
+                last_stage = "planning"
+                yield _ndjson({"type": "stage", "stage": last_stage})
                 await provider.preflight(SelectedMode.QUICK)
-                bundle = await build_reasoning_bundle(
-                    provider,
-                    request,
-                    settings,
-                    _documents(),
-                    trace=trace,
+                stage_events: asyncio.Queue[str] = asyncio.Queue()
+                bundle_task = asyncio.create_task(
+                    build_reasoning_bundle(
+                        provider,
+                        request,
+                        settings,
+                        _documents(),
+                        trace=trace,
+                        on_stage=stage_events.put_nowait,
+                    )
                 )
+                try:
+                    while not bundle_task.done():
+                        stage_future = asyncio.ensure_future(stage_events.get())
+                        await asyncio.wait(
+                            {stage_future, bundle_task},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if stage_future.done():
+                            stage = stage_future.result()
+                            if stage != last_stage:
+                                last_stage = stage
+                                yield _ndjson({"type": "stage", "stage": stage})
+                        else:
+                            stage_future.cancel()
+                    while not stage_events.empty():
+                        stage = stage_events.get_nowait()
+                        if stage != last_stage:
+                            last_stage = stage
+                            yield _ndjson({"type": "stage", "stage": stage})
+                    bundle = await bundle_task
+                except BaseException:
+                    bundle_task.cancel()
+                    raise
                 prepared = await _prepare_selected_chat(
                     request,
                     provider=provider,

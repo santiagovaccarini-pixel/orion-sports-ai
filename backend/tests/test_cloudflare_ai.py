@@ -395,6 +395,124 @@ class CloudflareAIProviderTests(unittest.TestCase):
             with self.assertRaises(CloudAIUnavailableError):
                 asyncio.run(consume())
 
+    def _collect_stream_events(self, body: str) -> list:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                request=request,
+                text=body,
+                headers={"content-type": "text/event-stream"},
+            )
+
+        transport = httpx.MockTransport(handler)
+        real_async_client = httpx.AsyncClient
+
+        def client_factory(*_args, **kwargs):
+            return real_async_client(transport=transport, timeout=kwargs.get("timeout"))
+
+        client = CloudflareAIClient(
+            Settings(cloudflare_account_id="account", cloudflare_api_token="token")
+        )
+
+        async def collect_events():
+            return [
+                event
+                async for event in client.chat_stream(
+                    mode=SelectedMode.QUICK,
+                    messages=[ChatMessage(role="user", content="Pregunta")],
+                    system_prompt="Respondé.",
+                )
+            ]
+
+        with patch(
+            "backend.app.providers.cloudflare_ai.httpx.AsyncClient",
+            side_effect=client_factory,
+        ):
+            return asyncio.run(collect_events())
+
+    def test_stream_accepts_events_wrapped_in_cloudflare_result_envelope(self) -> None:
+        completed = _responses_json("respuesta", input_tokens=11, output_tokens=4)
+        body = (
+            "data: "
+            + json.dumps(
+                {"result": {"type": "response.output_text.delta", "delta": "respuesta"}}
+            )
+            + "\n\n"
+            + "data: "
+            + json.dumps({"result": {"type": "response.completed", "response": completed}})
+            + "\n\n"
+            + "data: [DONE]\n\n"
+        )
+        events = self._collect_stream_events(body)
+        self.assertEqual("".join(event.content for event in events), "respuesta")
+        self.assertTrue(events[-1].done)
+        self.assertEqual(events[-1].finish_reason, "completed")
+        self.assertEqual(events[-1].prompt_tokens, 11)
+
+    def test_stream_accepts_ndjson_lines_without_sse_prefix(self) -> None:
+        completed = _responses_json("hola mundo")
+        body = (
+            json.dumps({"type": "response.output_text.delta", "delta": "hola mundo"})
+            + "\n"
+            + json.dumps({"type": "response.completed", "response": completed})
+            + "\n"
+        )
+        events = self._collect_stream_events(body)
+        self.assertEqual("".join(event.content for event in events), "hola mundo")
+        self.assertTrue(events[-1].done)
+        self.assertEqual(events[-1].finish_reason, "completed")
+
+    def test_stream_output_text_done_without_prior_deltas_emits_text_once(self) -> None:
+        completed = _responses_json("texto completo")
+        body = (
+            'data: {"type":"response.output_text.done","text":"texto completo"}\n\n'
+            + "data: "
+            + json.dumps({"type": "response.completed", "response": completed})
+            + "\n\n"
+        )
+        events = self._collect_stream_events(body)
+        self.assertEqual("".join(event.content for event in events), "texto completo")
+        self.assertTrue(events[-1].done)
+
+    def test_stream_output_text_done_after_deltas_is_not_duplicated(self) -> None:
+        completed = _responses_json("hola")
+        body = (
+            'data: {"type":"response.output_text.delta","delta":"hola"}\n\n'
+            + 'data: {"type":"response.output_text.done","text":"hola"}\n\n'
+            + "data: "
+            + json.dumps({"type": "response.completed", "response": completed})
+            + "\n\n"
+        )
+        events = self._collect_stream_events(body)
+        self.assertEqual("".join(event.content for event in events), "hola")
+
+    def test_stream_accepts_bare_response_object_as_terminal(self) -> None:
+        completed = _responses_json("dato", input_tokens=3, output_tokens=2)
+        body = (
+            'data: {"type":"response.output_text.delta","delta":"dato"}\n\n'
+            + "data: "
+            + json.dumps(completed)
+            + "\n\n"
+        )
+        events = self._collect_stream_events(body)
+        self.assertEqual("".join(event.content for event in events), "dato")
+        self.assertTrue(events[-1].done)
+        self.assertEqual(events[-1].finish_reason, "completed")
+        self.assertEqual(events[-1].prompt_tokens, 3)
+
+    def test_stream_closed_without_terminal_but_with_content_completes(self) -> None:
+        body = 'data: {"type":"response.output_text.delta","delta":"parcial visible"}\n\n'
+        events = self._collect_stream_events(body)
+        self.assertEqual("".join(event.content for event in events), "parcial visible")
+        self.assertTrue(events[-1].done)
+        self.assertEqual(events[-1].finish_reason, "completed")
+        self.assertIsNone(events[-1].prompt_tokens)
+
+    def test_stream_closed_without_terminal_and_without_content_still_fails(self) -> None:
+        body = 'data: {"type":"response.created"}\n\n'
+        with self.assertRaises(CloudAIUnavailableError):
+            self._collect_stream_events(body)
+
 
 if __name__ == "__main__":
     unittest.main()

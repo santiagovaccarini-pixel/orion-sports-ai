@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Sequence
+from typing import Callable, Sequence
 
 from backend.app.core.config import Settings
 from backend.app.domain.models import SelectedMode
@@ -48,6 +48,11 @@ def _record_model_result(
 ) -> None:
     if trace is not None:
         trace.record_model_call(stage, result)
+
+
+def _notify_stage(on_stage: Callable[[str], None] | None, stage: str) -> None:
+    if on_stage is not None:
+        on_stage(stage)
 
 
 async def _plan(
@@ -325,6 +330,7 @@ async def build_reasoning_bundle(
     documents: Sequence[KnowledgeDocument],
     *,
     trace: DiagnosticTrace | None = None,
+    on_stage: Callable[[str], None] | None = None,
 ) -> ReasoningBundle:
     """Understand, gather evidence, deepen relevant pages, execute tools and review."""
 
@@ -336,6 +342,7 @@ async def build_reasoning_bundle(
         )
 
     pipeline_started = perf_counter()
+    _notify_stage(on_stage, "planning")
     plan = await _plan(provider, request, settings, documents, trace)
     selected_mode = _selected_mode(request, plan)
     if trace is not None:
@@ -366,6 +373,7 @@ async def build_reasoning_bundle(
         if normalized:
             seen_queries.add(normalized)
             search_rounds = 1
+            _notify_stage(on_stage, "searching")
             web_sources = await _search(
                 initial_query,
                 settings,
@@ -374,6 +382,7 @@ async def build_reasoning_bundle(
             )
 
     review_round += 1
+    _notify_stage(on_stage, "reviewing")
     review = await _review(
         provider,
         request,
@@ -389,6 +398,7 @@ async def build_reasoning_bundle(
         # semantic reviewer itself marked relevant. This makes page opening model-led
         # while Python remains responsible for bounded/safe network execution.
         if web_sources and len(attempted_page_reads) < MAX_READ_PAGES:
+            _notify_stage(on_stage, "reading")
             web_sources, deepened = await _deepen_relevant_web_sources(
                 request,
                 review,
@@ -398,6 +408,7 @@ async def build_reasoning_bundle(
             )
             if deepened:
                 review_round += 1
+                _notify_stage(on_stage, "reviewing")
                 review = await _review(
                     provider,
                     request,
@@ -427,6 +438,7 @@ async def build_reasoning_bundle(
             break
         seen_queries.add(normalized)
         search_rounds += 1
+        _notify_stage(on_stage, "searching")
         incoming = await _search(
             follow_up,
             settings,
@@ -435,6 +447,7 @@ async def build_reasoning_bundle(
         )
         web_sources = merge_web_sources(web_sources, incoming)
         review_round += 1
+        _notify_stage(on_stage, "reviewing")
         review = await _review(
             provider,
             request,

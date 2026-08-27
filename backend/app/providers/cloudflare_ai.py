@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass
 from typing import AsyncIterator
 
@@ -51,6 +52,28 @@ STRUCTURED_MIN_MAX_TOKENS = 1536
 FINAL_VISIBLE_RESCUE_MIN_MAX_TOKENS = 3072
 FINAL_VISIBLE_RESCUE_MAX_MAX_TOKENS = 6144
 OUTPUT_LIMIT_REASONS = frozenset({"length", "max_tokens", "max_output_tokens"})
+# Eventos del protocolo Responses que no consumimos pero que no indican un problema;
+# cualquier tipo fuera de esta lista se registra para diagnosticar el shape real del proveedor.
+IGNORED_STREAM_EVENT_TYPES = frozenset(
+    {
+        "response.created",
+        "response.in_progress",
+        "response.queued",
+        "response.output_item.added",
+        "response.output_item.done",
+        "response.content_part.added",
+        "response.content_part.done",
+        "response.output_text.annotation.added",
+        "response.reasoning_text.delta",
+        "response.reasoning_text.done",
+        "response.reasoning_summary_part.added",
+        "response.reasoning_summary_part.done",
+        "response.reasoning_summary_text.delta",
+        "response.reasoning_summary_text.done",
+    }
+)
+
+logger = logging.getLogger(__name__)
 
 
 def _selected_model(settings: Settings, mode: SelectedMode) -> str:
@@ -334,9 +357,15 @@ def _is_output_limit_reason(reason: str | None) -> bool:
 
 def parse_sse_data(line: str) -> dict[str, object] | None:
     line = line.strip()
-    if not line or not line.startswith("data:"):
+    if not line:
         return None
-    payload = line.removeprefix("data:").strip()
+    if line.startswith("data:"):
+        payload = line.removeprefix("data:").strip()
+    elif line.startswith("{"):
+        # Algunos despliegues emiten JSON por línea sin framing SSE.
+        payload = line
+    else:
+        return None
     if payload == "[DONE]":
         return {"done": True}
     try:
@@ -636,6 +665,7 @@ class CloudflareAIClient:
             visible_content_emitted = False
             terminal_response: dict[str, object] | None = None
             terminal_type: str | None = None
+            unrecognized_event_types: set[str] = set()
             try:
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     async with client.stream(
@@ -649,13 +679,41 @@ class CloudflareAIClient:
                             data = parse_sse_data(line)
                             if data is None or data.get("done") is True:
                                 continue
+                            if "type" not in data:
+                                # Cloudflare envuelve payloads en {"result": ...} en el
+                                # camino no-stream; tolerar el mismo wrapper acá.
+                                wrapped_event = data.get("result")
+                                if isinstance(wrapped_event, dict):
+                                    data = wrapped_event
                             event_type = data.get("type")
                             if event_type == "response.output_text.delta":
                                 delta = data.get("delta")
-                                if isinstance(delta, str) and delta:
+                                if not (isinstance(delta, str) and delta):
+                                    alt_text = data.get("text")
+                                    delta = (
+                                        alt_text
+                                        if isinstance(alt_text, str) and alt_text
+                                        else None
+                                    )
+                                if delta:
                                     visible_content_emitted = True
                                     yield CloudAIStreamEvent(
                                         content=delta,
+                                        done=False,
+                                        model=model,
+                                        reasoning_effort=effort,
+                                        endpoint="responses",
+                                    )
+                            elif event_type == "response.output_text.done":
+                                full_text = data.get("text")
+                                if (
+                                    not visible_content_emitted
+                                    and isinstance(full_text, str)
+                                    and full_text
+                                ):
+                                    visible_content_emitted = True
+                                    yield CloudAIStreamEvent(
+                                        content=full_text,
                                         done=False,
                                         model=model,
                                         reasoning_effort=effort,
@@ -665,13 +723,66 @@ class CloudflareAIClient:
                                 "response.completed",
                                 "response.incomplete",
                                 "response.failed",
+                                "response.done",
                             }:
                                 raw_response = data.get("response")
                                 if isinstance(raw_response, dict):
                                     terminal_response = raw_response
-                                    terminal_type = str(event_type)
+                                    status = raw_response.get("status")
+                                    terminal_type = (
+                                        f"response.{status}"
+                                        if isinstance(status, str) and status
+                                        else str(event_type)
+                                    )
+                            elif (
+                                event_type is None
+                                and "status" in data
+                                and ("output" in data or "output_text" in data)
+                            ):
+                                # Objeto respuesta "pelado" sin envelope de evento.
+                                terminal_response = data
+                                status = data.get("status")
+                                terminal_type = (
+                                    f"response.{status}"
+                                    if isinstance(status, str) and status
+                                    else None
+                                )
+                            elif (
+                                isinstance(event_type, str)
+                                and event_type in IGNORED_STREAM_EVENT_TYPES
+                            ):
+                                continue
+                            else:
+                                label = (
+                                    event_type
+                                    if isinstance(event_type, str) and event_type
+                                    else "<sin type>"
+                                )
+                                if label not in unrecognized_event_types:
+                                    unrecognized_event_types.add(label)
+                                    logger.warning(
+                                        "Evento de stream cloud no reconocido: "
+                                        "type=%s claves=%s",
+                                        label,
+                                        sorted(str(key) for key in data),
+                                    )
 
                 if terminal_response is None:
+                    if visible_content_emitted:
+                        logger.warning(
+                            "El stream cloud cerró sin evento terminal reconocido; "
+                            "se asume respuesta completa (tipos no reconocidos: %s).",
+                            sorted(unrecognized_event_types) or "ninguno",
+                        )
+                        yield CloudAIStreamEvent(
+                            content="",
+                            done=True,
+                            model=model,
+                            finish_reason="completed",
+                            reasoning_effort=effort,
+                            endpoint="responses",
+                        )
+                        return
                     raise CloudAIUnavailableError(
                         "El modelo cloud cerró el stream antes de informar su estado final."
                     )

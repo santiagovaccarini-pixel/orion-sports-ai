@@ -130,10 +130,22 @@ class SemanticStreamRouteTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         events = [json.loads(line) for line in response.text.splitlines()]
-        self.assertEqual(events[0]["selected_mode"], "deep")
-        self.assertEqual(events[0]["recommended_mode"], "deep")
-        self.assertTrue(events[0]["trace_id"].startswith("orion-"))
-        self.assertEqual(events[1]["content"], "Respuesta semántica")
+        meta_index = next(
+            index for index, event in enumerate(events) if event.get("type") == "meta"
+        )
+        stage_indexes = [
+            index for index, event in enumerate(events) if event.get("type") == "stage"
+        ]
+        self.assertTrue(stage_indexes, "Debe emitirse al menos un frame de etapa")
+        self.assertLess(stage_indexes[0], meta_index)
+        meta = events[meta_index]
+        self.assertEqual(meta["selected_mode"], "deep")
+        self.assertEqual(meta["recommended_mode"], "deep")
+        self.assertTrue(meta["trace_id"].startswith("orion-"))
+        first_content = next(
+            event for event in events if event.get("type") == "content"
+        )
+        self.assertEqual(first_content["content"], "Respuesta semántica")
         self.assertEqual(events[-1]["type"], "done")
         self.assertEqual(events[-1]["finish_reason"], "completed")
         self.assertEqual(events[-1]["reasoning_tokens"], 7)
@@ -194,7 +206,10 @@ class SemanticStreamRouteTests(unittest.TestCase):
             )
 
         events = [json.loads(line) for line in response.text.splitlines()]
-        self.assertEqual(events[1]["content"], "¿A qué período te referís?")
+        first_content = next(
+            event for event in events if event.get("type") == "content"
+        )
+        self.assertEqual(first_content["content"], "¿A qué período te referís?")
         self.assertIsNone(provider.stream_kwargs)
         trace = diagnostic_traces.latest()
         self.assertIsNotNone(trace)
