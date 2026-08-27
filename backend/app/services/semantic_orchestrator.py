@@ -22,7 +22,9 @@ from backend.app.services.semantic_tools import (
 from backend.app.services.web_research import WebSource
 
 
-MAX_REVIEW_INPUT_CHARACTERS = 28_000
+# Must stay below ChatMessage.content's max_length (20_000, schemas.py) since
+# this string is sent verbatim as a user message to the reviewer model.
+MAX_REVIEW_INPUT_CHARACTERS = 19_500
 REVIEW_SOURCE_CLIP = 1_100
 REVIEW_DEEPENED_SOURCE_CLIP = 3_000
 VALID_EVIDENCE_POLICIES = frozenset({"model_knowledge", "external", "local", "mixed"})

@@ -310,13 +310,21 @@ class SemanticOrchestratorTests(unittest.TestCase):
                 f"https://example{index}.org/a",
                 "W" * 5_000,
                 f"example{index}.org",
+                deepened=index < 4,
             )
-            for index in range(8)
+            for index in range(12)
         ]
         local = [LocalEvidence("L1", "grande.csv", "L" * 30_000, True)]
         asyncio.run(review_evidence(provider, plan, web_sources, local))
         sent = provider.calls[0]["messages"][0].content
+        # Must stay under ChatMessage's own hard cap (schemas.py), not just
+        # under MAX_REVIEW_INPUT_CHARACTERS, which is meaningless if the two
+        # values were ever allowed to drift apart (as happened once already).
+        self.assertLessEqual(len(sent), 20_000)
         self.assertLessEqual(len(sent), MAX_REVIEW_INPUT_CHARACTERS)
+        # A fixture large enough to actually exercise clipping, not a no-op.
+        self.assertGreater(len(sent), 15_000)
+        ChatMessage(role="user", content=sent)
 
     def test_merge_web_sources_deduplicates_urls(self) -> None:
         a = WebSource("A", "https://a.test/1", "x", "a.test")
