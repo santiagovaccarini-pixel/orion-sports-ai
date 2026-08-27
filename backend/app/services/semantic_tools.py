@@ -5,6 +5,7 @@ import csv
 import io
 import math
 import operator
+import re
 import unicodedata
 from dataclasses import dataclass
 from typing import Sequence
@@ -276,3 +277,81 @@ def execute_calculation(expression: str | None) -> SemanticToolExecution:
             f"expression={expression}\nresult={result}"
         )
     )
+
+
+_NUMERIC_TOKEN_RE = re.compile(r"\d+(?:[.,]\d+)*%?")
+_TOLERATED_SMALL_INT_MAX = 12
+_TOLERATED_YEAR_MIN = 1900
+_TOLERATED_YEAR_MAX = 2100
+
+
+def _normalize_numeric_token(token: str) -> str | None:
+    is_percent = token.endswith("%")
+    core = token[:-1] if is_percent else token
+    if "," in core and "." in core:
+        if core.rfind(",") > core.rfind("."):
+            core = core.replace(".", "").replace(",", ".")
+        else:
+            core = core.replace(",", "")
+    elif "," in core:
+        parts = core.split(",")
+        if len(parts) == 2 and len(parts[1]) in (1, 2) and len(parts[0]) <= 3:
+            core = core.replace(",", ".")
+        else:
+            core = core.replace(",", "")
+    elif "." in core:
+        parts = core.split(".")
+        if len(parts) > 2 or (len(parts) == 2 and len(parts[1]) == 3):
+            core = core.replace(".", "")
+    try:
+        value = float(core)
+    except ValueError:
+        return None
+    normalized = str(int(value)) if value == int(value) else repr(value)
+    return f"{normalized}%" if is_percent else normalized
+
+
+def _is_tolerated_numeric(normalized: str) -> bool:
+    if normalized.endswith("%"):
+        return False
+    try:
+        value = float(normalized)
+    except ValueError:
+        return False
+    if value != int(value):
+        return False
+    int_value = int(value)
+    if 0 <= int_value <= _TOLERATED_SMALL_INT_MAX:
+        return True
+    return _TOLERATED_YEAR_MIN <= int_value <= _TOLERATED_YEAR_MAX
+
+
+def audit_numeric_support(
+    answer: str, *, allowed_texts: Sequence[str]
+) -> tuple[str, ...]:
+    """Flag numeric tokens in the answer that cannot be traced to any allowed
+    source (user messages, deterministic tool results, accepted evidence).
+
+    Observability only: callers should record findings, not block on them,
+    until false-positive rates are measured against real traffic.
+    """
+
+    allowed_normalized: set[str] = set()
+    for text in allowed_texts:
+        for match in _NUMERIC_TOKEN_RE.finditer(text):
+            normalized = _normalize_numeric_token(match.group())
+            if normalized is not None:
+                allowed_normalized.add(normalized)
+
+    unsupported: list[str] = []
+    seen: set[str] = set()
+    for match in _NUMERIC_TOKEN_RE.finditer(answer):
+        token = match.group()
+        normalized = _normalize_numeric_token(token)
+        if normalized is None or normalized in seen:
+            continue
+        if normalized in allowed_normalized or _is_tolerated_numeric(normalized):
+            continue
+        seen.add(normalized)
+        unsupported.append(token)
+    return tuple(unsupported)

@@ -48,6 +48,7 @@ from backend.app.services.knowledge_base import (
 from backend.app.services.mode_router import recommend_mode
 from backend.app.services.orchestrator import OrchestrationPlan, create_plan
 from backend.app.services.reasoning_pipeline import ReasoningBundle, build_reasoning_bundle
+from backend.app.services.semantic_tools import audit_numeric_support
 from backend.app.services.resource_guard import (
     lower_ollama_priority,
     maintain_ollama_priority,
@@ -242,6 +243,44 @@ def _semantic_prompt(
         request.messages[-1].content,
     )
     return f"{base}\n\n{bundle.context}"
+
+
+def _allowed_numeric_texts(
+    request: ChatRequest,
+    bundle: ReasoningBundle,
+) -> list[str]:
+    relevant_ids = {
+        source_id.strip().upper() for source_id in bundle.review.relevant_source_ids
+    }
+    texts = [message.content for message in request.messages]
+    if bundle.tool_context:
+        texts.append(bundle.tool_context)
+    texts.extend(item.content for item in bundle.local_evidence)
+    texts.extend(
+        source.excerpt
+        for index, source in enumerate(bundle.web_sources, start=1)
+        if f"W{index}" in relevant_ids or not bundle.review.audited
+    )
+    return texts
+
+
+def _audit_final_answer(
+    trace: DiagnosticTrace | None,
+    request: ChatRequest,
+    bundle: ReasoningBundle,
+    answer: str,
+) -> None:
+    if trace is None or not answer:
+        return
+    unsupported = audit_numeric_support(
+        answer, allowed_texts=_allowed_numeric_texts(request, bundle)
+    )
+    if unsupported:
+        trace.record_guard(
+            "unsupported_numbers_detected",
+            "Cifras en la respuesta sin respaldo en mensajes, herramientas o "
+            "evidencia aceptada: " + ", ".join(unsupported),
+        )
 
 
 def _legacy_knowledge_prompt(
@@ -571,6 +610,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
                     result,
                     duration_ms=(perf_counter() - final_started) * 1000,
                 )
+                _audit_final_answer(trace, request, bundle, result.content)
                 trace.complete(result.content)
         else:
             prepared = await _prepare_chat(
@@ -764,7 +804,11 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                                     event,
                                     duration_ms=(perf_counter() - final_started) * 1000,
                                 )
-                                trace.complete("".join(visible_parts))
+                                final_answer = "".join(visible_parts)
+                                _audit_final_answer(
+                                    trace, request, bundle, final_answer
+                                )
+                                trace.complete(final_answer)
                             yield _ndjson(
                                 {
                                     "type": "done",

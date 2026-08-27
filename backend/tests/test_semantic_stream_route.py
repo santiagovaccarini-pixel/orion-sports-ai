@@ -20,8 +20,9 @@ class RecordingCloudProvider:
     name = "cloudflare"
     uses_local_resources = False
 
-    def __init__(self) -> None:
+    def __init__(self, content: str = "Respuesta semántica") -> None:
         self.stream_kwargs = None
+        self.content = content
 
     def model_for(self, mode: SelectedMode) -> str:
         return "semantic-test-model"
@@ -38,7 +39,7 @@ class RecordingCloudProvider:
     async def chat_stream(self, **kwargs):
         self.stream_kwargs = kwargs
         yield ModelStreamEvent(
-            content="Respuesta semántica",
+            content=self.content,
             done=False,
             model="semantic-test-model",
         )
@@ -215,6 +216,49 @@ class SemanticStreamRouteTests(unittest.TestCase):
         self.assertIsNotNone(trace)
         assert trace is not None
         self.assertEqual(trace.snapshot()["status"], "completed")
+
+    def test_unsupported_numbers_are_recorded_as_a_guard_event(self) -> None:
+        provider = RecordingCloudProvider(
+            content="El jugador acumuló 987 goles en total."
+        )
+        settings = Settings(
+            model_provider="cloudflare",
+            semantic_orchestration=True,
+            diagnostics_enabled=True,
+            web_enabled=True,
+        )
+        with (
+            patch("backend.app.api.routes.get_settings", return_value=settings),
+            patch("backend.app.api.routes._provider_or_http_error", return_value=provider),
+            patch(
+                "backend.app.api.routes.build_reasoning_bundle",
+                new=AsyncMock(return_value=semantic_bundle()),
+            ),
+            patch("backend.app.api.routes._web_context", new=AsyncMock()),
+            patch("backend.app.api.routes._documents", return_value=[]),
+            TestClient(app) as client,
+        ):
+            response = client.post(
+                "/api/v1/chat/stream",
+                json={
+                    "messages": [{"role": "user", "content": "¿Cuántos goles lleva?"}],
+                    "mode": "auto",
+                    "sport": "football",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        trace = diagnostic_traces.latest()
+        self.assertIsNotNone(trace)
+        assert trace is not None
+        guard_events = trace.snapshot()["guard_events"]
+        self.assertTrue(
+            any(
+                event["event"] == "unsupported_numbers_detected"
+                and "987" in event["detail"]
+                for event in guard_events
+            )
+        )
 
 
 if __name__ == "__main__":

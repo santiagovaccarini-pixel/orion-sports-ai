@@ -24,8 +24,7 @@ ORION_CREATOR_SKILLS = (
 
 ORION_CREATOR_SPORT_TRAINING = (
     "También participó de un curso para preparadores físicos en España en un programa "
-    "en el que se impartía formación vinculada a la Licencia Pro. Esta descripción no "
-    "afirma que haya obtenido personalmente dicha licencia."
+    "en el que se impartía formación vinculada a la Licencia Pro."
 )
 
 

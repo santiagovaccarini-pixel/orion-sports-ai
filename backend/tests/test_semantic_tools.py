@@ -6,6 +6,7 @@ from backend.app.services.knowledge_base import KnowledgeDocument
 from backend.app.services.semantic_tools import (
     CsvFilter,
     CsvOperationSpec,
+    audit_numeric_support,
     evaluate_expression,
     execute_calculation,
     execute_csv_operation,
@@ -72,6 +73,63 @@ class SemanticToolsTests(unittest.TestCase):
             execution.chart["points"],
             [{"label": "PT", "value": 100.0}, {"label": "ST", "value": 140.0}],
         )
+
+
+    def test_audit_flags_number_absent_from_allowed_texts(self) -> None:
+        unsupported = audit_numeric_support(
+            "El jugador acumuló 143 goles en su carrera.",
+            allowed_texts=["Preguntó por la carrera del jugador."],
+        )
+        self.assertEqual(unsupported, ("143",))
+
+    def test_audit_accepts_numbers_traceable_to_allowed_sources(self) -> None:
+        unsupported = audit_numeric_support(
+            "El promedio ponderado dio 5.4.",
+            allowed_texts=["RESULTADO DETERMINÍSTICO DE CALCULADORA: result=5.4"],
+        )
+        self.assertEqual(unsupported, ())
+
+    def test_audit_matches_equivalent_number_formats(self) -> None:
+        unsupported = audit_numeric_support(
+            "El total fue de 1234.5 unidades.",
+            allowed_texts=["La fuente reporta 1.234,5 unidades acumuladas."],
+        )
+        self.assertEqual(unsupported, ())
+
+    def test_audit_tolerates_small_enumeration_integers(self) -> None:
+        unsupported = audit_numeric_support(
+            "Podés seguir estos 3 pasos para mejorar en 5 sesiones.",
+            allowed_texts=[],
+        )
+        self.assertEqual(unsupported, ())
+
+    def test_audit_tolerates_years(self) -> None:
+        unsupported = audit_numeric_support(
+            "El torneo se disputó en 2026.",
+            allowed_texts=[],
+        )
+        self.assertEqual(unsupported, ())
+
+    def test_audit_flags_unsupported_percentage(self) -> None:
+        unsupported = audit_numeric_support(
+            "La posesión fue del 67%.",
+            allowed_texts=["Preguntó por la posesión del partido."],
+        )
+        self.assertEqual(unsupported, ("67%",))
+
+    def test_audit_matches_percentage_from_allowed_text(self) -> None:
+        unsupported = audit_numeric_support(
+            "La posesión fue del 67%.",
+            allowed_texts=["[W1] La fuente reporta 67% de posesión."],
+        )
+        self.assertEqual(unsupported, ())
+
+    def test_audit_does_not_duplicate_repeated_unsupported_numbers(self) -> None:
+        unsupported = audit_numeric_support(
+            "El valor fue 250. Repito: 250.",
+            allowed_texts=[],
+        )
+        self.assertEqual(unsupported, ("250",))
 
 
 if __name__ == "__main__":

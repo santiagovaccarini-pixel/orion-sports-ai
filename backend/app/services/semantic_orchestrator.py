@@ -1011,4 +1011,10 @@ def format_reasoning_context(
                 for item in local_evidence
             )
         )
+    sections.append(
+        "FUENTES NUMÉRICAS PERMITIDAS: solo pueden aparecer cifras que vengan de "
+        "los mensajes del usuario, de resultados determinísticos [T*], o de "
+        "evidencia aceptada [W*/L*]. Cualquier otra cifra debe omitirse o marcarse "
+        "explícitamente como estimación no verificada."
+    )
     return "\n\n".join(sections)
