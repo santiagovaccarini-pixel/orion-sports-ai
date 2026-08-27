@@ -686,6 +686,7 @@ class CloudflareAIClient:
             unrecognized_key_samples: list[tuple[str, ...]] = []
             accumulated_text = ""
             last_usage_snapshot: dict[str, object] | None = None
+            response_branch_samples: list[str] = []
             try:
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     async with client.stream(
@@ -789,6 +790,29 @@ class CloudflareAIClient:
                                 else:
                                     full_text = ""
                                     status = None
+                                if len(response_branch_samples) < 3:
+                                    if snapshot is not None:
+                                        inner_keys = tuple(
+                                            f"{key}:{type(value).__name__}"
+                                            for key, value in sorted(
+                                                snapshot.items(),
+                                                key=lambda item: str(item[0]),
+                                            )
+                                        )
+                                        response_branch_samples.append(
+                                            f"dict_keys={inner_keys} "
+                                            f"full_text_len={len(full_text)}"
+                                        )
+                                    elif isinstance(raw_response, str):
+                                        response_branch_samples.append(
+                                            f"plain_str_len={len(raw_response)} "
+                                            f"full_text_len={len(full_text)}"
+                                        )
+                                    else:
+                                        response_branch_samples.append(
+                                            f"other_type="
+                                            f"{type(raw_response).__name__}"
+                                        )
                                 if full_text:
                                     new_text = (
                                         full_text[len(accumulated_text):]
@@ -880,7 +904,8 @@ class CloudflareAIClient:
                         f"{sorted(seen_event_types) or 'ninguno'}, tipos no "
                         f"reconocidos: {sorted(unrecognized_event_types) or 'ninguno'}, "
                         f"claves de eventos no reconocidos: "
-                        f"{unrecognized_key_samples or 'ninguna'})."
+                        f"{unrecognized_key_samples or 'ninguna'}, muestras de "
+                        f"'response': {response_branch_samples or 'ninguna'})."
                     )
 
                 wrapped = {"result": terminal_response}
