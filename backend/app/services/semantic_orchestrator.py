@@ -889,12 +889,23 @@ def _review_input(
             else None
         ),
     }
-    parts = [
+    fixed_parts = [
         "CONVERSACIÓN ORIGINAL (fuente de verdad sobre el pedido):\n"
         + _conversation_input(messages),
         "PLAN INTERPRETADO (puede contener errores y debe auditarse):\n"
         + _clip(json.dumps(plan_payload, ensure_ascii=False), 4_500),
     ]
+
+    if local_evidence:
+        local_blocks = [
+            f"{item.source_id} | {item.document_name}"
+            f" | fragmento {item.chunk_index + 1 if item.chunk_index is not None else '?'}"
+            f"{' | TRUNCADO' if item.truncated else ''}\n{_clip(item.content, 2_000)}"
+            for item in local_evidence
+        ]
+        fixed_parts.append("EVIDENCIA LOCAL/HERRAMIENTAS:\n" + "\n\n".join(local_blocks))
+    else:
+        fixed_parts.append("EVIDENCIA LOCAL/HERRAMIENTAS: ninguna.")
 
     if web_sources:
         web_blocks = [
@@ -909,21 +920,35 @@ def _review_input(
             )
             for index, source in enumerate(web_sources, start=1)
         ]
-        parts.append("EVIDENCIA WEB:\n" + "\n\n".join(web_blocks))
     else:
-        parts.append("EVIDENCIA WEB: ninguna.")
+        web_blocks = []
 
-    if local_evidence:
-        local_blocks = [
-            f"{item.source_id} | {item.document_name}"
-            f" | fragmento {item.chunk_index + 1 if item.chunk_index is not None else '?'}"
-            f"{' | TRUNCADO' if item.truncated else ''}\n{_clip(item.content, 2_000)}"
-            for item in local_evidence
-        ]
-        parts.append("EVIDENCIA LOCAL/HERRAMIENTAS:\n" + "\n\n".join(local_blocks))
-    else:
-        parts.append("EVIDENCIA LOCAL/HERRAMIENTAS: ninguna.")
+    # A blind end-of-string clip would silently drop the most recently added
+    # sources (usually the ones from the reviewer's own, more targeted
+    # follow-up query) while keeping the oldest ones it already rejected. Budget
+    # the fixed sections first, then keep web sources newest-first so the
+    # evidence most likely to resolve the question survives the size limit.
+    separators = 2 * (len(fixed_parts) - 1) + (4 if web_blocks else 2)
+    fixed_length = sum(len(part) for part in fixed_parts) + separators
+    web_budget = max(0, MAX_REVIEW_INPUT_CHARACTERS - fixed_length)
 
+    kept_blocks: list[str] = []
+    used = 0
+    for block in reversed(web_blocks):
+        cost = len(block) + 2
+        if used + cost > web_budget and kept_blocks:
+            break
+        kept_blocks.append(block)
+        used += cost
+    kept_blocks.reverse()
+
+    web_part = (
+        "EVIDENCIA WEB:\n" + "\n\n".join(kept_blocks)
+        if kept_blocks
+        else "EVIDENCIA WEB: ninguna."
+    )
+
+    parts = [fixed_parts[0], fixed_parts[1], web_part, fixed_parts[2]]
     return _clip("\n\n".join(parts), MAX_REVIEW_INPUT_CHARACTERS)
 
 

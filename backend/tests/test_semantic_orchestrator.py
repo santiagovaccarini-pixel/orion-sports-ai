@@ -326,6 +326,40 @@ class SemanticOrchestratorTests(unittest.TestCase):
         self.assertGreater(len(sent), 15_000)
         ChatMessage(role="user", content=sent)
 
+    def test_reviewer_input_keeps_newest_sources_when_clipping(self) -> None:
+        # Live testing found the reviewer losing the follow-up round's sources
+        # (the most targeted ones) because a blind end-of-string clip dropped
+        # whatever came last in the prompt. The oldest, already-rejected
+        # sources must be the ones dropped, not the newest.
+        plan = conservative_fallback_plan(
+            [ChatMessage(role="user", content="Pregunta")],
+            web_available=True,
+            documents=[],
+        )
+        provider = FakePlanningProvider(
+            [
+                """
+                {"sufficient":true,"relevant_source_ids":["W20"],
+                 "discarded_source_ids":[],"missing_information":[],
+                 "follow_up_web_query":null,"needs_clarification":false,
+                 "clarifying_question":null,"resolved_scope":"ok","reason":"ok"}
+                """
+            ]
+        )
+        web_sources = [
+            WebSource(
+                f"Fuente {index}",
+                f"https://example{index}.org/a",
+                "W" * 5_000,
+                f"example{index}.org",
+            )
+            for index in range(20)
+        ]
+        asyncio.run(review_evidence(provider, plan, web_sources, []))
+        sent = provider.calls[0]["messages"][0].content
+        self.assertIn("example19.org", sent)
+        self.assertNotIn("example0.org", sent)
+
     def test_merge_web_sources_deduplicates_urls(self) -> None:
         a = WebSource("A", "https://a.test/1", "x", "a.test")
         b = WebSource("B", "https://b.test/2", "y", "b.test")
