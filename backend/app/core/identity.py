@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 
+from backend.app.core.config import get_settings
+
 
 ORION_CREATOR_NAME = "Santiago Vaccarini"
 ORION_CREATOR_BIRTH_DATE = date(2007, 1, 16)
@@ -66,11 +68,38 @@ ORION_CREATOR_ATTRIBUTION_RULE = (
 )
 
 
+def current_engine_fact() -> str:
+    """State, as a positive first-person fact, which model is actually answering.
+
+    Sourced from settings (not hardcoded) so it can't drift from the real
+    deployment, and phrased affirmatively so the model has a grounded answer
+    instead of guessing its own identity from training-time self-belief (a
+    well-known LLM failure mode: confidently claiming to be a different,
+    unrelated model).
+    """
+
+    settings = get_settings()
+    quick = settings.cloudflare_quick_model
+    deep = settings.cloudflare_deep_model
+    if quick == deep:
+        models = f"el modelo {quick}"
+    else:
+        models = f"los modelos {quick} (modo rápido) y {deep} (modo profundo)"
+    return (
+        f"HECHO SOBRE VOS MISMO: el motor de lenguaje que estás usando ahora mismo "
+        f"para generar esta respuesta es {models}, servido a través de Cloudflare "
+        "Workers AI. No es GPT-4 ni ningún otro modelo: si te preguntan qué modelo o "
+        "motor te hace funcionar, respondé con este dato exacto en vez de adivinar "
+        "a partir de lo que creas recordar sobre vos mismo."
+    )
+
+
 def creator_context() -> str:
     return "\n".join(
         (
             "IDENTIDAD INSTITUCIONAL DE ORION:",
             ORION_CREATOR_ATTRIBUTION_RULE,
+            current_engine_fact(),
             "PERFIL PÚBLICO VALIDADO DEL CREADOR:",
             creator_public_profile(),
         )
@@ -91,7 +120,8 @@ def institutional_identity_brief() -> str:
         "se dirige a «vos», «te» o «tu creador», el referente por defecto es el "
         "producto Orion, salvo que la conversación indique que se habla del motor "
         "subyacente. La autoría e identidad de Orion es un hecho institucional ya "
-        "provisto y estable: no requiere búsqueda externa ni verificación web."
+        "provisto y estable: no requiere búsqueda externa ni verificación web.\n"
+        + current_engine_fact()
     )
 
 

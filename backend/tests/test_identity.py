@@ -7,6 +7,7 @@ from backend.app.core.identity import (
     ORION_CREATOR_NAME,
     creator_age,
     creator_context,
+    current_engine_fact,
     direct_creator_answer,
     institutional_identity_brief,
 )
@@ -62,6 +63,19 @@ class OrionIdentityTests(unittest.TestCase):
         self.assertIn("no requiere búsqueda externa", brief)
         # Es contexto semántico, no una respuesta enlatada ni routing por frases.
         self.assertNotIn("¿", brief)
+
+    def test_current_engine_fact_is_sourced_from_settings_not_hardcoded(self) -> None:
+        # Live testing found Orion answering "GPT-4 by OpenAI" when asked which
+        # engine powers it — a self-identity hallucination, since the real engine
+        # is gpt-oss served via Cloudflare Workers AI. This fact must come from
+        # settings (so it can't drift from the real deployment) and be stated
+        # affirmatively so the model has a grounded answer instead of guessing.
+        fact = current_engine_fact()
+        self.assertIn("Cloudflare Workers AI", fact)
+        self.assertIn("gpt-oss", fact)
+        self.assertIn("No es GPT-4", fact)
+        self.assertIn(fact, creator_context())
+        self.assertIn(fact, institutional_identity_brief())
 
 
 if __name__ == "__main__":
