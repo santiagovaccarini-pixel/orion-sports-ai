@@ -360,6 +360,53 @@ class SemanticOrchestratorTests(unittest.TestCase):
         self.assertIn("example19.org", sent)
         self.assertNotIn("example0.org", sent)
 
+    def test_reviewer_sees_its_own_previous_round_decision(self) -> None:
+        # Live testing found a partial finding (verified goal counts from an
+        # accepted source) accepted in one review round and silently gone by the
+        # next, with the final answer declining outright even though something
+        # real had been found. Each round used to evaluate from scratch with no
+        # memory of its own prior decision.
+        plan = conservative_fallback_plan(
+            [ChatMessage(role="user", content="Pregunta")],
+            web_available=True,
+            documents=[],
+        )
+        provider = FakePlanningProvider(
+            [
+                """
+                {"sufficient":true,"relevant_source_ids":["W1"],
+                 "discarded_source_ids":[],"missing_information":[],
+                 "follow_up_web_query":null,"needs_clarification":false,
+                 "clarifying_question":null,"resolved_scope":"ok","reason":"ok"}
+                """
+            ]
+        )
+        previous = EvidenceReview(
+            sufficient=False,
+            relevant_source_ids=("W1",),
+            discarded_source_ids=(),
+            missing_information=(),
+            follow_up_web_query=None,
+            needs_clarification=False,
+            clarifying_question=None,
+            resolved_scope="5 goles en Liga 2026, según ESPN.",
+            reason="parcial",
+            partial_values=(PartialValue("W1", "goles en Liga 2026", 5.0),),
+        )
+        asyncio.run(
+            review_evidence(
+                provider,
+                plan,
+                [WebSource("ESPN", "https://espn.test", "5 goles", "espn.test")],
+                [],
+                previous_review=previous,
+            )
+        )
+        sent = provider.calls[0]["messages"][0].content
+        self.assertIn("TU PROPIA REVISIÓN DE LA RONDA ANTERIOR", sent)
+        self.assertIn("5 goles en Liga 2026", sent)
+        self.assertIn("retractación", sent)
+
     def test_merge_web_sources_deduplicates_urls(self) -> None:
         a = WebSource("A", "https://a.test/1", "x", "a.test")
         b = WebSource("B", "https://b.test/2", "y", "b.test")

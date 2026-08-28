@@ -307,7 +307,10 @@ REVIEW_PROMPT = """
 Sos la etapa crítica de revisión de Orion. No contestes todavía al usuario. Auditá
 tres cosas de forma independiente: la conversación original, el plan interpretado y
 la evidencia reunida. La conversación original es la fuente de verdad sobre lo que
-pidió el usuario; el plan puede estar equivocado y no debe validarse por defecto.
+pidió el usuario; el plan puede estar equivocado y no debe validarse por defecto. Si
+recibís tu propia revisión de una ronda anterior, auditala también: no es evidencia
+externa, es tu propia decisión previa, y perderla sin querer no es lo mismo que
+retractarla a propósito.
 
 Reglas obligatorias:
 - Primero compará el plan con la conversación original. Si el plan agregó, quitó o
@@ -326,6 +329,14 @@ Reglas obligatorias:
   «Mariano Merentiel» y el usuario solo escribió «Merentiel», corregí a
   «Merentiel» en corrected_resolved_request). Un identificador inventado hace que
   fuentes correctas sobre la persona real parezcan no coincidir más adelante.
+- Si el contexto incluye tu revisión de la ronda anterior, no dejes caer en
+  silencio una fuente relevante o un componente parcial que ya habías aceptado ahí.
+  Al reevaluar el catálogo completo de fuentes desde cero es fácil perder de vista
+  un hallazgo válido que ya no está en el centro de tu atención. Antes de omitirlo,
+  preguntate: ¿tengo una razón concreta para retractarlo (la fuente no dice lo que
+  creía, se superpone con otra, etc.), o simplemente no lo estoy mirando de nuevo?
+  Si es lo segundo, mantenelo. Si es lo primero, decilo explícitamente en
+  missing_information o resolved_scope en vez de que desaparezca sin explicación.
 - No uses cantidad fija de fuentes como criterio de verdad. Una fuente primaria y
   explícita puede ser suficiente; muchas fuentes irrelevantes no lo son.
 - Una fuente solo puede ser relevante si responde a la misma entidad, métrica,
@@ -891,11 +902,44 @@ def _conversation_input(messages: Sequence[ChatMessage]) -> str:
     return _clip("\n".join(blocks), 5_000)
 
 
+def _previous_review_block(previous_review: EvidenceReview | None) -> str | None:
+    if previous_review is None:
+        return None
+    lines: list[str] = []
+    if previous_review.relevant_source_ids:
+        lines.append(
+            "Fuentes que habías aceptado como relevantes: "
+            + ", ".join(previous_review.relevant_source_ids)
+        )
+    if previous_review.partial_values:
+        lines.append(
+            "Componentes parciales que habías verificado: "
+            + "; ".join(
+                f"{item.label} = {item.value} (fuente {item.source_id})"
+                for item in previous_review.partial_values
+            )
+        )
+    if previous_review.resolved_scope:
+        lines.append(f"Alcance que habías respaldado: {previous_review.resolved_scope}")
+    if not lines:
+        return None
+    return (
+        "TU PROPIA REVISIÓN DE LA RONDA ANTERIOR (no es evidencia externa; es lo que "
+        "vos mismo ya habías aceptado):\n"
+        + "\n".join(lines)
+        + "\nSi en esta ronda vas a dejar de considerar relevante o sumable algo que "
+        "ya habías aceptado arriba, es una retractación: decilo explícitamente con el "
+        "motivo (en missing_information o resolved_scope) en vez de simplemente "
+        "omitirlo sin explicación."
+    )
+
+
 def _review_input(
     plan: SemanticPlan,
     web_sources: Sequence[WebSource],
     local_evidence: Sequence[LocalEvidence],
     messages: Sequence[ChatMessage] = (),
+    previous_review: EvidenceReview | None = None,
 ) -> str:
     plan_payload = {
         "objective": plan.objective,
@@ -924,12 +968,19 @@ def _review_input(
             else None
         ),
     }
-    fixed_parts = [
+    conversation_part = (
         "CONVERSACIÓN ORIGINAL (fuente de verdad sobre el pedido):\n"
-        + _conversation_input(messages),
+        + _conversation_input(messages)
+    )
+    plan_part = (
         "PLAN INTERPRETADO (puede contener errores y debe auditarse):\n"
-        + _clip(json.dumps(plan_payload, ensure_ascii=False), 4_500),
-    ]
+        + _clip(json.dumps(plan_payload, ensure_ascii=False), 4_500)
+    )
+    fixed_parts = [conversation_part, plan_part]
+
+    previous_review_block = _previous_review_block(previous_review)
+    if previous_review_block:
+        fixed_parts.append(previous_review_block)
 
     if local_evidence:
         local_blocks = [
@@ -983,7 +1034,10 @@ def _review_input(
         else "EVIDENCIA WEB: ninguna."
     )
 
-    parts = [fixed_parts[0], fixed_parts[1], web_part, fixed_parts[2]]
+    # local_evidence is always the last fixed part appended above; web evidence
+    # goes right before it, regardless of whether the optional previous-review
+    # block is present.
+    parts = fixed_parts[:-1] + [web_part, fixed_parts[-1]]
     return _clip("\n\n".join(parts), MAX_REVIEW_INPUT_CHARACTERS)
 
 
@@ -997,6 +1051,7 @@ async def review_evidence(
     reasoning_effort: str = "low",
     on_model_result: ModelResultCallback | None = None,
     stage_name: str = "review",
+    previous_review: EvidenceReview | None = None,
 ) -> EvidenceReview:
     if plan.evidence_policy == "model_knowledge" and not web_sources and not local_evidence:
         return EvidenceReview(
@@ -1029,7 +1084,13 @@ async def review_evidence(
         messages=[
             ChatMessage(
                 role="user",
-                content=_review_input(plan, web_sources, local_evidence, messages),
+                content=_review_input(
+                    plan,
+                    web_sources,
+                    local_evidence,
+                    messages,
+                    previous_review=previous_review,
+                ),
             )
         ],
         system_prompt=(
