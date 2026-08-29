@@ -14,6 +14,7 @@ from backend.app.core.prompt import build_system_prompt
 from backend.app.domain.models import SelectedMode
 from backend.app.domain.schemas import ChatMessage, SportContext
 from backend.app.main import app
+from backend.app.services.database import DatabaseUnavailableError
 from backend.app.services.memory_store import MemoryStore, format_memory_context
 from backend.app.services.rate_limit import upload_rate_limiter
 from backend.app.services.semantic_orchestrator import (
@@ -97,6 +98,43 @@ class MemoryRouteTests(unittest.TestCase):
             )
         self.assertEqual(refused.status_code, 413)
         self.assertEqual(refused.json()["detail"]["code"], "memory_limit_reached")
+
+
+class MemoryFailureTests(unittest.TestCase):
+    """A storage outage must degrade, not take the whole product down."""
+
+    def setUp(self) -> None:
+        app.dependency_overrides[require_api_key] = lambda: None
+
+    def tearDown(self) -> None:
+        app.dependency_overrides.pop(require_api_key, None)
+
+    def test_listing_reports_storage_outage_instead_of_a_generic_error(self) -> None:
+        class BrokenStore:
+            def list_entries(self):
+                raise DatabaseUnavailableError("connection refused")
+
+        with (
+            patch("backend.app.api.routes._memory_store", return_value=BrokenStore()),
+            TestClient(app, raise_server_exceptions=False) as client,
+        ):
+            response = client.get("/api/v1/memory/entries")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"]["code"], "memory_unavailable")
+
+    def test_chat_still_answers_when_memory_storage_is_down(self) -> None:
+        # Memory enriches an answer; losing it must never mean losing the answer.
+        from backend.app.api.routes import _memory_context
+
+        class BrokenStore:
+            def list_entries(self):
+                raise DatabaseUnavailableError("connection refused")
+
+        with patch("backend.app.api.routes._memory_store", return_value=BrokenStore()):
+            context = asyncio.run(_memory_context())
+
+        self.assertEqual(context, "")
 
 
 class MemoryContextTests(unittest.TestCase):

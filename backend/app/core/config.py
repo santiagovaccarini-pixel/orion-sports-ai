@@ -104,6 +104,9 @@ class Settings:
     api_key: str | None = None
     knowledge_path: str = ".orion-runtime/knowledge/documents.json"
     memory_path: str = ".orion-runtime/memory/entries.json"
+    # When set, memory and knowledge live in Postgres instead of local JSON
+    # files, so they survive restarts and redeploys on an ephemeral disk.
+    database_url: str | None = None
     # Memory is user-curated and every entry is shown to the planner, so it is
     # deliberately small: it must stay a set of deliberate facts, not a log.
     memory_max_entries: int = 100
@@ -195,6 +198,7 @@ def get_settings() -> Settings:
         memory_path=os.getenv(
             "ORION_MEMORY_PATH", ".orion-runtime/memory/entries.json"
         ),
+        database_url=os.getenv("DATABASE_URL") or None,
         memory_max_entries=_read_positive_int("ORION_MEMORY_MAX_ENTRIES", 100),
         memory_max_entry_characters=_read_positive_int(
             "ORION_MEMORY_MAX_ENTRY_CHARACTERS", 1_000

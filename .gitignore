@@ -54,3 +54,4 @@ __pycache__/
 orion-cloud-diag*.json
 orion-cloud-diag*.log
 orion-cloud-eval*.json
+.neon

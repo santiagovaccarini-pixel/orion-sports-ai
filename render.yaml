@@ -18,6 +18,9 @@ services:
         sync: false
       - key: ORION_API_KEY
         sync: false
+      # Neon Postgres. Set in the Render dashboard, never committed.
+      - key: DATABASE_URL
+        sync: false
       - key: ORION_CLOUDFLARE_QUICK_MODEL
         value: "@cf/openai/gpt-oss-120b"
       - key: ORION_CLOUDFLARE_DEEP_MODEL

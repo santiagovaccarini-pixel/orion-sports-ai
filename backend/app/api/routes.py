@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -49,11 +50,12 @@ from backend.app.services.knowledge_base import (
     csv_tool_result,
     format_context,
 )
-from backend.app.services.memory_store import (
-    MemoryEntry,
-    MemoryStore,
-    format_memory_context,
+from backend.app.services.database import DatabaseUnavailableError
+from backend.app.services.memory_repository import (
+    MemoryRepository,
+    create_memory_repository,
 )
+from backend.app.services.memory_store import MemoryEntry, format_memory_context
 from backend.app.services.mode_router import recommend_mode
 from backend.app.services.orchestrator import OrchestrationPlan, create_plan
 from backend.app.services.rate_limit import (
@@ -71,6 +73,8 @@ from backend.app.services.resource_guard import (
 from backend.app.services.resource_policy import evaluate_resources
 from backend.app.services.web_research import format_sources, research
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 chat_lock = asyncio.Lock()
@@ -504,10 +508,23 @@ def _documents() -> list[KnowledgeDocument]:
     return KnowledgeBase(Path(get_settings().knowledge_path)).list_documents()
 
 
-def _memory_context() -> str:
-    """Saved memory as prompt context, or empty when the user saved nothing."""
+async def _memory_context() -> str:
+    """Saved memory as prompt context, or empty when the user saved nothing.
 
-    return format_memory_context(_memory_store().list_entries())
+    Runs in a thread: the store may be Postgres, and blocking the event loop on
+    network I/O would stall every other in-flight request. A memory failure
+    degrades to no memory rather than failing the whole chat - answering without
+    saved context is far better than not answering.
+    """
+
+    def _load() -> str:
+        return format_memory_context(_memory_store().list_entries())
+
+    try:
+        return await asyncio.to_thread(_load)
+    except DatabaseUnavailableError:
+        logger.warning("No se pudo leer la memoria; sigo sin ella", exc_info=True)
+        return ""
 
 
 def _direct_response(
@@ -639,8 +656,12 @@ async def add_knowledge_document(
     )
 
 
-def _memory_store() -> MemoryStore:
-    return MemoryStore(Path(get_settings().memory_path))
+def _memory_store() -> MemoryRepository:
+    settings = get_settings()
+    return create_memory_repository(
+        database_url=settings.database_url,
+        memory_path=settings.memory_path,
+    )
 
 
 def _memory_response(entry: MemoryEntry) -> MemoryEntryResponse:
@@ -653,13 +674,37 @@ def _memory_response(entry: MemoryEntry) -> MemoryEntryResponse:
     )
 
 
+def _memory_unavailable(exc: Exception) -> HTTPException:
+    """Surface a storage outage as such instead of a generic 500.
+
+    Memory is explicit user data: silently reporting success or an opaque
+    failure would leave the user unsure whether their entry was saved.
+    """
+
+    logger.warning("La memoria no está disponible", exc_info=exc)
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={
+            "code": "memory_unavailable",
+            "message": (
+                "La memoria de Orion no está disponible en este momento. "
+                "Intentá de nuevo en unos segundos."
+            ),
+        },
+    )
+
+
 @router.get(
     "/memory/entries",
     response_model=list[MemoryEntryResponse],
     dependencies=[Depends(require_api_key)],
 )
 async def list_memory_entries() -> list[MemoryEntryResponse]:
-    return [_memory_response(entry) for entry in _memory_store().list_entries()]
+    try:
+        entries = await asyncio.to_thread(_memory_store().list_entries)
+    except DatabaseUnavailableError as exc:
+        raise _memory_unavailable(exc) from exc
+    return [_memory_response(entry) for entry in entries]
 
 
 @router.post(
@@ -670,7 +715,18 @@ async def list_memory_entries() -> list[MemoryEntryResponse]:
 async def add_memory_entry(request: MemoryEntryRequest) -> MemoryEntryResponse:
     settings = get_settings()
     store = _memory_store()
-    if len(store.list_entries()) >= settings.memory_max_entries:
+
+    def _save() -> tuple[MemoryEntry | None, bool]:
+        if len(store.list_entries()) >= settings.memory_max_entries:
+            return None, True
+        entry_id = uuid4().hex[:16]
+        return store.add_entry(entry_id, request.content, request.category), False
+
+    try:
+        entry, at_limit = await asyncio.to_thread(_save)
+    except DatabaseUnavailableError as exc:
+        raise _memory_unavailable(exc) from exc
+    if at_limit or entry is None:
         raise HTTPException(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail={
@@ -681,8 +737,6 @@ async def add_memory_entry(request: MemoryEntryRequest) -> MemoryEntryResponse:
                 ),
             },
         )
-    entry_id = uuid4().hex[:16]
-    entry = store.add_entry(entry_id, request.content, request.category)
     return _memory_response(entry)
 
 
@@ -691,7 +745,11 @@ async def add_memory_entry(request: MemoryEntryRequest) -> MemoryEntryResponse:
     dependencies=[Depends(require_api_key)],
 )
 async def delete_memory_entry(entry_id: str) -> dict[str, str]:
-    if not _memory_store().delete_entry(entry_id):
+    try:
+        deleted = await asyncio.to_thread(_memory_store().delete_entry, entry_id)
+    except DatabaseUnavailableError as exc:
+        raise _memory_unavailable(exc) from exc
+    if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
@@ -707,7 +765,10 @@ async def delete_memory_entry(entry_id: str) -> dict[str, str]:
     dependencies=[Depends(require_api_key)],
 )
 async def delete_all_memory_entries() -> dict[str, str]:
-    _memory_store().delete_all()
+    try:
+        await asyncio.to_thread(_memory_store().delete_all)
+    except DatabaseUnavailableError as exc:
+        raise _memory_unavailable(exc) from exc
     return {"status": "deleted_all"}
 
 
@@ -770,7 +831,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
                 settings,
                 _documents(),
                 trace=trace,
-                memory_context=_memory_context(),
+                memory_context=await _memory_context(),
             )
             prepared = await _prepare_selected_chat(
                 request,
@@ -919,7 +980,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                         _documents(),
                         trace=trace,
                         on_stage=stage_events.put_nowait,
-                        memory_context=_memory_context(),
+                        memory_context=await _memory_context(),
                     )
                 )
                 try:
