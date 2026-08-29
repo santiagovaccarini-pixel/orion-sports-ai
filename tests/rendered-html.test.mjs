@@ -26,6 +26,9 @@ test("renders Orion metadata and first module", async () => {
   const html = await response.text();
   assert.match(html, /Orion — Inteligencia deportiva/i);
   assert.match(html, /Tu criterio, amplificado/i);
-  assert.match(html, /Módulo 1\.3/i);
+  assert.match(html, /Inteligencia deportiva/i);
+  // The console must not advertise the retired local-inference product.
+  assert.doesNotMatch(html, /Sin memoria permanente/i);
+  assert.doesNotMatch(html, /Protección CPU/i);
   assert.doesNotMatch(html, /codex-preview/i);
 });

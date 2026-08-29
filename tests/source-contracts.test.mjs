@@ -12,7 +12,7 @@ test("keeps the shell fixed and scrolls only the conversation", async () => {
   assert.match(css, /\.orion-sidebar\s*\{[^}]*overflow:\s*hidden/s);
   assert.match(css, /\.composer-wrap\s*\{[^}]*flex:\s*0 0 auto/s);
   assert.match(css, /\.composer textarea\s*\{[^}]*min-height:\s*3\.75rem/s);
-  assert.match(css, /\.chat-stage\s*\{[^}]*width:\s*min\(100%,\s*76rem\)/s);
+  assert.match(css, /\.chat-stage\s*\{[^}]*width:\s*min\(100%,\s*88rem\)/s);
   assert.match(css, /\.message\s*\{[^}]*max-width:\s*100%/s);
   assert.match(css, /\.composer:focus-within\s*\{/s);
 });

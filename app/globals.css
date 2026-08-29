@@ -46,7 +46,7 @@ button {
 
 .orion-shell {
   display: grid;
-  grid-template-columns: 17.5rem minmax(0, 1fr);
+  grid-template-columns: 15.5rem minmax(0, 1fr);
   height: 100dvh;
   min-height: 0;
   overflow: hidden;
@@ -72,16 +72,12 @@ button {
 }
 
 .brand-mark {
-  display: grid;
   width: 2.65rem;
   height: 2.65rem;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-size: 0.78rem;
-  font-weight: 900;
-  letter-spacing: -0.06em;
+  flex: 0 0 auto;
+  /* The constellation carries the identity, so it sits on the dark sidebar
+     directly rather than inside a filled circle. */
+  color: var(--accent);
 }
 
 .brand-name {
@@ -326,7 +322,7 @@ button {
 
 .chat-stage {
   display: flex;
-  width: min(100%, 76rem);
+  width: min(100%, 88rem);
   flex: 1;
   min-height: 0;
   flex-direction: column;
@@ -347,7 +343,7 @@ button {
 .empty-state h2 {
   max-width: 46rem;
   margin: 0;
-  font-size: clamp(2.2rem, 6vw, 4.8rem);
+  font-size: clamp(1.9rem, 4vw, 3.2rem);
   font-weight: 760;
   letter-spacing: -0.065em;
   line-height: 0.96;
@@ -403,8 +399,14 @@ button {
   min-width: 0;
   max-width: 100%;
   border-radius: 1.25rem;
-  padding: 1rem 1.1rem;
-  line-height: 1.62;
+  padding: 0.95rem 1.15rem;
+  line-height: 1.58;
+}
+
+/* A user prompt is short and scannable; an answer is the content. Letting the
+   question stay narrow makes the reply visibly the larger half. */
+.message.user {
+  max-width: min(100%, 44rem);
 }
 
 .plain-content {
@@ -416,12 +418,19 @@ button {
   overflow-wrap: anywhere;
 }
 
-.markdown-content > :first-child {
-  margin-top: 0;
+/* Prose needs a comfortable line length (~70 characters) even when the column
+   is wide; tables and code below deliberately keep the full width, since
+   narrowing those would force horizontal scrolling instead. */
+.markdown-content p,
+.markdown-content li,
+.plain-content,
+.streaming-content {
+  max-width: 72ch;
 }
 
-.markdown-content > :last-child {
-  margin-bottom: 0;
+.markdown-content table,
+.markdown-content pre {
+  max-width: 100%;
 }
 
 .message-content,
@@ -437,7 +446,15 @@ button {
 .markdown-content blockquote,
 .markdown-content pre,
 .markdown-content table {
-  margin: 0.7rem 0;
+  margin: 0.55rem 0;
+}
+
+.markdown-content > :first-child {
+  margin-top: 0;
+}
+
+.markdown-content > :last-child {
+  margin-bottom: 0;
 }
 
 .markdown-content ul,

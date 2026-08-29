@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import ReactMarkdown from "react-markdown";
+import { OrionMark } from "./orion-mark";
 import remarkGfm from "remark-gfm";
 import {
   ChatMessage,
@@ -630,60 +631,44 @@ export function OrionConsole() {
   };
 
   const online = Boolean(status && !statusError);
-  const ollamaOnline = Boolean(status?.ollama_online);
-  const quickInstalled = Boolean(
-    status?.installed_models.some(
-      (name) => name === status.quick_model || name.startsWith(status.quick_model),
-    ),
-  );
+  // Only the local (Ollama) deployment runs inference on this machine, so its
+  // CPU is only worth showing there. The cloud core reports zero threads.
+  const localResources = Boolean(status && status.quick_threads > 0);
   const cpuHigh = Boolean(status && status.snapshot.cpu_percent >= 50);
 
   return (
     <main className="orion-shell">
       <aside className="orion-sidebar">
         <div className="brand-lockup">
-          <div className="brand-mark" aria-hidden="true">OR</div>
+          <OrionMark className="brand-mark" />
           <div>
             <p className="brand-name">ORION</p>
-            <p className="brand-caption">Inteligencia deportiva personal</p>
+            <p className="brand-caption">Inteligencia deportiva</p>
           </div>
         </div>
 
         <div className="side-stack">
-          <p className="side-label">Estado local</p>
+          <p className="side-label">Estado</p>
           <div className="status-line">
             <span className="engine-status">
               <span className={`dot ${online ? "online" : "offline"}`} />
-              Núcleo de Orion
+              Orion
             </span>
-            <span className="status-value">{online ? "Activo" : "Desconectado"}</span>
-          </div>
-          <div className="status-line">
-            <span>Ollama</span>
-            <span className="status-value">{ollamaOnline ? "Activo" : "Pendiente"}</span>
-          </div>
-          <div className="status-line">
-            <span>Modelo Rápido</span>
-            <span className="status-value">{quickInstalled ? "Instalado" : "Pendiente"}</span>
-          </div>
-          <div className="status-line">
-            <span>RAM disponible</span>
             <span className="status-value">
-              {status ? `${status.snapshot.memory_available_gb.toFixed(1)} GB` : "—"}
+              {online ? "Activo" : "Desconectado"}
             </span>
           </div>
-          <div className="status-line">
-            <span>CPU</span>
-            <span className={`status-value ${cpuHigh ? "resource-hot" : ""}`}>
-              {status ? `${status.snapshot.cpu_percent.toFixed(0)}%` : "—"}
-            </span>
-          </div>
-          <div className="status-line">
-            <span>Protección CPU</span>
-            <span className="status-value">
-              {status ? `Activa · ${status.quick_threads ?? 8} hilos` : "Activa"}
-            </span>
-          </div>
+          {/* Local machine stats (RAM, CPU, Ollama) belonged to the version
+              that ran inference on the user's PC. Orion runs in the cloud, so
+              they described a product this no longer is. */}
+          {localResources ? (
+            <div className="status-line">
+              <span>CPU de tu equipo</span>
+              <span className={`status-value ${cpuHigh ? "resource-hot" : ""}`}>
+                {status ? `${status.snapshot.cpu_percent.toFixed(0)}%` : "—"}
+              </span>
+            </div>
+          ) : null}
         </div>
 
         <div className="side-stack">
@@ -736,15 +721,15 @@ export function OrionConsole() {
         </div>
 
         <p className="side-note">
-          Módulo 1.3 · Las conversaciones permanecen únicamente en esta sesión y
-          se pierden al recargar la página. La memoria guardada sí persiste.
+          Las conversaciones se pierden al recargar la página. Lo que guardes
+          en memoria y los documentos que subas sí quedan guardados.
         </p>
       </aside>
 
       <section className="orion-main">
         <header className="topbar">
           <div>
-            <p className="eyebrow">Conversación local</p>
+            <p className="eyebrow">Conversación</p>
             <h1>¿Qué querés analizar?</h1>
           </div>
           <div className="mode-switcher" aria-label="Modo de respuesta">
@@ -765,11 +750,12 @@ export function OrionConsole() {
         <div className="chat-stage">
           {messages.length === 0 ? (
             <section className="empty-state">
-              <p className="eyebrow">Núcleo deportivo · Módulo 1.3</p>
+              <p className="eyebrow">Inteligencia deportiva</p>
               <h2>Tu criterio, amplificado.</h2>
               <p>
-                Orion ya tiene la base para conversar con un modelo local,
-                recomendar el nivel de análisis y proteger el rendimiento de tu PC.
+                Preguntá con tus palabras. Orion busca lo que haga falta,
+                revisa las fuentes antes de responder y te dice qué no puede
+                confirmar.
               </p>
               <div className="suggestion-grid">
                 {SUGGESTIONS.map((suggestion) => (
@@ -1015,7 +1001,7 @@ export function OrionConsole() {
             </form>
             {knowledgeMessage ? <p className="knowledge-message" role="status">{knowledgeMessage}</p> : null}
             <p className="composer-note">
-              Contexto local: {SPORT_LABELS[sport]} · Enter para enviar · Shift + Enter para una nueva línea · Sin memoria permanente
+              Contexto: {SPORT_LABELS[sport]} · Enter para enviar · Shift + Enter para una nueva línea
             </p>
           </div>
         </div>

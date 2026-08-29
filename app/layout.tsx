@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Orion — Inteligencia deportiva",
   description:
-    "Agente personal de inteligencia deportiva con ejecución local y control explícito de recursos y privacidad.",
+    "Agente personal de inteligencia deportiva: busca, verifica sus fuentes y te dice qué no puede confirmar.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
