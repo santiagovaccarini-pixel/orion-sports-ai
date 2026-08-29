@@ -108,7 +108,7 @@ class RateLimitedRouteTests(unittest.TestCase):
         document = {"name": "notas.txt", "content": "contenido de prueba"}
         with (
             patch("backend.app.api.routes.get_settings", return_value=settings),
-            patch("backend.app.api.routes.KnowledgeBase") as knowledge_base,
+            patch("backend.app.api.routes._knowledge_base") as knowledge_base,
             TestClient(app, raise_server_exceptions=False) as client,
         ):
             knowledge_base.return_value.list_documents.return_value = []
@@ -136,7 +136,7 @@ class KnowledgeQuotaTests(unittest.TestCase):
         ]
         with (
             patch("backend.app.api.routes.get_settings", return_value=settings),
-            patch("backend.app.api.routes.KnowledgeBase") as knowledge_base,
+            patch("backend.app.api.routes._knowledge_base") as knowledge_base,
             TestClient(app, raise_server_exceptions=False) as client,
         ):
             knowledge_base.return_value.list_documents.return_value = stored
@@ -156,7 +156,7 @@ class KnowledgeQuotaTests(unittest.TestCase):
         stored = [KnowledgeDocument("aaa", "uno.txt", "x" * 45)]
         with (
             patch("backend.app.api.routes.get_settings", return_value=settings),
-            patch("backend.app.api.routes.KnowledgeBase") as knowledge_base,
+            patch("backend.app.api.routes._knowledge_base") as knowledge_base,
             TestClient(app, raise_server_exceptions=False) as client,
         ):
             knowledge_base.return_value.list_documents.return_value = stored
@@ -181,7 +181,7 @@ class KnowledgeQuotaTests(unittest.TestCase):
         stored = [KnowledgeDocument(document_id, "notas.txt", "contenido")]
         with (
             patch("backend.app.api.routes.get_settings", return_value=settings),
-            patch("backend.app.api.routes.KnowledgeBase") as knowledge_base,
+            patch("backend.app.api.routes._knowledge_base") as knowledge_base,
             TestClient(app, raise_server_exceptions=False) as client,
         ):
             knowledge_base.return_value.list_documents.return_value = stored

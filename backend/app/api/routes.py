@@ -51,6 +51,7 @@ from backend.app.services.knowledge_base import (
     format_context,
 )
 from backend.app.services.database import DatabaseUnavailableError
+from backend.app.services.knowledge_repository import create_knowledge_base
 from backend.app.services.memory_repository import (
     MemoryRepository,
     create_memory_repository,
@@ -386,7 +387,7 @@ def _legacy_knowledge_prompt(
         prepared.selected_mode,
         request.messages[-1].content,
     )
-    knowledge = KnowledgeBase(Path(get_settings().knowledge_path))
+    knowledge = _knowledge_base()
     query = request.messages[-1].content
     web_requested = bool(web_context)
     plan = _create_orchestration_plan(query, web_requested=web_requested)
@@ -446,7 +447,7 @@ def _create_orchestration_plan(
     *,
     web_requested: bool = False,
 ) -> OrchestrationPlan:
-    documents = KnowledgeBase(Path(get_settings().knowledge_path)).list_documents()
+    documents = _knowledge_base().list_documents()
     plan = create_plan(query, has_local_documents=bool(documents))
     if web_requested and not plan.use_web:
         return OrchestrationPlan(
@@ -495,7 +496,7 @@ def _insufficient_web_response(context: str) -> str:
 
 def _knowledge_chart(request: ChatRequest) -> dict[str, object] | None:
     query = request.messages[-1].content
-    base = KnowledgeBase(Path(get_settings().knowledge_path))
+    base = _knowledge_base()
     for document in base.list_documents():
         if document.name.lower().endswith(".csv"):
             chart = csv_chart(document.content, query, document.name)
@@ -504,8 +505,16 @@ def _knowledge_chart(request: ChatRequest) -> dict[str, object] | None:
     return None
 
 
+def _knowledge_base() -> KnowledgeBase:
+    settings = get_settings()
+    return create_knowledge_base(
+        database_url=settings.database_url,
+        knowledge_path=settings.knowledge_path,
+    )
+
+
 def _documents() -> list[KnowledgeDocument]:
-    return KnowledgeBase(Path(get_settings().knowledge_path)).list_documents()
+    return _knowledge_base().list_documents()
 
 
 async def _memory_context() -> str:
@@ -618,7 +627,7 @@ async def add_knowledge_document(
         request.name.strip(),
         request.content.strip(),
     )
-    knowledge = KnowledgeBase(Path(settings.knowledge_path))
+    knowledge = _knowledge_base()
     existing = knowledge.list_documents()
     # Re-uploading the same content keeps the same id and just replaces the
     # entry, so it must not count against the quota as a new document.
