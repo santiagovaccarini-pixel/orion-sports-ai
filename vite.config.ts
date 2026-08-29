@@ -11,9 +11,21 @@ const { d1, r2 } = hostingConfig;
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
+// The dev server runs the Worker inside Miniflare, which does NOT inherit the
+// parent process environment. Without this passthrough the server-side proxy
+// (app/api/orion) cannot read the core credentials during local development,
+// even though they are exported in the shell. Values are read from the
+// environment, never hardcoded; production reads its own Worker secrets.
+const localWorkerVars: Record<string, string> = {};
+for (const name of ["ORION_API_KEY", "ORION_API_URL"]) {
+  const value = process.env[name];
+  if (value) localWorkerVars[name] = value;
+}
+
 const localBindingConfig = {
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
+  vars: localWorkerVars,
   d1_databases: d1
     ? [
         {
