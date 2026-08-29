@@ -11,6 +11,8 @@ from urllib.parse import parse_qs, quote_plus, urlparse
 
 import httpx
 
+from backend.app.services.safe_http import create_ssrf_safe_transport
+
 
 DEFAULT_ALLOWED_DOMAINS = (
     "fifa.com",
@@ -486,10 +488,15 @@ async def research(
         raise ValueError("Proveedor web no válido.")
     configured_tavily_key = tavily_api_key or os.getenv("ORION_TAVILY_API_KEY") or None
     headers = {"User-Agent": "Orion-Research/0.4"}
+    # follow_redirects=True means this client chases arbitrary Location headers
+    # from third-party pages; the SSRF-safe transport revalidates the target IP
+    # on every hop, so an open redirect (or compromised DNS) on an otherwise
+    # allowlisted domain can't reach internal/loopback/metadata addresses.
     async with httpx.AsyncClient(
         timeout=12.0,
         headers=headers,
         follow_redirects=True,
+        transport=create_ssrf_safe_transport(),
     ) as client:
         if configured_provider in {"auto", "tavily"} and configured_tavily_key:
             tavily_sources = await _research_tavily(

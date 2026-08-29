@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import unittest
-from unittest.mock import AsyncMock, patch
 
 import httpx
 
 from backend.app.services.web_reader import (
-    _public_ip,
     _safe_url_syntax,
     apply_page_reads,
     read_source_pages,
@@ -16,11 +14,11 @@ from backend.app.services.web_research import WebSource
 
 
 class WebReaderTests(unittest.TestCase):
-    def test_private_and_local_network_targets_are_rejected(self) -> None:
-        self.assertFalse(_public_ip("127.0.0.1"))
-        self.assertFalse(_public_ip("10.0.0.5"))
-        self.assertFalse(_public_ip("169.254.1.1"))
-        self.assertTrue(_public_ip("8.8.8.8"))
+    def test_local_and_credentialed_url_syntax_is_rejected(self) -> None:
+        # IP-level private/loopback/link-local blocking now happens in the
+        # SSRF-safe transport itself (backend/tests/test_safe_http.py); this
+        # only covers the cheap, network-free syntax checks that still live
+        # here (scheme, embedded credentials, the literal "localhost" name).
         self.assertIsNone(_safe_url_syntax("http://localhost/private"))
         self.assertIsNone(_safe_url_syntax("file:///etc/passwd"))
         self.assertIsNone(_safe_url_syntax("https://user:pass@example.com/a"))
@@ -57,18 +55,14 @@ class WebReaderTests(unittest.TestCase):
                 "example.com",
             ),
         )
-        with patch(
-            "backend.app.services.web_reader._host_is_public",
-            new=AsyncMock(return_value=True),
-        ):
-            reads = asyncio.run(
-                read_source_pages(
-                    sources,
-                    source_ids=["W1"],
-                    query="goles oficiales Messi Inter Miami",
-                    client=client,
-                )
+        reads = asyncio.run(
+            read_source_pages(
+                sources,
+                source_ids=["W1"],
+                query="goles oficiales Messi Inter Miami",
+                client=client,
             )
+        )
         asyncio.run(client.aclose())
 
         self.assertEqual(len(reads), 1)
@@ -109,40 +103,48 @@ class WebReaderTests(unittest.TestCase):
         self.assertEqual(enriched[0].excerpt, rich_snippet)
         self.assertFalse(enriched[0].deepened)
 
-    def test_reader_validates_redirect_destination_before_following(self) -> None:
+    def test_reader_follows_a_single_redirect_to_the_final_page(self) -> None:
+        # SSRF blocking of a malicious redirect target is a property of the
+        # transport itself (backend/tests/test_safe_http.py: every connection
+        # it makes is validated, including redirect hops) - this only checks
+        # that _download_page's own redirect-following loop works for an
+        # ordinary, safe redirect.
         requests: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             requests.append(str(request.url))
+            if str(request.url) == "https://example.com/start":
+                return httpx.Response(
+                    302,
+                    request=request,
+                    headers={"location": "https://example.com/final"},
+                )
             return httpx.Response(
-                302,
+                200,
                 request=request,
-                headers={"location": "http://127.0.0.1/private"},
+                text="<html><body><article>Contenido final tras seguir la redirección correctamente.</article></body></html>",
+                headers={"content-type": "text/html"},
             )
-
-        async def public_host(host: str) -> bool:
-            return host != "127.0.0.1"
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         sources = (
             WebSource("A", "https://example.com/start", "snippet", "example.com"),
         )
-        with patch(
-            "backend.app.services.web_reader._host_is_public",
-            new=AsyncMock(side_effect=public_host),
-        ):
-            reads = asyncio.run(
-                read_source_pages(
-                    sources,
-                    source_ids=["W1"],
-                    query="dato",
-                    client=client,
-                )
+        reads = asyncio.run(
+            read_source_pages(
+                sources,
+                source_ids=["W1"],
+                query="dato",
+                client=client,
             )
+        )
         asyncio.run(client.aclose())
 
-        self.assertEqual(reads, ())
-        self.assertEqual(requests, ["https://example.com/start"])
+        self.assertEqual(len(reads), 1)
+        self.assertIn("Contenido final", reads[0].excerpt)
+        self.assertEqual(
+            requests, ["https://example.com/start", "https://example.com/final"]
+        )
 
     def test_only_reviewer_selected_source_ids_are_opened(self) -> None:
         seen: list[str] = []
@@ -162,18 +164,14 @@ class WebReaderTests(unittest.TestCase):
             WebSource("B", "https://b.example/2", "b", "b.example"),
             WebSource("C", "https://c.example/3", "c", "c.example"),
         )
-        with patch(
-            "backend.app.services.web_reader._host_is_public",
-            new=AsyncMock(return_value=True),
-        ):
-            reads = asyncio.run(
-                read_source_pages(
-                    sources,
-                    source_ids=["W2"],
-                    query="contenido",
-                    client=client,
-                )
+        reads = asyncio.run(
+            read_source_pages(
+                sources,
+                source_ids=["W2"],
+                query="contenido",
+                client=client,
             )
+        )
         asyncio.run(client.aclose())
 
         self.assertEqual(len(reads), 1)

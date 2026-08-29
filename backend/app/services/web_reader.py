@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import re
-import socket
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -13,6 +11,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from backend.app.services.safe_http import create_ssrf_safe_transport
 from backend.app.services.web_research import WebSource, published_age_days
 
 
@@ -52,21 +51,6 @@ _page_cache: OrderedDict[str, tuple[float, CachedPage]] = OrderedDict()
 _cache_lock = asyncio.Lock()
 
 
-def _public_ip(value: str) -> bool:
-    try:
-        address = ipaddress.ip_address(value)
-    except ValueError:
-        return False
-    return not (
-        address.is_private
-        or address.is_loopback
-        or address.is_link_local
-        or address.is_multicast
-        or address.is_reserved
-        or address.is_unspecified
-    )
-
-
 def _safe_url_syntax(url: str) -> tuple[str, str] | None:
     try:
         parsed = urlparse(url)
@@ -80,31 +64,6 @@ def _safe_url_syntax(url: str) -> tuple[str, str] | None:
     if parsed.username or parsed.password:
         return None
     return parsed.scheme, host
-
-
-async def _host_is_public(host: str) -> bool:
-    try:
-        literal = ipaddress.ip_address(host)
-    except ValueError:
-        literal = None
-    if literal is not None:
-        return _public_ip(str(literal))
-
-    try:
-        records = await asyncio.to_thread(
-            socket.getaddrinfo,
-            host,
-            None,
-            type=socket.SOCK_STREAM,
-        )
-    except OSError:
-        return False
-    addresses = {
-        str(record[4][0])
-        for record in records
-        if record and len(record) >= 5 and record[4]
-    }
-    return bool(addresses) and all(_public_ip(address) for address in addresses)
 
 
 def _visible_text(html: str) -> str:
@@ -237,14 +196,19 @@ async def _download_page(
     *,
     client: httpx.AsyncClient,
 ) -> CachedPage | None:
+    # Private/internal IP addresses are rejected inside the client's transport
+    # (create_ssrf_safe_transport, in safe_http.py) at the moment it actually
+    # opens a socket - for this request and for every redirect hop below. That
+    # is the only point immune to DNS-rebinding TOCTOU, so there is no separate
+    # host-resolution pre-check here anymore; _safe_url_syntax only rejects
+    # obviously-bad URLs (wrong scheme, embedded credentials, literal
+    # "localhost") without touching the network.
     current = url
     for _ in range(MAX_REDIRECTS + 1):
         safe = _safe_url_syntax(current)
         if safe is None:
             return None
         _, host = safe
-        if not await _host_is_public(host):
-            return None
 
         cached = await _cache_get(current)
         if cached is not None:
@@ -274,7 +238,7 @@ async def _download_page(
             return None
 
         final_safe = _safe_url_syntax(final_url)
-        if final_safe is None or not await _host_is_public(final_safe[1]):
+        if final_safe is None:
             return None
         visible = _visible_text(html)
         if len(visible) < 40:
@@ -332,6 +296,7 @@ async def read_source_pages(
         timeout=httpx.Timeout(10.0),
         headers={"User-Agent": "Orion-WebRead/0.1"},
         follow_redirects=False,
+        transport=create_ssrf_safe_transport(),
     )
     semaphore = asyncio.Semaphore(3)
 
