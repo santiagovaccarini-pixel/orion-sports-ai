@@ -47,6 +47,14 @@ export type KnowledgeDocument = {
   characters: number;
 };
 
+export type MemoryEntry = {
+  id: string;
+  content: string;
+  category: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type ChartPoint = { label: string; value: number };
 export type OrionChart = {
   type: "bar";
@@ -314,6 +322,40 @@ export async function sendChat(input: {
     }),
   });
   return parseResponse<ChatResult>(response);
+}
+
+export async function listMemoryEntries(
+  signal?: AbortSignal,
+): Promise<MemoryEntry[]> {
+  const response = await fetch(`${API_BASE}/memory/entries`, {
+    cache: "no-store",
+    signal,
+    headers: API_HEADERS,
+  });
+  return parseResponse<MemoryEntry[]>(response);
+}
+
+export async function saveMemoryEntry(input: {
+  content: string;
+  category?: string;
+}): Promise<MemoryEntry> {
+  const response = await fetch(`${API_BASE}/memory/entries`, {
+    method: "POST",
+    headers: API_HEADERS,
+    body: JSON.stringify({
+      content: input.content,
+      category: input.category?.trim() || "general",
+    }),
+  });
+  return parseResponse<MemoryEntry>(response);
+}
+
+export async function deleteMemoryEntry(entryId: string): Promise<void> {
+  const response = await fetch(
+    `${API_BASE}/memory/entries/${encodeURIComponent(entryId)}`,
+    { method: "DELETE", headers: API_HEADERS },
+  );
+  await parseResponse<{ status: string }>(response);
 }
 
 export async function uploadKnowledgeDocument(file: File): Promise<KnowledgeDocument> {

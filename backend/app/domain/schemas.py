@@ -92,6 +92,25 @@ class KnowledgeDocumentResponse(BaseModel):
     characters: int
 
 
+class MemoryEntryRequest(BaseModel):
+    """A fact the user explicitly asks Orion to remember.
+
+    Orion never writes here on its own: memory is only what the user chose to
+    save, so it can be reviewed and deleted by the person it describes.
+    """
+
+    content: str = Field(min_length=1, max_length=1_000)
+    category: str = Field(default="general", min_length=1, max_length=60)
+
+
+class MemoryEntryResponse(BaseModel):
+    id: str
+    content: str
+    category: str
+    created_at: str
+    updated_at: str
+
+
 class StatusResponse(BaseModel):
     service: Literal["online"] = "online"
     version: str
@@ -105,6 +124,6 @@ class StatusResponse(BaseModel):
     deep_threads: int
     loaded_models: list[str]
     snapshot: SystemSnapshotResponse
-    memory_enabled: Literal[False] = False
+    memory_enabled: bool = False
     web_enabled: bool = False
     web_minimum_sources: int = 4

@@ -19,6 +19,7 @@ const PROXYABLE_PATHS = new Set([
   "chat",
   "chat/stream",
   "knowledge/documents",
+  "memory/entries",
   "diagnostics/traces/latest",
 ]);
 
@@ -33,8 +34,9 @@ function jsonError(status: number, code: string, message: string): Response {
 
 function isProxyable(path: string): boolean {
   if (PROXYABLE_PATHS.has(path)) return true;
-  // Trace lookups by id are dynamic, so match the shape rather than the value.
-  return /^diagnostics\/traces\/[A-Za-z0-9_-]{1,128}$/.test(path);
+  // Ids are dynamic, so match their shape rather than an exact value.
+  if (/^diagnostics\/traces\/[A-Za-z0-9_-]{1,128}$/.test(path)) return true;
+  return /^memory\/entries\/[A-Za-z0-9_-]{1,128}$/.test(path);
 }
 
 async function proxy(request: Request, path: string[]): Promise<Response> {
@@ -61,7 +63,10 @@ async function proxy(request: Request, path: string[]): Promise<Response> {
     upstream = await fetch(`${backendBase()}/${target}`, {
       method: request.method,
       headers,
-      body: request.method === "GET" ? undefined : await request.text(),
+      body:
+        request.method === "GET" || request.method === "DELETE"
+          ? undefined
+          : await request.text(),
       signal: request.signal,
     });
   } catch {
@@ -96,6 +101,14 @@ export async function GET(
 }
 
 export async function POST(
+  request: Request,
+  context: { params: Promise<{ path: string[] }> },
+): Promise<Response> {
+  const { path } = await context.params;
+  return proxy(request, path);
+}
+
+export async function DELETE(
   request: Request,
   context: { params: Promise<{ path: string[] }> },
 ): Promise<Response> {

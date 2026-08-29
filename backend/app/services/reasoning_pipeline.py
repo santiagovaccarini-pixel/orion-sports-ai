@@ -66,6 +66,7 @@ async def _plan(
     settings: Settings,
     documents: Sequence[KnowledgeDocument],
     trace: DiagnosticTrace | None = None,
+    memory_context: str = "",
 ) -> SemanticPlan:
     started = perf_counter()
     try:
@@ -75,6 +76,7 @@ async def _plan(
             web_available=settings.web_enabled,
             documents=documents,
             sport=request.sport,
+            memory_context=memory_context,
             on_model_result=lambda stage, result: _record_model_result(
                 trace, stage, result
             ),
@@ -413,6 +415,7 @@ async def build_reasoning_bundle(
     *,
     trace: DiagnosticTrace | None = None,
     on_stage: Callable[[str], None] | None = None,
+    memory_context: str = "",
 ) -> ReasoningBundle:
     """Understand, gather evidence, deepen relevant pages, execute tools and review."""
 
@@ -425,7 +428,9 @@ async def build_reasoning_bundle(
 
     pipeline_started = perf_counter()
     _notify_stage(on_stage, "planning")
-    plan = await _plan(provider, request, settings, documents, trace)
+    plan = await _plan(
+        provider, request, settings, documents, trace, memory_context=memory_context
+    )
     selected_mode = _selected_mode(request, plan)
     if trace is not None:
         trace.set_model(provider.model_for(selected_mode))
@@ -643,6 +648,7 @@ async def build_reasoning_bundle(
         local_evidence,
         original_user_request=request.messages[-1].content,
         tool_context=tool_context,
+        memory_context=memory_context,
     )
     if trace is not None:
         trace.record_contract(build_contract(plan, review))

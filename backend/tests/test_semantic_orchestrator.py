@@ -151,6 +151,61 @@ class SemanticOrchestratorTests(unittest.TestCase):
             "no requiere búsqueda externa", provider.calls[0]["system_prompt"]
         )
 
+    def test_planner_sees_saved_memory_so_it_can_resolve_references(self) -> None:
+        # Memory is only useful if the stage that interprets the request can
+        # see it - otherwise "mi equipo" stays unresolved no matter what the
+        # user saved. Every entry is shown; the model judges relevance by
+        # meaning, never by word overlap.
+        provider = FakePlanningProvider(
+            [
+                """
+                {"objective":"x","entities":[],"constraints":[],"references":[],
+                "information_needed":[],"ambiguities":[],"evidence_policy":"local",
+                "use_web":false,"use_local_data":false,"use_calculator":false,
+                "use_chart":false,"needs_clarification":false,"clarifying_question":null,
+                "web_query":null,"local_document_names":[],
+                "recommended_mode":"quick","reason":"ok"}
+                """
+            ]
+        )
+        asyncio.run(
+            create_semantic_plan(
+                provider,
+                [ChatMessage(role="user", content="¿Cómo viene mi equipo?")],
+                web_available=False,
+                documents=[],
+                sport=SportContext.FOOTBALL,
+                memory_context=(
+                    "MEMORIA PERSONAL DEL USUARIO\n- [contexto] Dirijo la sub-20"
+                ),
+            )
+        )
+        self.assertIn("Dirijo la sub-20", provider.calls[0]["system_prompt"])
+
+    def test_planner_prompt_omits_memory_block_when_nothing_is_saved(self) -> None:
+        provider = FakePlanningProvider(
+            [
+                """
+                {"objective":"x","entities":[],"constraints":[],"references":[],
+                "information_needed":[],"ambiguities":[],"evidence_policy":"local",
+                "use_web":false,"use_local_data":false,"use_calculator":false,
+                "use_chart":false,"needs_clarification":false,"clarifying_question":null,
+                "web_query":null,"local_document_names":[],
+                "recommended_mode":"quick","reason":"ok"}
+                """
+            ]
+        )
+        asyncio.run(
+            create_semantic_plan(
+                provider,
+                [ChatMessage(role="user", content="Hola")],
+                web_available=False,
+                documents=[],
+                sport=SportContext.FOOTBALL,
+            )
+        )
+        self.assertNotIn("MEMORIA PERSONAL", provider.calls[0]["system_prompt"])
+
     def test_conservative_fallback_does_not_classify_by_terms(self) -> None:
         messages = [ChatMessage(role="user", content="Una pregunta totalmente nueva")]
         plan = conservative_fallback_plan(

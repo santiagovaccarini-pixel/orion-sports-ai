@@ -103,6 +103,11 @@ class Settings:
     request_timeout_seconds: int = 300
     api_key: str | None = None
     knowledge_path: str = ".orion-runtime/knowledge/documents.json"
+    memory_path: str = ".orion-runtime/memory/entries.json"
+    # Memory is user-curated and every entry is shown to the planner, so it is
+    # deliberately small: it must stay a set of deliberate facts, not a log.
+    memory_max_entries: int = 100
+    memory_max_entry_characters: int = 1_000
     web_enabled: bool = True
     web_provider: str = "auto"
     tavily_api_key: str | None = None
@@ -186,6 +191,13 @@ def get_settings() -> Settings:
         api_key=os.getenv("ORION_API_KEY") or None,
         knowledge_path=os.getenv(
             "ORION_KNOWLEDGE_PATH", ".orion-runtime/knowledge/documents.json"
+        ),
+        memory_path=os.getenv(
+            "ORION_MEMORY_PATH", ".orion-runtime/memory/entries.json"
+        ),
+        memory_max_entries=_read_positive_int("ORION_MEMORY_MAX_ENTRIES", 100),
+        memory_max_entry_characters=_read_positive_int(
+            "ORION_MEMORY_MAX_ENTRY_CHARACTERS", 1_000
         ),
         web_enabled=_read_bool("ORION_WEB_ENABLED", True),
         web_provider=_read_web_provider(),

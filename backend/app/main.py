@@ -47,5 +47,5 @@ async def root() -> dict[str, str]:
         "service": settings.app_name,
         "version": settings.version,
         "model_provider": settings.model_provider,
-        "persistent_memory": "disabled",
+        "persistent_memory": "user_curated",
     }

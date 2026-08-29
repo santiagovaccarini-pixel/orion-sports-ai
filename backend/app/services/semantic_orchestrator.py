@@ -745,8 +745,9 @@ def _capability_context(
     web_available: bool,
     documents: Sequence[KnowledgeDocument],
     sport: SportContext,
+    memory_context: str = "",
 ) -> str:
-    return (
+    base = (
         f"Fecha actual del sistema: {date.today().isoformat()}\n"
         f"Contexto deportivo seleccionado: {sport.value}\n"
         f"Búsqueda web disponible: {'sí' if web_available else 'no'}\n"
@@ -754,6 +755,11 @@ def _capability_context(
         "Catálogo de documentos locales disponibles:\n"
         f"{document_catalog(documents)}"
     )
+    if not memory_context:
+        return base
+    # Every saved entry is shown and the model decides by meaning whether any
+    # of it bears on this request - relevance is never chosen by word overlap.
+    return f"{base}\n\n{memory_context}"
 
 
 async def create_semantic_plan(
@@ -763,12 +769,14 @@ async def create_semantic_plan(
     web_available: bool,
     documents: Sequence[KnowledgeDocument],
     sport: SportContext,
+    memory_context: str = "",
     on_model_result: ModelResultCallback | None = None,
 ) -> SemanticPlan:
     system_prompt = PLANNER_PROMPT + "\n\n" + _capability_context(
         web_available=web_available,
         documents=documents,
         sport=sport,
+        memory_context=memory_context,
     )
     recent = list(messages[-12:])
     result = await provider.chat(
@@ -1144,6 +1152,7 @@ def format_reasoning_context(
     *,
     original_user_request: str | None = None,
     tool_context: str = "",
+    memory_context: str = "",
 ) -> str:
     contract = build_contract(plan, review)
     header = {
@@ -1169,6 +1178,8 @@ def format_reasoning_context(
         "CONTEXTO DE ORQUESTACIÓN SEMÁNTICA (no lo repitas al usuario):\n"
         + json.dumps(header, ensure_ascii=False),
     ]
+    if memory_context:
+        sections.append(memory_context)
     if contract.audited:
         sections.append(
             "CONTRATO SEMÁNTICO AUDITADO: respondé exactamente a resolved_request. "

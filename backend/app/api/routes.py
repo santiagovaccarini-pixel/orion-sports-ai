@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from time import perf_counter
 from typing import AsyncIterator
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -22,6 +23,8 @@ from backend.app.domain.schemas import (
     ChatResponse,
     KnowledgeDocumentRequest,
     KnowledgeDocumentResponse,
+    MemoryEntryRequest,
+    MemoryEntryResponse,
     RequestedMode,
     SportContext,
     StatusResponse,
@@ -45,6 +48,11 @@ from backend.app.services.knowledge_base import (
     csv_query_is_ambiguous,
     csv_tool_result,
     format_context,
+)
+from backend.app.services.memory_store import (
+    MemoryEntry,
+    MemoryStore,
+    format_memory_context,
 )
 from backend.app.services.mode_router import recommend_mode
 from backend.app.services.orchestrator import OrchestrationPlan, create_plan
@@ -73,6 +81,21 @@ _chat_slots = asyncio.Semaphore(get_settings().max_concurrent_chats)
 
 
 def _client_id(request: Request) -> str:
+    """Identify the caller for rate limiting.
+
+    Behind a reverse proxy (Render) this is the proxy's address, not the end
+    user's: uvicorn only honours X-Forwarded-For from `forwarded_allow_ips`,
+    which defaults to 127.0.0.1. The limiter is therefore effectively a single
+    shared bucket for the whole deployment.
+
+    That is deliberate for now. Trusting X-Forwarded-For from any peer would
+    make the limit per-user but also trivially bypassable by spoofing the
+    header, and an unbypassable ceiling on total load is worth more here than
+    per-user fairness while Orion has one operator. Revisit alongside real
+    user accounts, where fairness starts to matter and identity is
+    authenticated rather than inferred from an address.
+    """
+
     client = request.client
     return client.host if client is not None else "unknown"
 
@@ -481,6 +504,12 @@ def _documents() -> list[KnowledgeDocument]:
     return KnowledgeBase(Path(get_settings().knowledge_path)).list_documents()
 
 
+def _memory_context() -> str:
+    """Saved memory as prompt context, or empty when the user saved nothing."""
+
+    return format_memory_context(_memory_store().list_entries())
+
+
 def _direct_response(
     content: str,
     prepared: PreparedChat,
@@ -610,6 +639,78 @@ async def add_knowledge_document(
     )
 
 
+def _memory_store() -> MemoryStore:
+    return MemoryStore(Path(get_settings().memory_path))
+
+
+def _memory_response(entry: MemoryEntry) -> MemoryEntryResponse:
+    return MemoryEntryResponse(
+        id=entry.id,
+        content=entry.content,
+        category=entry.category,
+        created_at=entry.created_at,
+        updated_at=entry.updated_at,
+    )
+
+
+@router.get(
+    "/memory/entries",
+    response_model=list[MemoryEntryResponse],
+    dependencies=[Depends(require_api_key)],
+)
+async def list_memory_entries() -> list[MemoryEntryResponse]:
+    return [_memory_response(entry) for entry in _memory_store().list_entries()]
+
+
+@router.post(
+    "/memory/entries",
+    response_model=MemoryEntryResponse,
+    dependencies=[Depends(require_api_key), Depends(limit_upload_rate)],
+)
+async def add_memory_entry(request: MemoryEntryRequest) -> MemoryEntryResponse:
+    settings = get_settings()
+    store = _memory_store()
+    if len(store.list_entries()) >= settings.memory_max_entries:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail={
+                "code": "memory_limit_reached",
+                "message": (
+                    "Orion alcanzó el máximo de recuerdos guardados. Borrá "
+                    "alguno antes de agregar uno nuevo."
+                ),
+            },
+        )
+    entry_id = uuid4().hex[:16]
+    entry = store.add_entry(entry_id, request.content, request.category)
+    return _memory_response(entry)
+
+
+@router.delete(
+    "/memory/entries/{entry_id}",
+    dependencies=[Depends(require_api_key)],
+)
+async def delete_memory_entry(entry_id: str) -> dict[str, str]:
+    if not _memory_store().delete_entry(entry_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "memory_entry_not_found",
+                "message": "Ese recuerdo ya no existe.",
+            },
+        )
+    return {"status": "deleted", "id": entry_id}
+
+
+@router.delete(
+    "/memory/entries",
+    dependencies=[Depends(require_api_key)],
+)
+async def delete_all_memory_entries() -> dict[str, str]:
+    _memory_store().delete_all()
+    return {"status": "deleted_all"}
+
+
 @router.get(
     "/status",
     response_model=StatusResponse,
@@ -631,6 +732,7 @@ async def system_status() -> StatusResponse:
         quick_threads=settings.quick_threads if provider.uses_local_resources else 0,
         deep_threads=settings.deep_threads if provider.uses_local_resources else 0,
         snapshot=SystemSnapshotResponse(**asdict(read_snapshot())),
+        memory_enabled=True,
         web_enabled=settings.web_enabled,
         web_minimum_sources=settings.web_minimum_sources,
     )
@@ -668,6 +770,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
                 settings,
                 _documents(),
                 trace=trace,
+                memory_context=_memory_context(),
             )
             prepared = await _prepare_selected_chat(
                 request,
@@ -816,6 +919,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                         _documents(),
                         trace=trace,
                         on_stage=stage_events.put_nowait,
+                        memory_context=_memory_context(),
                     )
                 )
                 try:
