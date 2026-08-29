@@ -771,6 +771,8 @@ async def create_semantic_plan(
     sport: SportContext,
     memory_context: str = "",
     on_model_result: ModelResultCallback | None = None,
+    reasoning_effort: str = "low",
+    stage_name: str = "planning",
 ) -> SemanticPlan:
     system_prompt = PLANNER_PROMPT + "\n\n" + _capability_context(
         web_available=web_available,
@@ -784,10 +786,10 @@ async def create_semantic_plan(
         messages=recent,
         system_prompt=system_prompt,
         structured=True,
-        reasoning_effort="low",
+        reasoning_effort=reasoning_effort,
     )
     if on_model_result is not None:
-        on_model_result("planning", result)
+        on_model_result(stage_name, result)
     return parse_semantic_plan(result.content)
 
 

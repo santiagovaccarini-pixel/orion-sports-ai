@@ -69,8 +69,9 @@ async def _plan(
     memory_context: str = "",
 ) -> SemanticPlan:
     started = perf_counter()
-    try:
-        plan = await create_semantic_plan(
+
+    async def _attempt(effort: str, stage_name: str) -> SemanticPlan:
+        return await create_semantic_plan(
             provider,
             request.messages,
             web_available=settings.web_enabled,
@@ -80,28 +81,48 @@ async def _plan(
             on_model_result=lambda stage, result: _record_model_result(
                 trace, stage, result
             ),
+            reasoning_effort=effort,
+            stage_name=stage_name,
         )
+
+    # The planner runs at low effort for speed, where this model sometimes
+    # returns malformed JSON or omits the objective. That used to drop straight
+    # to the conservative fallback, which knows nothing about the request and
+    # sends Orion searching the web blindly - a visibly worse answer. One retry
+    # at higher effort recovers most of those instead.
+    try:
+        plan = await _attempt("low", "planning")
+    except SemanticOrchestrationError as first_error:
         if trace is not None:
-            trace.record_plan(
-                plan,
-                fallback=False,
-                duration_ms=(perf_counter() - started) * 1000,
+            trace.record_guard(
+                "planner_retried",
+                f"El plan no se pudo interpretar ({first_error}); Orion reintenta "
+                "con más esfuerzo de razonamiento antes de degradar.",
             )
-        return plan
-    except SemanticOrchestrationError as exc:
-        plan = conservative_fallback_plan(
-            request.messages,
-            web_available=settings.web_enabled,
-            documents=documents,
+        try:
+            plan = await _attempt("medium", "planning_retry")
+        except SemanticOrchestrationError as retry_error:
+            plan = conservative_fallback_plan(
+                request.messages,
+                web_available=settings.web_enabled,
+                documents=documents,
+            )
+            if trace is not None:
+                trace.record_plan(
+                    plan,
+                    fallback=True,
+                    duration_ms=(perf_counter() - started) * 1000,
+                    error=f"{first_error} | reintento: {retry_error}",
+                )
+            return plan
+
+    if trace is not None:
+        trace.record_plan(
+            plan,
+            fallback=False,
+            duration_ms=(perf_counter() - started) * 1000,
         )
-        if trace is not None:
-            trace.record_plan(
-                plan,
-                fallback=True,
-                duration_ms=(perf_counter() - started) * 1000,
-                error=str(exc),
-            )
-        return plan
+    return plan
 
 
 def _selected_mode(request: ChatRequest, plan: SemanticPlan) -> SelectedMode:

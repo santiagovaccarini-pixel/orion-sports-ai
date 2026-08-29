@@ -460,3 +460,67 @@ class ReasoningPipelineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RecordingPlannerProvider:
+    """Records the reasoning effort of each call so retries are observable."""
+
+    name = "cloudflare"
+    uses_local_resources = False
+
+    def __init__(self, responses: list[str]) -> None:
+        self.responses = responses
+        self.efforts: list[str] = []
+
+    async def chat(self, **kwargs):
+        self.efforts.append(kwargs.get("reasoning_effort", ""))
+        return ModelResult(
+            content=self.responses.pop(0),
+            model="test-model",
+            thread_limit=0,
+        )
+
+
+class PlannerRetryTests(unittest.TestCase):
+    """A malformed plan used to drop straight to a blind conservative fallback."""
+
+    def _settings(self) -> Settings:
+        return Settings(
+            model_provider="cloudflare",
+            semantic_orchestration=True,
+            web_enabled=False,
+            diagnostics_enabled=False,
+        )
+
+    def test_unparseable_plan_is_retried_with_more_effort(self) -> None:
+        provider = RecordingPlannerProvider(["no es json", PLAN, REVIEW_OK])
+        request = ChatRequest(messages=[{"role": "user", "content": "Una consulta"}])
+
+        bundle = asyncio.run(
+            build_reasoning_bundle(provider, request, self._settings(), [])
+        )
+
+        # First attempt low, retry at higher effort, and the retry's plan wins.
+        self.assertEqual(provider.efforts[:2], ["low", "medium"])
+        self.assertEqual(bundle.plan.objective, "resolver una consulta actual")
+
+    def test_conservative_fallback_only_after_the_retry_also_fails(self) -> None:
+        provider = RecordingPlannerProvider(["no es json", "tampoco es json", REVIEW_OK])
+        request = ChatRequest(messages=[{"role": "user", "content": "Una consulta"}])
+
+        bundle = asyncio.run(
+            build_reasoning_bundle(provider, request, self._settings(), [])
+        )
+
+        self.assertEqual(provider.efforts[:2], ["low", "medium"])
+        # The fallback echoes the question back as its objective.
+        self.assertEqual(bundle.plan.objective, "Una consulta")
+
+    def test_a_valid_plan_is_not_retried(self) -> None:
+        provider = RecordingPlannerProvider([PLAN, REVIEW_OK])
+        request = ChatRequest(messages=[{"role": "user", "content": "Una consulta"}])
+
+        asyncio.run(build_reasoning_bundle(provider, request, self._settings(), []))
+
+        self.assertEqual(provider.efforts[0], "low")
+        self.assertNotIn("medium", provider.efforts[:1])
