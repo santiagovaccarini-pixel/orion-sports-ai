@@ -13,11 +13,15 @@ import remarkGfm from "remark-gfm";
 import {
   ChatMessage,
   OrionChart,
+  MemoryEntry,
+  deleteMemoryEntry,
   getOrionStatus,
+  listMemoryEntries,
   OrionApiError,
   OrionStatus,
   RequestedMode,
   ResourceWarning,
+  saveMemoryEntry,
   sendChatStream,
   uploadKnowledgeDocument,
   Sport,
@@ -199,6 +203,10 @@ export function OrionConsole() {
   const [error, setError] = useState<string | null>(null);
   const [knowledgeMessage, setKnowledgeMessage] = useState<string | null>(null);
   const [knowledgeFile, setKnowledgeFile] = useState<string | null>(null);
+  const [memoryEntries, setMemoryEntries] = useState<MemoryEntry[]>([]);
+  const [memoryDraft, setMemoryDraft] = useState("");
+  const [memoryBusy, setMemoryBusy] = useState(false);
+  const [memoryError, setMemoryError] = useState<string | null>(null);
   const [warning, setWarning] = useState<PendingWarning | null>(null);
   const [showScrollToLatest, setShowScrollToLatest] = useState(false);
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -210,6 +218,16 @@ export function OrionConsole() {
   const shouldFollowRef = useRef(true);
   const previousScrollTopRef = useRef(0);
   const autoScrollFrameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    listMemoryEntries(controller.signal)
+      .then(setMemoryEntries)
+      .catch(() => {
+        // Memory is supplementary: a failure here must not block the console.
+      });
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -539,6 +557,40 @@ export function OrionConsole() {
     }
   };
 
+  const handleMemorySave = async () => {
+    const content = memoryDraft.trim();
+    if (!content || memoryBusy) return;
+    setMemoryBusy(true);
+    setMemoryError(null);
+    try {
+      const entry = await saveMemoryEntry({ content });
+      setMemoryEntries((current) => [...current, entry]);
+      setMemoryDraft("");
+    } catch (caught) {
+      setMemoryError(
+        caught instanceof Error ? caught.message : "No se pudo guardar el dato.",
+      );
+    } finally {
+      setMemoryBusy(false);
+    }
+  };
+
+  const handleMemoryDelete = async (entryId: string) => {
+    setMemoryError(null);
+    // Optimistic removal keeps the panel responsive; on failure the entry is
+    // restored by reloading, so the UI never claims a deletion that didn't happen.
+    const previous = memoryEntries;
+    setMemoryEntries((current) => current.filter((item) => item.id !== entryId));
+    try {
+      await deleteMemoryEntry(entryId);
+    } catch (caught) {
+      setMemoryEntries(previous);
+      setMemoryError(
+        caught instanceof Error ? caught.message : "No se pudo borrar el dato.",
+      );
+    }
+  };
+
   const submitPrompt = async (prompt: string) => {
     const clean = prompt.trim();
     if (!clean || loading) return;
@@ -635,20 +687,57 @@ export function OrionConsole() {
         </div>
 
         <div className="side-stack">
-          <p className="side-label">Privacidad</p>
-          <div className="privacy-line">
-            <span>Memoria permanente</span>
-            <span className="status-value">Desactivada</span>
+          <p className="side-label">Memoria</p>
+          <p className="side-hint">
+            Solo lo que guardes acá. Orion no guarda nada por su cuenta.
+          </p>
+          <div className="memory-compose">
+            <textarea
+              value={memoryDraft}
+              onChange={(event) => setMemoryDraft(event.target.value)}
+              placeholder="Ej.: Dirijo el plantel sub-20 de Atlético Mineiro"
+              rows={2}
+              maxLength={1000}
+              aria-label="Dato para que Orion recuerde"
+            />
+            <button
+              type="button"
+              className="memory-save"
+              onClick={handleMemorySave}
+              disabled={memoryBusy || !memoryDraft.trim()}
+            >
+              {memoryBusy ? "Guardando…" : "Recordar"}
+            </button>
           </div>
-          <div className="privacy-line">
-            <span>Motor externo</span>
-            <span className="status-value">Desactivado</span>
-          </div>
+          {memoryError ? (
+            <p className="memory-error" role="alert">
+              {memoryError}
+            </p>
+          ) : null}
+          {memoryEntries.length === 0 ? (
+            <p className="memory-empty">Todavía no guardaste nada.</p>
+          ) : (
+            <ul className="memory-list">
+              {memoryEntries.map((entry) => (
+                <li key={entry.id} className="memory-item">
+                  <span className="memory-text">{entry.content}</span>
+                  <button
+                    type="button"
+                    className="memory-remove"
+                    onClick={() => handleMemoryDelete(entry.id)}
+                    aria-label={`Olvidar: ${entry.content}`}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
 
         <p className="side-note">
           Módulo 1.3 · Las conversaciones permanecen únicamente en esta sesión y
-          se pierden al recargar la página.
+          se pierden al recargar la página. La memoria guardada sí persiste.
         </p>
       </aside>
 

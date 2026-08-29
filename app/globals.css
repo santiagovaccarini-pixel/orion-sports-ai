@@ -157,6 +157,115 @@ button {
   gap: 0.55rem;
 }
 
+.side-hint {
+  margin: -0.15rem 0 0;
+  color: #8f9187;
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.memory-compose {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.memory-compose textarea {
+  width: 100%;
+  resize: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.055);
+  padding: 0.6rem 0.7rem;
+  color: #f0f1ea;
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.memory-compose textarea::placeholder {
+  color: #7e8077;
+}
+
+.memory-compose textarea:focus-visible {
+  border-color: rgba(185, 244, 74, 0.5);
+  outline: none;
+}
+
+.memory-save {
+  justify-self: end;
+  border: 0;
+  border-radius: 0.65rem;
+  background: var(--accent);
+  padding: 0.4rem 0.85rem;
+  color: #16180f;
+  font-size: 0.74rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.memory-save:disabled {
+  background: rgba(255, 255, 255, 0.1);
+  color: #85877e;
+  cursor: not-allowed;
+}
+
+.memory-error {
+  margin: 0;
+  color: #ffb4ab;
+  font-size: 0.74rem;
+}
+
+.memory-empty {
+  margin: 0;
+  color: #7e8077;
+  font-size: 0.74rem;
+}
+
+.memory-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.memory-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.055);
+  padding: 0.55rem 0.6rem 0.55rem 0.75rem;
+  color: #c8c9c2;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.memory-text {
+  overflow-wrap: anywhere;
+}
+
+.memory-remove {
+  display: grid;
+  width: 1.2rem;
+  height: 1.2rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #8f9187;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.memory-remove:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f0f1ea;
+}
+
 .side-note {
   margin-top: auto;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
