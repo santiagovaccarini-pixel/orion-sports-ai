@@ -10,7 +10,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import AsyncIterator
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from backend.app.core.config import get_settings
@@ -48,6 +48,11 @@ from backend.app.services.knowledge_base import (
 )
 from backend.app.services.mode_router import recommend_mode
 from backend.app.services.orchestrator import OrchestrationPlan, create_plan
+from backend.app.services.rate_limit import (
+    SlidingWindowRateLimiter,
+    chat_rate_limiter,
+    upload_rate_limiter,
+)
 from backend.app.services.reasoning_pipeline import ReasoningBundle, build_reasoning_bundle
 from backend.app.services.semantic_tools import audit_numeric_support
 from backend.app.services.resource_guard import (
@@ -61,6 +66,48 @@ from backend.app.services.web_research import format_sources, research
 
 router = APIRouter()
 chat_lock = asyncio.Lock()
+# Bounds how many chat requests can be in flight at once regardless of provider.
+# chat_lock below only ever applied to local (Ollama) inference to protect the
+# developer's machine, which left the deployed cloud path with no cap at all.
+_chat_slots = asyncio.Semaphore(get_settings().max_concurrent_chats)
+
+
+def _client_id(request: Request) -> str:
+    client = request.client
+    return client.host if client is not None else "unknown"
+
+
+async def _enforce_rate_limit(
+    request: Request,
+    limiter: SlidingWindowRateLimiter,
+    limit: int,
+) -> None:
+    decision = await limiter.check(_client_id(request), limit=limit)
+    if decision.allowed:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail={
+            "code": "rate_limited",
+            "message": (
+                "Demasiadas solicitudes seguidas. Esperá unos segundos antes "
+                "de volver a intentar."
+            ),
+        },
+        headers={"Retry-After": str(decision.retry_after_seconds)},
+    )
+
+
+async def limit_chat_rate(request: Request) -> None:
+    await _enforce_rate_limit(
+        request, chat_rate_limiter, get_settings().rate_limit_chat_per_minute
+    )
+
+
+async def limit_upload_rate(request: Request) -> None:
+    await _enforce_rate_limit(
+        request, upload_rate_limiter, get_settings().rate_limit_uploads_per_minute
+    )
 
 
 def require_api_key(
@@ -162,20 +209,21 @@ def _provider_http_exception(exc: Exception) -> HTTPException:
 
 @asynccontextmanager
 async def _provider_runtime(provider: ModelProvider) -> AsyncIterator[None]:
-    """Apply PC protection only when inference is actually running locally."""
+    """Bound in-flight work, and apply PC protection for local inference only."""
 
-    if not provider.uses_local_resources:
-        yield
-        return
-    async with chat_lock:
-        lower_ollama_priority()
-        priority_stop = asyncio.Event()
-        priority_task = asyncio.create_task(maintain_ollama_priority(priority_stop))
-        try:
+    async with _chat_slots:
+        if not provider.uses_local_resources:
             yield
-        finally:
-            priority_stop.set()
-            await priority_task
+            return
+        async with chat_lock:
+            lower_ollama_priority()
+            priority_stop = asyncio.Event()
+            priority_task = asyncio.create_task(maintain_ollama_priority(priority_stop))
+            try:
+                yield
+            finally:
+                priority_stop.set()
+                await priority_task
 
 
 async def _prepare_selected_chat(
@@ -510,11 +558,12 @@ async def list_knowledge_documents() -> list[KnowledgeDocumentResponse]:
 @router.post(
     "/knowledge/documents",
     response_model=KnowledgeDocumentResponse,
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(limit_upload_rate)],
 )
 async def add_knowledge_document(
     request: KnowledgeDocumentRequest,
 ) -> KnowledgeDocumentResponse:
+    settings = get_settings()
     document_id = hashlib.sha256(
         f"{request.name}\0{request.content}".encode("utf-8")
     ).hexdigest()[:16]
@@ -523,7 +572,37 @@ async def add_knowledge_document(
         request.name.strip(),
         request.content.strip(),
     )
-    KnowledgeBase(Path(get_settings().knowledge_path)).add_document(document)
+    knowledge = KnowledgeBase(Path(settings.knowledge_path))
+    existing = knowledge.list_documents()
+    # Re-uploading the same content keeps the same id and just replaces the
+    # entry, so it must not count against the quota as a new document.
+    replaces_existing = any(item.id == document.id for item in existing)
+    if not replaces_existing and len(existing) >= settings.knowledge_max_documents:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail={
+                "code": "knowledge_document_limit_reached",
+                "message": (
+                    "Orion alcanzó el máximo de documentos guardados. Borrá "
+                    "alguno antes de subir uno nuevo."
+                ),
+            },
+        )
+    projected_characters = sum(
+        len(item.content) for item in existing if item.id != document.id
+    ) + len(document.content)
+    if projected_characters > settings.knowledge_max_total_characters:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail={
+                "code": "knowledge_storage_limit_reached",
+                "message": (
+                    "Orion alcanzó el límite total de almacenamiento de "
+                    "documentos. Borrá alguno antes de subir uno nuevo."
+                ),
+            },
+        )
+    knowledge.add_document(document)
     return KnowledgeDocumentResponse(
         id=document.id,
         name=document.name,
@@ -560,7 +639,7 @@ async def system_status() -> StatusResponse:
 @router.post(
     "/chat",
     response_model=ChatResponse,
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(limit_chat_rate)],
 )
 async def chat(request: ChatRequest) -> ChatResponse:
     settings = get_settings()
@@ -676,7 +755,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
 @router.post(
     "/chat/stream",
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(limit_chat_rate)],
 )
 async def chat_stream(request: ChatRequest) -> StreamingResponse:
     settings = get_settings()

@@ -113,6 +113,15 @@ class Settings:
     semantic_local_context_characters: int = 12_000
     diagnostics_enabled: bool = False
     cors_origins: tuple[str, ...] = DEFAULT_CORS_ORIGINS
+    # A single chat request fans out into several model calls plus up to
+    # semantic_max_tool_rounds web searches and MAX_READ_PAGES page fetches, so
+    # unlimited concurrent callers can exhaust the Cloudflare/Tavily quotas and
+    # the host itself. These bound that fan-out.
+    rate_limit_chat_per_minute: int = 12
+    rate_limit_uploads_per_minute: int = 6
+    max_concurrent_chats: int = 4
+    knowledge_max_documents: int = 200
+    knowledge_max_total_characters: int = 20_000_000
 
 
 @lru_cache(maxsize=1)
@@ -197,4 +206,17 @@ def get_settings() -> Settings:
         ),
         diagnostics_enabled=_read_bool("ORION_DIAGNOSTICS_ENABLED", False),
         cors_origins=origins or DEFAULT_CORS_ORIGINS,
+        rate_limit_chat_per_minute=_read_positive_int(
+            "ORION_RATE_LIMIT_CHAT_PER_MINUTE", 12
+        ),
+        rate_limit_uploads_per_minute=_read_positive_int(
+            "ORION_RATE_LIMIT_UPLOADS_PER_MINUTE", 6
+        ),
+        max_concurrent_chats=_read_positive_int("ORION_MAX_CONCURRENT_CHATS", 4),
+        knowledge_max_documents=_read_positive_int(
+            "ORION_KNOWLEDGE_MAX_DOCUMENTS", 200
+        ),
+        knowledge_max_total_characters=_read_positive_int(
+            "ORION_KNOWLEDGE_MAX_TOTAL_CHARACTERS", 20_000_000
+        ),
     )
