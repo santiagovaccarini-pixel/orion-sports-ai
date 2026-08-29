@@ -386,7 +386,7 @@ button {
   flex: 1;
   min-height: 0;
   align-content: start;
-  gap: 1.1rem;
+  gap: 0.9rem;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-bottom: 2rem;
@@ -399,14 +399,15 @@ button {
   min-width: 0;
   max-width: 100%;
   border-radius: 1.25rem;
-  padding: 0.95rem 1.15rem;
-  line-height: 1.58;
+  padding: 0.85rem 1.1rem;
+  font-size: 0.9rem;
+  line-height: 1.62;
 }
 
 /* A user prompt is short and scannable; an answer is the content. Letting the
    question stay narrow makes the reply visibly the larger half. */
 .message.user {
-  max-width: min(100%, 44rem);
+  max-width: min(100%, 40rem);
 }
 
 .plain-content {
@@ -418,14 +419,15 @@ button {
   overflow-wrap: anywhere;
 }
 
-/* Prose needs a comfortable line length (~70 characters) even when the column
-   is wide; tables and code below deliberately keep the full width, since
-   narrowing those would force horizontal scrolling instead. */
+/* Prose is capped by character count, not pixels, so the measure stays
+   readable at the transcript's smaller type while showing more words per line
+   than the old 72ch cap did. Tables and code below deliberately keep the full
+   width, since narrowing those would force horizontal scrolling instead. */
 .markdown-content p,
 .markdown-content li,
 .plain-content,
 .streaming-content {
-  max-width: 72ch;
+  max-width: 88ch;
 }
 
 .markdown-content table,
