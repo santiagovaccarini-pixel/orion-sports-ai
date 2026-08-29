@@ -42,14 +42,18 @@ def _read_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+# Providers that run the model on someone else's hardware. They share one token
+# budget; only Ollama, on the user's own machine, is sized differently.
+CLOUD_MODEL_PROVIDERS = frozenset({"cloudflare", "groq"})
+
+
 def _read_provider() -> str:
     # Orion Cloud is the canonical runtime. Ollama remains available only when an
     # explicit legacy/local environment asks for it.
     provider = os.getenv("ORION_MODEL_PROVIDER", "cloudflare").strip().lower()
-    if provider not in {"ollama", "cloudflare"}:
-        raise RuntimeError(
-            "ORION_MODEL_PROVIDER debe ser 'cloudflare' o 'ollama'."
-        )
+    if provider not in CLOUD_MODEL_PROVIDERS | {"ollama"}:
+        allowed = ", ".join(sorted(CLOUD_MODEL_PROVIDERS | {"ollama"}))
+        raise RuntimeError(f"ORION_MODEL_PROVIDER debe ser uno de: {allowed}.")
     return provider
 
 
@@ -90,6 +94,12 @@ class Settings:
     cloudflare_deep_reasoning_effort: str = "medium"
     cloudflare_quick_max_tokens: int = 1536
     cloudflare_deep_max_tokens: int = 3072
+    groq_api_key: str | None = None
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_quick_model: str = "openai/gpt-oss-120b"
+    groq_deep_model: str = "openai/gpt-oss-120b"
+    groq_quick_reasoning_effort: str = "low"
+    groq_deep_reasoning_effort: str = "medium"
     quick_context: int = 4096
     deep_context: int = 8192
     quick_threads: int = 8
@@ -173,15 +183,31 @@ def get_settings() -> Settings:
         ),
         cloudflare_quick_max_tokens=cloud_quick_max_tokens,
         cloudflare_deep_max_tokens=cloud_deep_max_tokens,
+        groq_api_key=os.getenv("ORION_GROQ_API_KEY") or None,
+        groq_base_url=os.getenv(
+            "ORION_GROQ_BASE_URL", "https://api.groq.com/openai/v1"
+        ).rstrip("/"),
+        groq_quick_model=os.getenv("ORION_GROQ_QUICK_MODEL", "openai/gpt-oss-120b"),
+        groq_deep_model=os.getenv("ORION_GROQ_DEEP_MODEL", "openai/gpt-oss-120b"),
+        groq_quick_reasoning_effort=_read_reasoning_effort(
+            "ORION_GROQ_QUICK_REASONING_EFFORT", "low"
+        ),
+        groq_deep_reasoning_effort=_read_reasoning_effort(
+            "ORION_GROQ_DEEP_REASONING_EFFORT", "medium"
+        ),
         quick_context=_read_positive_int("ORION_QUICK_CONTEXT", 4096),
         deep_context=_read_positive_int("ORION_DEEP_CONTEXT", 8192),
         quick_threads=_read_positive_int("ORION_QUICK_THREADS", 8),
         deep_threads=_read_positive_int("ORION_DEEP_THREADS", 8),
         quick_max_tokens=(
-            cloud_quick_max_tokens if provider == "cloudflare" else local_quick_max_tokens
+            cloud_quick_max_tokens
+            if provider in CLOUD_MODEL_PROVIDERS
+            else local_quick_max_tokens
         ),
         deep_max_tokens=(
-            cloud_deep_max_tokens if provider == "cloudflare" else local_deep_max_tokens
+            cloud_deep_max_tokens
+            if provider in CLOUD_MODEL_PROVIDERS
+            else local_deep_max_tokens
         ),
         quick_history_characters=_read_positive_int(
             "ORION_QUICK_HISTORY_CHARACTERS", 12_000

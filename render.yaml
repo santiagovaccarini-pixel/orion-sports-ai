@@ -33,6 +33,19 @@ services:
         value: "1536"
       - key: ORION_CLOUDFLARE_DEEP_MAX_TOKENS
         value: "3072"
+      # Groq serves the same gpt-oss weights an order of magnitude faster. The
+      # switch is ORION_MODEL_PROVIDER above; these values stay inert until then,
+      # so the Cloudflare credentials remain a working fallback.
+      - key: ORION_GROQ_API_KEY
+        sync: false
+      - key: ORION_GROQ_QUICK_MODEL
+        value: "openai/gpt-oss-120b"
+      - key: ORION_GROQ_DEEP_MODEL
+        value: "openai/gpt-oss-120b"
+      - key: ORION_GROQ_QUICK_REASONING_EFFORT
+        value: "low"
+      - key: ORION_GROQ_DEEP_REASONING_EFFORT
+        value: "medium"
       - key: ORION_WEB_ENABLED
         value: "true"
       - key: ORION_WEB_PROVIDER

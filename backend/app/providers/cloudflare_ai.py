@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from dataclasses import dataclass
 from typing import AsyncIterator
 
 import httpx
@@ -12,46 +10,29 @@ from backend.app.core.config import Settings
 from backend.app.domain.models import SelectedMode
 from backend.app.domain.schemas import ChatMessage
 
-
-class CloudAIUnavailableError(RuntimeError):
-    pass
-
-
-class CloudAIConfigurationError(RuntimeError):
-    pass
-
-
-@dataclass(frozen=True, slots=True)
-class CloudAIResult:
-    content: str
-    model: str
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    reasoning_tokens: int | None = None
-    finish_reason: str | None = None
-    reasoning_effort: str | None = None
-    endpoint: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class CloudAIStreamEvent:
-    content: str
-    done: bool
-    model: str
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    reasoning_tokens: int | None = None
-    finish_reason: str | None = None
-    reasoning_effort: str | None = None
-    endpoint: str | None = None
-
-
-TRANSIENT_HTTP_STATUSES = frozenset({502, 503, 504})
-TRANSIENT_RETRY_DELAYS_SECONDS = (0.35, 0.9)
-STRUCTURED_MIN_MAX_TOKENS = 1536
-FINAL_VISIBLE_RESCUE_MIN_MAX_TOKENS = 3072
-FINAL_VISIBLE_RESCUE_MAX_MAX_TOKENS = 6144
-OUTPUT_LIMIT_REASONS = frozenset({"length", "max_tokens", "max_output_tokens"})
+# Re-exported so every existing import of these names keeps resolving here.
+from backend.app.providers.openai_compatible import (  # noqa: F401
+    FINAL_VISIBLE_RESCUE_MAX_MAX_TOKENS,
+    FINAL_VISIBLE_RESCUE_MIN_MAX_TOKENS,
+    OUTPUT_LIMIT_REASONS,
+    STRUCTURED_MIN_MAX_TOKENS,
+    TRANSIENT_HTTP_STATUSES,
+    TRANSIENT_RETRY_DELAYS_SECONDS,
+    CloudAIConfigurationError,
+    CloudAIResult,
+    CloudAIStreamEvent,
+    CloudAIUnavailableError,
+    _as_dict,
+    _completion_content,
+    _completion_finish_reason,
+    _completion_usage,
+    _is_output_limit_reason,
+    _is_transient_status,
+    _trim_messages,
+    _visible_rescue_max_tokens,
+    build_chat_payload,
+    parse_sse_data,
+)
 # Eventos del protocolo Responses que no consumimos pero que no indican un problema;
 # cualquier tipo fuera de esta lista se registra para diagnosticar el shape real del proveedor.
 IGNORED_STREAM_EVENT_TYPES = frozenset(
@@ -114,45 +95,8 @@ def _reasoning_effort(
     )
 
 
-def _visible_rescue_max_tokens(current: int) -> int:
-    return min(
-        max(current * 2, FINAL_VISIBLE_RESCUE_MIN_MAX_TOKENS),
-        FINAL_VISIBLE_RESCUE_MAX_MAX_TOKENS,
-    )
-
-
-def _is_transient_status(status_code: int) -> bool:
-    return status_code in TRANSIENT_HTTP_STATUSES
-
-
 def _is_gpt_oss(model: str) -> bool:
     return model.startswith("@cf/openai/gpt-oss-")
-
-
-def _trim_messages(
-    messages: list[ChatMessage],
-    *,
-    max_characters: int,
-) -> list[ChatMessage]:
-    """Keep recent cloud history inside a bounded transport context."""
-
-    if not messages:
-        return []
-    remaining = max(1, max_characters)
-    selected: list[ChatMessage] = []
-    for message in reversed(messages):
-        content = message.content
-        if len(content) <= remaining:
-            selected.append(message)
-            remaining -= len(content)
-            continue
-        if not selected:
-            clipped = content[:remaining].strip()
-            if clipped:
-                selected.append(ChatMessage(role=message.role, content=clipped))
-        break
-    selected.reverse()
-    return selected
 
 
 def _chat_payload(
@@ -164,32 +108,21 @@ def _chat_payload(
     stream: bool,
     structured: bool = False,
 ) -> dict[str, object]:
-    max_tokens = _max_tokens(settings, mode)
-    if structured:
-        max_tokens = max(max_tokens, STRUCTURED_MIN_MAX_TOKENS)
-    trimmed = _trim_messages(
-        messages,
-        max_characters=_history_characters(settings, mode),
+    """Chat Completions body for the non-GPT-OSS models Workers AI also serves.
+
+    Reasoning effort is deliberately absent: on Workers AI it travels through the
+    Responses API instead, which is the path every GPT-OSS call takes.
+    """
+
+    return build_chat_payload(
+        model=_selected_model(settings, mode),
+        messages=messages,
+        system_prompt=system_prompt,
+        max_tokens=_max_tokens(settings, mode),
+        history_characters=_history_characters(settings, mode),
+        stream=stream,
+        structured=structured,
     )
-    payload: dict[str, object] = {
-        "model": _selected_model(settings, mode),
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            *[
-                {"role": message.role, "content": message.content}
-                for message in trimmed
-            ],
-        ],
-        "max_tokens": max_tokens,
-        "temperature": 1.0,
-        "top_p": 1.0,
-        "stream": stream,
-    }
-    if structured:
-        payload["response_format"] = {"type": "json_object"}
-    if stream:
-        payload["stream_options"] = {"include_usage": True}
-    return payload
 
 
 def _responses_payload(
@@ -227,68 +160,6 @@ def _responses_payload(
     if structured:
         payload["text"] = {"format": {"type": "json_object"}}
     return payload
-
-
-def _completion_content(payload: dict[str, object]) -> str:
-    choices = payload.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return ""
-    first = choices[0]
-    if not isinstance(first, dict):
-        return ""
-    message = first.get("message")
-    if not isinstance(message, dict):
-        return ""
-    content = message.get("content")
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if not isinstance(item, dict):
-                continue
-            text = item.get("text")
-            if isinstance(text, str) and text:
-                parts.append(text)
-        return "".join(parts).strip()
-    return ""
-
-
-def _completion_usage(payload: dict[str, object]) -> tuple[int | None, int | None]:
-    usage = payload.get("usage")
-    if not isinstance(usage, dict):
-        return None, None
-    prompt_tokens = usage.get("prompt_tokens")
-    completion_tokens = usage.get("completion_tokens")
-    return (
-        prompt_tokens if isinstance(prompt_tokens, int) else None,
-        completion_tokens if isinstance(completion_tokens, int) else None,
-    )
-
-
-def _completion_finish_reason(payload: dict[str, object]) -> str | None:
-    choices = payload.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return None
-    first = choices[0]
-    if not isinstance(first, dict):
-        return None
-    value = first.get("finish_reason")
-    return value if isinstance(value, str) and value else None
-
-
-def _as_dict(value: object) -> dict[str, object] | None:
-    """Accept a dict as-is, or a JSON-encoded string that decodes to one."""
-
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, str) and value.strip():
-        try:
-            parsed = json.loads(value)
-        except ValueError:
-            return None
-        return parsed if isinstance(parsed, dict) else None
-    return None
 
 
 def _response_object(payload: dict[str, object]) -> dict[str, object]:
@@ -363,36 +234,6 @@ def _responses_finish_reason(payload: dict[str, object]) -> str | None:
                 return f"failed:{code}"
         return "failed"
     return status if isinstance(status, str) and status else None
-
-
-def _is_output_limit_reason(reason: str | None) -> bool:
-    return bool(reason and reason.lower() in OUTPUT_LIMIT_REASONS)
-
-
-def parse_sse_data(line: str) -> dict[str, object] | None:
-    line = line.strip()
-    if not line:
-        return None
-    if line.startswith("data:"):
-        payload = line.removeprefix("data:").strip()
-    elif line.startswith("{"):
-        # Algunos despliegues emiten JSON por línea sin framing SSE.
-        payload = line
-    else:
-        return None
-    if payload == "[DONE]":
-        return {"done": True}
-    try:
-        data = json.loads(payload)
-    except ValueError as exc:
-        raise CloudAIUnavailableError(
-            "El proveedor cloud devolvió un fragmento inválido."
-        ) from exc
-    if not isinstance(data, dict):
-        raise CloudAIUnavailableError(
-            "El proveedor cloud devolvió un formato inesperado."
-        )
-    return data
 
 
 class CloudflareAIClient:

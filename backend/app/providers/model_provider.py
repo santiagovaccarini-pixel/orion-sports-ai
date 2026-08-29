@@ -13,6 +13,7 @@ from backend.app.providers.cloudflare_ai import (
     CloudAIUnavailableError,
     CloudflareAIClient,
 )
+from backend.app.providers.groq_ai import GroqAIClient
 from backend.app.providers.ollama import (
     ModelNotInstalledError,
     OllamaClient,
@@ -253,30 +254,38 @@ class OllamaModelProvider:
             raise ModelProviderUnavailableError(str(exc)) from exc
 
 
-class CloudflareModelProvider:
-    name = "cloudflare"
+class _CloudModelProvider:
+    """Adapter shared by every provider that runs the model on remote hardware.
+
+    Everything here — error mapping, usage passthrough, the single non-streaming
+    retry when a stream dies before any visible text — is identical whoever serves
+    the model. Subclasses supply only the client and which model each mode uses.
+    """
+
+    name = "cloud"
     uses_local_resources = False
+    # Endpoint recorded on a recovered answer when the client did not report one.
+    recovery_endpoint_fallback = "chat_completions"
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         try:
-            self.client = CloudflareAIClient(settings)
+            self.client = self._create_client(settings)
         except CloudAIConfigurationError as exc:
             raise ModelProviderConfigurationError(str(exc)) from exc
 
+    def _create_client(self, settings: Settings) -> object:
+        raise NotImplementedError
+
     def model_for(self, mode: SelectedMode) -> str:
-        return (
-            self.settings.cloudflare_quick_model
-            if mode is SelectedMode.QUICK
-            else self.settings.cloudflare_deep_model
-        )
+        raise NotImplementedError
 
     async def status(self) -> ModelProviderStatus:
         models = tuple(
             dict.fromkeys(
                 (
-                    self.settings.cloudflare_quick_model,
-                    self.settings.cloudflare_deep_model,
+                    self.model_for(SelectedMode.QUICK),
+                    self.model_for(SelectedMode.DEEP),
                 )
             )
         )
@@ -371,7 +380,10 @@ class CloudflareModelProvider:
             except CloudAIUnavailableError as recovery_exc:
                 raise ModelProviderUnavailableError(str(recovery_exc)) from recovery_exc
 
-            recovery_endpoint = f"{recovered.endpoint or 'responses'}_stream_recovery"
+            recovery_endpoint = (
+                f"{recovered.endpoint or self.recovery_endpoint_fallback}"
+                "_stream_recovery"
+            )
             for index, chunk in enumerate(_chunk_recovered_text(recovered.content)):
                 if index > 0:
                     # Small pacing so the client renders a visible progressive
@@ -401,11 +413,43 @@ class CloudflareModelProvider:
             )
 
 
+class CloudflareModelProvider(_CloudModelProvider):
+    name = "cloudflare"
+    # GPT-OSS on Workers AI travels through the Responses API, not Chat Completions.
+    recovery_endpoint_fallback = "responses"
+
+    def _create_client(self, settings: Settings) -> CloudflareAIClient:
+        return CloudflareAIClient(settings)
+
+    def model_for(self, mode: SelectedMode) -> str:
+        return (
+            self.settings.cloudflare_quick_model
+            if mode is SelectedMode.QUICK
+            else self.settings.cloudflare_deep_model
+        )
+
+
+class GroqModelProvider(_CloudModelProvider):
+    name = "groq"
+
+    def _create_client(self, settings: Settings) -> GroqAIClient:
+        return GroqAIClient(settings)
+
+    def model_for(self, mode: SelectedMode) -> str:
+        return (
+            self.settings.groq_quick_model
+            if mode is SelectedMode.QUICK
+            else self.settings.groq_deep_model
+        )
+
+
 def create_model_provider(settings: Settings) -> ModelProvider:
     if settings.model_provider == "ollama":
         return OllamaModelProvider(settings)
     if settings.model_provider == "cloudflare":
         return CloudflareModelProvider(settings)
+    if settings.model_provider == "groq":
+        return GroqModelProvider(settings)
     raise ModelProviderConfigurationError(
         f"Proveedor de modelo no soportado: {settings.model_provider}."
     )
