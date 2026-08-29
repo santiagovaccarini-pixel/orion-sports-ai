@@ -36,18 +36,24 @@ test("Orion Cloud is the default launch path without requiring -Cloud", async ()
 
   assert.match(source, /if \(-not \$LocalLegacy\)/);
   assert.match(source, /https:\/\/orion-core-prototype\.onrender\.com/);
-  assert.match(source, /\$env:NEXT_PUBLIC_ORION_API_URL/);
-  assert.match(source, /\$env:NEXT_PUBLIC_ORION_API_KEY\s*=\s*\$env:ORION_API_KEY/);
+  assert.match(source, /\$env:ORION_API_URL/);
   assert.match(source, /Motor activo: Cloudflare Workers AI \/ gpt-oss/);
   assert.match(source, /if \(-not \$LocalLegacy\)[\s\S]*Start-OrionFrontend[\s\S]*exit 0/);
 });
 
-test("cloud default refuses to start without the local browser secret", async () => {
+test("the launcher never exposes the API key to the browser bundle", async () => {
+  const source = await readFile(launcher, "utf8");
+
+  // NEXT_PUBLIC_* values are inlined into the client bundle, so the key must
+  // never be set under that prefix; the server-side proxy reads it instead.
+  assert.doesNotMatch(source, /NEXT_PUBLIC_[A-Z_]*KEY/);
+});
+
+test("cloud default refuses to start without the core API key", async () => {
   const source = await readFile(launcher, "utf8");
 
   assert.match(source, /if \(-not \$env:ORION_API_KEY\)/);
   assert.match(source, /Falta ORION_API_KEY/);
-  assert.match(source, /no publiques esta compilación/);
 });
 
 test("old -Cloud parameter remains compatible but cannot be combined with legacy", async () => {

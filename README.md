@@ -175,7 +175,12 @@ $env:ORION_API_KEY="TU_CLAVE_LOCAL"
 
 En modo Cloud el iniciador no arranca el backend Python local ni Ollama. La interfaz apunta al Orion Core desplegado y usa la clave disponible únicamente en esa sesión de PowerShell.
 
-`NEXT_PUBLIC_ORION_API_KEY` es exclusivamente una solución temporal para pruebas locales. No debe publicarse una compilación web con esa variable porque los valores `NEXT_PUBLIC_*` quedan accesibles en el navegador. Antes de publicar la interfaz se implementará autenticación server-side.
+La clave nunca llega al navegador. El navegador habla solo con el proxy same-origin de la propia interfaz (`app/api/orion/[...path]/route.ts`), que agrega la cabecera `X-Orion-Api-Key` del lado del servidor leyendo `ORION_API_KEY` (sin prefijo `NEXT_PUBLIC_`, que quedaría incrustado en el bundle público). Ese proxy solo reenvía una lista explícita de rutas del núcleo.
+
+Variables server-side de la interfaz:
+
+- `ORION_API_KEY`: clave del núcleo, la misma que valida el backend.
+- `ORION_API_URL`: URL base del núcleo (por defecto `http://127.0.0.1:8765/api/v1`).
 
 ## Persistencia
 

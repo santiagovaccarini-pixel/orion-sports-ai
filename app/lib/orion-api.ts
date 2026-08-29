@@ -257,16 +257,13 @@ export class OrionApiError extends Error {
   }
 }
 
-const API_BASE = (
-  process.env.NEXT_PUBLIC_ORION_API_URL ??
-  "http://127.0.0.1:8765/api/v1"
-).replace(/\/$/, "");
+// Same-origin proxy (app/api/orion/[...path]/route.ts). The API key is attached
+// server-side there and never reaches the browser: anything sent from here is
+// readable by any visitor, so no credential may live in this file.
+const API_BASE = "/api/orion";
 
 const API_HEADERS = {
   "Content-Type": "application/json",
-  ...(process.env.NEXT_PUBLIC_ORION_API_KEY
-    ? { "X-Orion-Api-Key": process.env.NEXT_PUBLIC_ORION_API_KEY }
-    : {}),
 };
 
 async function parseResponse<T>(response: Response): Promise<T> {

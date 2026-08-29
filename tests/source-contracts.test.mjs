@@ -93,6 +93,42 @@ test("streams chat fragments instead of waiting for one large JSON response", as
   assert.match(client, /onContent/);
 });
 
+test("never ships the core API key to the browser", async () => {
+  // NEXT_PUBLIC_* values are inlined into the client bundle at build time, so
+  // reading a key under that prefix anywhere in app/ would hand it to every
+  // visitor. The key belongs only in the server-side proxy route.
+  const client = await readFile(new URL("app/lib/orion-api.ts", root), "utf8");
+  const console_ = await readFile(
+    new URL("app/components/orion-console.tsx", root),
+    "utf8",
+  );
+  const proxy = await readFile(
+    new URL("app/api/orion/[...path]/route.ts", root),
+    "utf8",
+  );
+
+  assert.doesNotMatch(client, /NEXT_PUBLIC_[A-Z_]*KEY/);
+  assert.doesNotMatch(console_, /NEXT_PUBLIC_[A-Z_]*KEY/);
+  assert.doesNotMatch(client, /X-Orion-Api-Key/);
+  // The browser must call the same-origin proxy, not the core directly.
+  assert.match(client, /const API_BASE = "\/api\/orion"/);
+  // ...and the proxy is what attaches the credential, server-side.
+  assert.match(proxy, /process\.env\.ORION_API_KEY/);
+  assert.match(proxy, /X-Orion-Api-Key/);
+});
+
+test("the core proxy only forwards an explicit allowlist of routes", async () => {
+  const proxy = await readFile(
+    new URL("app/api/orion/[...path]/route.ts", root),
+    "utf8",
+  );
+  assert.match(proxy, /PROXYABLE_PATHS/);
+  assert.match(proxy, /isProxyable/);
+  for (const path of ["status", "chat", "chat\\/stream", "knowledge\\/documents"]) {
+    assert.match(proxy, new RegExp(`"${path}"`));
+  }
+});
+
 test("keeps browser scroll anchoring disabled while messages grow", async () => {
   const css = await readFile(new URL("app/globals.css", root), "utf8");
   assert.match(css, /overflow-anchor:\s*none/);

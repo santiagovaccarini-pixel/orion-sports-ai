@@ -45,12 +45,12 @@ if (-not $LocalLegacy) {
     }
 
     $NormalizedCloudUrl = $CloudUrl.TrimEnd("/")
-    $env:NEXT_PUBLIC_ORION_API_URL = "$NormalizedCloudUrl/api/v1"
-    $env:NEXT_PUBLIC_ORION_API_KEY = $env:ORION_API_KEY
+    # Sin prefijo NEXT_PUBLIC_: la clave la usa el proxy server-side
+    # (app/api/orion) y nunca llega al bundle del navegador.
+    $env:ORION_API_URL = "$NormalizedCloudUrl/api/v1"
 
     Write-Host "Orion conectado al núcleo cloud: $NormalizedCloudUrl" -ForegroundColor Green
     Write-Host "Motor activo: Cloudflare Workers AI / gpt-oss. El backend local Qwen no se inicia." -ForegroundColor Green
-    Write-Host "Modo de prueba local de la interfaz: no publiques esta compilación porque la API key queda disponible en el navegador local." -ForegroundColor Yellow
     Start-OrionFrontend
     exit 0
 }
