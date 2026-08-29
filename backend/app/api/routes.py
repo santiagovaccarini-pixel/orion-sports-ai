@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
@@ -66,7 +67,22 @@ def require_api_key(
     api_key: str | None = Header(default=None, alias="X-Orion-Api-Key"),
 ) -> None:
     configured_key = get_settings().api_key
-    if configured_key is not None and api_key != configured_key:
+    if configured_key is None:
+        # Fail closed: an unconfigured key must never mean "no auth required".
+        # Silently allowing every request through here was a real, live
+        # misconfiguration hazard - refuse everything until an operator sets
+        # ORION_API_KEY, instead of exposing every endpoint by accident.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "server_misconfigured",
+                "message": (
+                    "Orion no tiene ORION_API_KEY configurada; el servicio "
+                    "rechaza todas las solicitudes hasta que se configure."
+                ),
+            },
+        )
+    if api_key is None or not hmac.compare_digest(api_key, configured_key):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={

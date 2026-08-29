@@ -104,6 +104,16 @@ class FakeCloudProvider(FakeProvider):
 
 
 class StreamRouteTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # require_api_key now fails closed when no key is configured, which
+        # breaks route-level TestClient calls that don't send a key. These
+        # tests exercise streaming/routing behavior, not auth, so bypass it
+        # here; auth itself is covered by test_api_key_is_required_when_configured.
+        app.dependency_overrides[require_api_key] = lambda: None
+
+    def tearDown(self) -> None:
+        app.dependency_overrides.pop(require_api_key, None)
+
     def test_insufficient_web_evidence_never_reaches_model_as_a_claim(self) -> None:
         context = "INVESTIGACIÓN WEB INSUFICIENTE: solo se obtuvieron 2 fuentes"
         self.assertTrue(_web_is_insufficient(context))
@@ -155,6 +165,23 @@ class StreamRouteTests(unittest.TestCase):
             require_api_key("orion-test-key")
 
         self.assertEqual(context.exception.status_code, 401)
+
+    def test_api_key_check_fails_closed_when_unconfigured(self) -> None:
+        # An unset ORION_API_KEY must never mean "no auth required" - that was
+        # a real production misconfiguration hazard. Every request must be
+        # rejected until an operator configures the key, not silently allowed.
+        with patch(
+            "backend.app.api.routes.get_settings",
+            return_value=Settings(api_key=None),
+        ):
+            with self.assertRaises(HTTPException) as context:
+                require_api_key("any-key")
+            with self.assertRaises(HTTPException) as context_no_header:
+                require_api_key(None)
+
+        self.assertEqual(context.exception.status_code, 503)
+        self.assertEqual(context.exception.detail["code"], "server_misconfigured")
+        self.assertEqual(context_no_header.exception.status_code, 503)
 
     def test_stream_emits_meta_content_and_done_events(self) -> None:
         provider = FakeProvider()

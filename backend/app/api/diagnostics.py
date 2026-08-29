@@ -1,26 +1,13 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
+from backend.app.api.routes import require_api_key as _require_api_key
 from backend.app.core.config import get_settings
 from backend.app.services.diagnostic_trace import diagnostic_traces
 
 
 router = APIRouter()
-
-
-def _require_api_key(
-    api_key: str | None = Header(default=None, alias="X-Orion-Api-Key"),
-) -> None:
-    configured_key = get_settings().api_key
-    if configured_key is not None and api_key != configured_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "code": "invalid_api_key",
-                "message": "La clave de Orion no es válida.",
-            },
-        )
 
 
 def _ensure_enabled() -> None:

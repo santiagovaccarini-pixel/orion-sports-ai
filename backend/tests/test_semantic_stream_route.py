@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
+from backend.app.api.routes import require_api_key
 from backend.app.core.config import Settings
 from backend.app.domain.models import SelectedMode
 from backend.app.main import app
@@ -101,6 +102,12 @@ def semantic_bundle() -> ReasoningBundle:
 class SemanticStreamRouteTests(unittest.TestCase):
     def setUp(self) -> None:
         diagnostic_traces.clear()
+        # These tests exercise routing behavior, not auth; bypass the
+        # (now fail-closed) API key dependency instead of configuring a key.
+        app.dependency_overrides[require_api_key] = lambda: None
+
+    def tearDown(self) -> None:
+        app.dependency_overrides.pop(require_api_key, None)
 
     def test_semantic_stream_uses_model_plan_and_skips_legacy_web_router(self) -> None:
         provider = RecordingCloudProvider()
