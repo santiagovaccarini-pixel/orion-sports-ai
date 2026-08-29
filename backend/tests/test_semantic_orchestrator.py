@@ -206,6 +206,40 @@ class SemanticOrchestratorTests(unittest.TestCase):
         )
         self.assertNotIn("MEMORIA PERSONAL", provider.calls[0]["system_prompt"])
 
+    def test_reviewer_sees_saved_memory_as_user_provided_evidence(self) -> None:
+        # Found live: memory reached the planner and the final answer, but not
+        # the reviewer, which then declared the very fact the user had saved as
+        # "missing" and instructed the final stage to refuse to answer.
+        provider = FakePlanningProvider(
+            [
+                """
+                {"sufficient":true,"relevant_source_ids":[],
+                 "discarded_source_ids":[],"missing_information":[],
+                 "follow_up_web_query":null,"needs_clarification":false,
+                 "clarifying_question":null,"resolved_scope":"ok","reason":"ok"}
+                """
+            ]
+        )
+        plan = conservative_fallback_plan(
+            [ChatMessage(role="user", content="¿Qué plantel dirijo?")],
+            web_available=True,
+            documents=[],
+        )
+        asyncio.run(
+            review_evidence(
+                provider,
+                plan,
+                [WebSource("Nota", "https://a.test", "sin relación", "a.test")],
+                [],
+                memory_context=(
+                    "MEMORIA PERSONAL DEL USUARIO\n- [contexto] Dirijo la sub-20"
+                ),
+            )
+        )
+        sent = provider.calls[0]["messages"][0].content
+        self.assertIn("Dirijo la sub-20", sent)
+        self.assertIn("no la declares como información faltante", sent)
+
     def test_conservative_fallback_does_not_classify_by_terms(self) -> None:
         messages = [ChatMessage(role="user", content="Una pregunta totalmente nueva")]
         plan = conservative_fallback_plan(

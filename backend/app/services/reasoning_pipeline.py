@@ -138,6 +138,7 @@ async def _review(
     round_number: int,
     trace: DiagnosticTrace | None = None,
     previous_review: EvidenceReview | None = None,
+    memory_context: str = "",
 ) -> EvidenceReview:
     started = perf_counter()
     reasoning_effort = "low" if round_number <= 1 else "medium"
@@ -154,6 +155,7 @@ async def _review(
                 trace, stage, result
             ),
             previous_review=previous_review,
+            memory_context=memory_context,
         )
         if trace is not None:
             trace.record_review(
@@ -529,6 +531,7 @@ async def build_reasoning_bundle(
         review_evidence_items,
         round_number=review_round,
         trace=trace,
+        memory_context=memory_context,
     )
     review, freshness_backstop_used = _apply_freshness_backstop(
         plan,
@@ -563,6 +566,7 @@ async def build_reasoning_bundle(
                     round_number=review_round,
                     trace=trace,
                     previous_review=review,
+                    memory_context=memory_context,
                 )
                 review, freshness_backstop_used = _apply_freshness_backstop(
                     plan,
@@ -611,6 +615,7 @@ async def build_reasoning_bundle(
             round_number=review_round,
             trace=trace,
             previous_review=review,
+            memory_context=memory_context,
         )
         review, freshness_backstop_used = _apply_freshness_backstop(
             plan,

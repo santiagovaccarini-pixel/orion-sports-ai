@@ -976,6 +976,7 @@ def _review_input(
     local_evidence: Sequence[LocalEvidence],
     messages: Sequence[ChatMessage] = (),
     previous_review: EvidenceReview | None = None,
+    memory_context: str = "",
 ) -> str:
     plan_payload = {
         "objective": plan.objective,
@@ -1013,6 +1014,15 @@ def _review_input(
         + _clip(json.dumps(plan_payload, ensure_ascii=False), 4_500)
     )
     fixed_parts = [conversation_part, plan_part]
+
+    if memory_context:
+        # Without this the reviewer can declare a fact "missing" that the user
+        # already saved, and the final stage is then told to refuse to answer.
+        fixed_parts.append(
+            memory_context
+            + "\nTratá esta memoria como evidencia provista por el usuario: si "
+            "responde lo que falta, no la declares como información faltante."
+        )
 
     previous_review_block = _previous_review_block(previous_review)
     if previous_review_block:
@@ -1090,6 +1100,7 @@ async def review_evidence(
     on_model_result: ModelResultCallback | None = None,
     stage_name: str = "review",
     previous_review: EvidenceReview | None = None,
+    memory_context: str = "",
 ) -> EvidenceReview:
     if plan.evidence_policy == "model_knowledge" and not web_sources and not local_evidence:
         return EvidenceReview(
@@ -1128,6 +1139,7 @@ async def review_evidence(
                     local_evidence,
                     messages,
                     previous_review=previous_review,
+                    memory_context=memory_context,
                 ),
             )
         ],
