@@ -328,7 +328,10 @@ button {
   flex-direction: column;
   align-self: center;
   overflow: hidden;
-  padding: clamp(1.25rem, 3vw, 2.25rem);
+  /* Vertical padding is deliberately tighter than horizontal: the sides frame
+     the column, while every pixel above and below is a line of the answer that
+     did not fit. */
+  padding: 0.75rem clamp(1.25rem, 3vw, 2.25rem) 0.5rem;
 }
 
 .empty-state {
@@ -389,7 +392,7 @@ button {
   gap: 0.75rem;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-bottom: 2rem;
+  padding-bottom: 0.5rem;
   padding-right: 0.45rem;
   scrollbar-gutter: stable;
   overflow-anchor: none;
@@ -686,8 +689,10 @@ button {
   position: relative;
   flex: 0 0 auto;
   margin-top: auto;
-  padding-top: 1rem;
-  background: linear-gradient(transparent, var(--paper) 18%);
+  /* Enough for the fade to read as the transcript sliding under the composer,
+     without leaving a band of empty paper between the two. */
+  padding-top: 0.45rem;
+  background: linear-gradient(transparent, var(--paper) 45%);
 }
 
 .scroll-to-latest {

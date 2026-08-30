@@ -180,3 +180,27 @@ test("Orion proposes what to remember and never saves it on its own", async () =
   const proxy = await readFile(new URL("app/api/orion/[...path]/route.ts", root), "utf8");
   assert.match(proxy, /"memory\/suggestions"/);
 });
+
+test("an HTML line break never reaches the screen as literal text", async () => {
+  // Markdown renders without raw HTML on purpose, which is what stops a page
+  // Orion quotes from injecting anything. The cost was that a <br> the model
+  // wrote showed up as the characters "<br>" inside a table of checks.
+  const component = await readFile(new URL("app/components/orion-console.tsx", root), "utf8");
+  assert.match(component, /replaceHtmlLineBreaks/);
+  assert.ok(component.includes("const BREAK ="));
+  assert.ok(component.includes("br"));
+  // A table row cannot hold a newline without breaking the table, so inside a
+  // row the break becomes a separator instead.
+  assert.match(component, /startsWith\("\|"\)/);
+  // Raw HTML stays off: the fix must not have been "just allow HTML".
+  assert.doesNotMatch(component, /rehypeRaw|rehype-raw/);
+});
+
+test("no empty band is left between the transcript and the composer", async () => {
+  const css = await readFile(new URL("app/globals.css", root), "utf8");
+  // Every pixel above and below the column is a line of the answer that did not
+  // fit, so the vertical padding stays tighter than the horizontal.
+  assert.match(css, /\.chat-stage\s*\{[^}]*padding:\s*0\.75rem clamp/s);
+  assert.match(css, /\.messages\s*\{[^}]*padding-bottom:\s*0\.5rem/s);
+  assert.match(css, /\.composer-wrap\s*\{[^}]*padding-top:\s*0\.45rem/s);
+});

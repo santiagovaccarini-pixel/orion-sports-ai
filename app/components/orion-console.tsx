@@ -110,8 +110,31 @@ function simplifyFormula(expression: string) {
     .replace(/\s+/g, " ");
 }
 
+/** Turn `<br>` into a break the renderer can actually show.
+ *
+ * Markdown here is rendered without raw HTML on purpose — that is what keeps a
+ * page Orion quotes from injecting anything — so a `<br>` the model writes
+ * arrives on screen as the literal characters "<br>", which is what a table of
+ * checks looked like in practice.
+ *
+ * A table row cannot contain a newline without breaking the table, so inside a
+ * row the break becomes a separator and everywhere else it becomes a real line
+ * break. Whether a line is a table row is decided by where it starts, not by
+ * what it says. */
+function replaceHtmlLineBreaks(content: string) {
+  const BREAK = /<br\s*\/?>/gi;
+  return content
+    .split("\n")
+    .map((line) =>
+      line.trimStart().startsWith("|")
+        ? line.replace(BREAK, " · ")
+        : line.replace(BREAK, "\n"),
+    )
+    .join("\n");
+}
+
 function normalizeCompletedMarkdown(content: string) {
-  const normalized = content
+  const normalized = replaceHtmlLineBreaks(content)
     .replace(/\\\[([\s\S]*?)\\\]/g, (_match, expression: string) =>
       `\n\n\`\`\`text\n${simplifyFormula(expression)}\n\`\`\`\n\n`,
     )
