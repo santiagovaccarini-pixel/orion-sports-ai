@@ -308,6 +308,20 @@ def main() -> int:
 
                 if streamed.get("http_status") != 200 or streamed.get("stream_error"):
                     infrastructure_errors += 1
+                    # A case that never got an answer is not a case that passed. It
+                    # carried no quality fields at all, so every reader downstream —
+                    # a report, a script, a person scanning a column — saw a blank
+                    # where a failure belonged. Hammering the deployment tripped its
+                    # own rate limiter and two cases were quietly scored as fine.
+                    item.update(
+                        {
+                            "quality_precheck_ok": False,
+                            "missing_groups": [],
+                            "forbidden_hits": [],
+                            "requires_human_review": True,
+                            "not_evaluated": True,
+                        }
+                    )
                     dataset_results.append(item)
                     continue
 

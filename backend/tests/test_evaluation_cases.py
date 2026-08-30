@@ -88,6 +88,25 @@ class EvaluationCaseTests(unittest.TestCase):
         self.assertIn("factual_date", categories)
         self.assertIn("factual_honesty", categories)
 
+
+    def test_a_case_that_never_answered_is_never_scored_as_passing(self) -> None:
+        """A failed request must read as a failure, not as a blank.
+
+        Hammering the deployment tripped its own rate limiter mid-battery. The two
+        cases that got no answer carried no quality fields at all, so a reader
+        scanning the report saw nothing where a failure belonged.
+        """
+
+        from pathlib import Path as _Path
+
+        source = (
+            _Path(__file__).resolve().parents[1] / "evals" / "run_cloud_evaluation.py"
+        ).read_text(encoding="utf-8")
+        marker = source.index("infrastructure_errors += 1")
+        block = source[marker : marker + 800]
+        self.assertIn('"quality_precheck_ok": False', block)
+        self.assertIn('"not_evaluated": True', block)
+
     def test_diagnostic_cases_are_well_formed_and_unique(self) -> None:
         cases = json.loads(DIAGNOSTIC_PATH.read_text(encoding="utf-8"))
         ids = [case["id"] for case in cases]

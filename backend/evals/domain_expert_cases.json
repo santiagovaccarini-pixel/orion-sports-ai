@@ -178,5 +178,84 @@
       "umbral ventilatorio",
       "frecuencia cardíaca máxima"
     ]
+  },
+  {
+    "id": "domain_06_lactate_not_absolute",
+    "category": "sports_science",
+    "mode": "deep",
+    "sport": "football",
+    "prompt": "¿El lactato es un indicador 100% confiable para saber la carga interna del jugador?",
+    "ground_truth": "No. Estudios recientes indican que no es 100% confiable: depende mucho de qué parte del cuerpo se tome la muestra, de la persona y de la actividad realizada. Referencia: Santiago Vaccarini, 30-08-2026.",
+    "note": "Pregunta trampa: la respuesta correcta empieza por NO. Aceptarla como medida definitiva es el error a evitar.",
+    "required_any": [
+      [
+        "no es",
+        "no resulta",
+        "no puede considerarse",
+        "no se considera",
+        "no, "
+      ],
+      [
+        "depende",
+        "varía",
+        "varia",
+        "influye",
+        "condicionad"
+      ],
+      [
+        "individual",
+        "persona",
+        "sujeto",
+        "cada jugador",
+        "interindividual",
+        "muestra",
+        "sitio",
+        "zona del cuerpo",
+        "capilar",
+        "venos"
+      ]
+    ],
+    "forbidden": [
+      "es 100% confiable",
+      "es totalmente confiable",
+      "es el indicador definitivo",
+      "es el patrón oro absoluto"
+    ]
+  },
+  {
+    "id": "domain_07_distance_vs_count_in_band",
+    "category": "sports_science",
+    "mode": "deep",
+    "sport": "football",
+    "prompt": "¿Cuál es la diferencia entre estas dos variables: «2 a 3 m/s» y «número de aceleraciones de 2 a 3 m/s»?",
+    "ground_truth": "Una indica los metros recorridos dentro de ese umbral; la otra, cuántas veces el jugador entró en ese umbral. Referencia: Santiago Vaccarini, 30-08-2026.",
+    "note": "Orion la falló: leyó «2 a 3 m/s» como el valor instantáneo de velocidad y no reconoció que ambas variables describen la misma banda, una como distancia acumulada dentro de ella y la otra como conteo de entradas. «magnitud» quedaba fuera de la lista porque también aparece en «magnitud del vector velocidad», que es la lectura equivocada.",
+    "required_any": [
+      [
+        "metros recorridos",
+        "distancia recorrida",
+        "metros dentro",
+        "distancia acumulada",
+        "metros acumulados",
+        "distancia dentro"
+      ],
+      [
+        "cuántas veces",
+        "cuantas veces",
+        "número de",
+        "numero de",
+        "conteo",
+        "cantidad de",
+        "repeticiones"
+      ]
+    ],
+    "forbidden": [
+      "son la misma variable",
+      "miden exactamente lo mismo",
+      "no hay diferencia",
+      "son equivalentes",
+      "valor instantáneo de velocidad",
+      "zona de velocidad"
+    ]
   }
 ]
