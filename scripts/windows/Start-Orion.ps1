@@ -50,7 +50,9 @@ if (-not $LocalLegacy) {
     $env:ORION_API_URL = "$NormalizedCloudUrl/api/v1"
 
     Write-Host "Orion conectado al núcleo cloud: $NormalizedCloudUrl" -ForegroundColor Green
-    Write-Host "Motor activo: Cloudflare Workers AI / gpt-oss. El backend local Qwen no se inicia." -ForegroundColor Green
+    # Sin nombrar la empresa: el proveedor se elige en el deploy y este mensaje
+    # ya mintió una vez, anunciando Cloudflare cuando Orion corría en Cerebras.
+    Write-Host "Motor activo: el del nucleo cloud (se ve en Estado). El backend local Qwen no se inicia." -ForegroundColor Green
     Start-OrionFrontend
     exit 0
 }

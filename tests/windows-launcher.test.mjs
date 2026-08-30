@@ -37,7 +37,10 @@ test("Orion Cloud is the default launch path without requiring -Cloud", async ()
   assert.match(source, /if \(-not \$LocalLegacy\)/);
   assert.match(source, /https:\/\/orion-core-prototype\.onrender\.com/);
   assert.match(source, /\$env:ORION_API_URL/);
-  assert.match(source, /Motor activo: Cloudflare Workers AI \/ gpt-oss/);
+  // The launcher must not name the engine company: the provider is chosen at
+  // deploy time, and this line announced Cloudflare while Orion ran on Cerebras.
+  assert.match(source, /Motor activo: el del nucleo cloud/);
+  assert.doesNotMatch(source, /Motor activo:.*Cloudflare/);
   assert.match(source, /if \(-not \$LocalLegacy\)[\s\S]*Start-OrionFrontend[\s\S]*exit 0/);
 });
 
