@@ -24,12 +24,17 @@ DIAGNOSTIC_PATH = Path(__file__).with_name("diagnostic_24_cases.json")
 # the facts it states are true. Every case here has a verifiable answer, and
 # several encode a specific way Orion got a fact wrong in live testing.
 FACTUAL_PATH = Path(__file__).with_name("factual_accuracy_cases.json")
+# Domain expertise, graded against the operator's own answers rather than
+# against a public source: for questions about GPS, tracking and training load,
+# he is the ground truth and each case records his wording verbatim.
+DOMAIN_PATH = Path(__file__).with_name("domain_expert_cases.json")
 DATASETS = {
     "quality": CASES_PATH,
     "foundations": FOUNDATIONS_PATH,
     "football": FOOTBALL_PATH,
     "diagnostic": DIAGNOSTIC_PATH,
     "factual": FACTUAL_PATH,
+    "domain": DOMAIN_PATH,
 }
 
 

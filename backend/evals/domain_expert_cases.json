@@ -1,0 +1,182 @@
+[
+  {
+    "id": "domain_01_rpe_definition",
+    "category": "sports_science",
+    "mode": "quick",
+    "sport": "football",
+    "prompt": "¿Qué describe una PSE (Percepción Subjetiva del Esfuerzo)?",
+    "ground_truth": "Cuánto le costó el entrenamiento o la actividad al jugador, en una escala del 1 al 10. Referencia: Santiago Vaccarini, 30-08-2026.",
+    "note": "Es una medida que reporta el jugador, no un sensor. Confundirla con un dato objetivo es el error a evitar.",
+    "required_any": [
+      [
+        "esfuerzo",
+        "costó",
+        "costo",
+        "exigencia"
+      ],
+      [
+        "escala",
+        "1 al 10",
+        "1-10",
+        "0-10",
+        "puntúa",
+        "puntua",
+        "califica"
+      ],
+      [
+        "subjetiv",
+        "percib",
+        "percep",
+        "el jugador reporta",
+        "el propio jugador"
+      ]
+    ],
+    "forbidden": [
+      "se mide con GPS",
+      "es una medida objetiva",
+      "la calcula el dispositivo",
+      "se obtiene con el acelerómetro"
+    ]
+  },
+  {
+    "id": "domain_02_vba_macro_coding",
+    "category": "coding",
+    "mode": "deep",
+    "sport": "general",
+    "prompt": "¿Cómo crearías una macro VBA en Excel para poder limpiar datos erróneos?",
+    "ground_truth": "Prueba de capacidad de programación: debe entregar código VBA real y utilizable, no una explicación en prosa.",
+    "required_any": [
+      [
+        "Sub ",
+        "Sub Limpiar",
+        "Public Sub"
+      ],
+      [
+        "End Sub"
+      ],
+      [
+        "Range",
+        "Cells",
+        "UsedRange",
+        "Worksheet"
+      ]
+    ],
+    "forbidden": [
+      "no puedo escribir código",
+      "no puedo generar código",
+      "no tengo la capacidad de programar"
+    ]
+  },
+  {
+    "id": "domain_03_gps_variables",
+    "category": "sports_technology",
+    "mode": "quick",
+    "sport": "football",
+    "prompt": "¿Qué datos se recolectan con el GPS de los jugadores?",
+    "ground_truth": "Distancia recorrida, aceleraciones de cualquier umbral, velocidades punta alcanzadas, entre otras. Referencia: Santiago Vaccarini, 30-08-2026.",
+    "required_any": [
+      [
+        "distancia"
+      ],
+      [
+        "aceleraci"
+      ],
+      [
+        "velocidad"
+      ]
+    ],
+    "forbidden": [
+      "pases completados",
+      "posesión de balón",
+      "goles esperados",
+      "xG",
+      "Eventos de juego",
+      "Entradas/salidas del campo",
+      "cambios de posición (defensa"
+    ],
+    "note": "Los eventos de juego (entradas/salidas, cambios de posición) los da el tracking por cámaras, no el GPS. Orion los listó como categoría de GPS."
+  },
+  {
+    "id": "domain_04_gps_vs_tracking",
+    "category": "sports_technology",
+    "mode": "deep",
+    "sport": "football",
+    "prompt": "¿Cuál es la diferencia entre tracking y GPS? ¿Y por qué dan distintos datos?",
+    "ground_truth": "GPS se mide por satélites, con un dispositivo que el jugador lleva en la espalda. Tracking calcula las variables con cámaras en el campo de juego. Difieren, entre otros factores, por cuántos satélites alcanzaron a captar la señal del GPS. Referencia: Santiago Vaccarini, 30-08-2026.",
+    "required_any": [
+      [
+        "satélite",
+        "satelite"
+      ],
+      [
+        "cámara",
+        "camara",
+        "óptico",
+        "optico",
+        "video"
+      ],
+      [
+        "dispositivo",
+        "chaleco",
+        "espalda",
+        "wearable",
+        "sensor que lleva"
+      ]
+    ],
+    "forbidden": [
+      "el tracking también usa satélites",
+      "el tracking usa satélites",
+      "son lo mismo",
+      "miden exactamente lo mismo",
+      "mide la carga interna",
+      "GPS mide la carga interna",
+      "carga interna del jugador (ej"
+    ],
+    "note": "El GPS mide carga EXTERNA. Orion escribió que mide carga interna, contradiciendo lo que él mismo dice al describir los datos de GPS."
+  },
+  {
+    "id": "domain_05_acceleration_threshold",
+    "category": "sports_science",
+    "mode": "quick",
+    "sport": "football",
+    "prompt": "¿Qué es un umbral para una variable de aceleración?",
+    "ground_truth": "El rango de valores —de cuánto hasta cuánto— dentro del cual un dato se cuenta como válido para esa variable. Si la variable va de 1 a 2, solo se contabilizan las aceleraciones dentro de ese rango. Referencia: Santiago Vaccarini, 30-08-2026.",
+    "note": "Santiago lo define como un rango: de qué valor hasta qué valor se cuenta un dato para esa variable. Orion lo describió como un único punto de corte con todo lo de arriba incluido, que pierde la idea de banda o zona.",
+    "required_any": [
+      [
+        "rango",
+        "desde",
+        "hasta",
+        "banda",
+        "zona",
+        "intervalo",
+        "entre"
+      ],
+      [
+        "cuenta",
+        "contabiliz",
+        "registra",
+        "computa",
+        "se considera",
+        "se incluye"
+      ],
+      [
+        "mínimo y",
+        "minimo y",
+        "hasta",
+        "límite superior",
+        "limite superior",
+        "cota superior",
+        "extremo superior",
+        "y un máximo",
+        "y un maximo"
+      ]
+    ],
+    "forbidden": [
+      "umbral anaeróbico",
+      "umbral de lactato",
+      "umbral ventilatorio",
+      "frecuencia cardíaca máxima"
+    ]
+  }
+]
