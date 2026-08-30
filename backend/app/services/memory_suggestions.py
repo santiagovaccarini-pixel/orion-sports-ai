@@ -31,8 +31,13 @@ Devolvés SOLO un objeto JSON con esta forma:
                   "reason": "por qué serviría más adelante"}]}
 
 Reglas:
-- Proponé como máximo dos cosas, y lo normal es proponer NINGUNA. La lista vacía
-  es la respuesta correcta la mayoría de las veces.
+- Si el usuario pidió explícitamente que recuerdes algo («recordá que…»,
+  «acordate de…», «guardá que…»), proponelo SIEMPRE, redactado como el hecho que
+  te pidió guardar. Ese pedido es la señal más fuerte que existe y Orion no puede
+  guardarlo por su cuenta: si acá no lo proponés, la persona se queda creyendo
+  que quedó guardado y no queda nada.
+- Fuera de ese caso, proponé como máximo dos cosas, y lo normal es proponer
+  NINGUNA. La lista vacía es la respuesta correcta la mayoría de las veces.
 - Solo proponé hechos duraderos sobre el usuario, su trabajo, su equipo, sus
   jugadores o sus preferencias: cosas que sigan siendo ciertas dentro de meses y
   que cambien cómo responderías la próxima vez.

@@ -175,7 +175,32 @@ class MemoryContextTests(unittest.TestCase):
         # memory, which would have made it contradict its own saved entries.
         prompt = build_system_prompt(SportContext.GENERAL, SelectedMode.QUICK)
         self.assertNotIn("no posee memoria", prompt)
-        self.assertIn("solo contiene lo que el usuario pidió", prompt)
+        # El texto se corta por el ancho de línea, así que se afirma sobre la frase
+        # y no sobre el renglón completo.
+        self.assertIn("solo contiene lo que el usuario confirmó", prompt)
+
+    def test_orion_must_not_imply_it_saved_something_from_the_chat(self) -> None:
+        """Santiago asked Orion to remember he likes chocolate. It answered
+        "Entendido", saved nothing, and on restart there was nothing there.
+
+        The old rule only covered claiming to have saved what nobody asked for.
+        Here the person did ask, Orion cannot write to memory from the
+        conversation at all, and an agreeable reply reads as confirmation.
+        """
+
+        prompt = build_system_prompt(SportContext.GENERAL, SelectedMode.QUICK)
+        self.assertIn("No podés escribir en la memoria desde la conversación", prompt)
+        # Saying it cannot is half of it; the person still needs the way to do it.
+        self.assertIn("propuesta para confirmarlo", prompt)
+        self.assertIn("panel de memoria", prompt)
+
+    def test_an_explicit_request_to_remember_is_always_proposed(self) -> None:
+        """Otherwise the person is left believing it was saved and nothing was."""
+
+        from backend.app.services.memory_suggestions import SUGGESTION_PROMPT
+
+        self.assertIn("proponelo SIEMPRE", SUGGESTION_PROMPT)
+        self.assertIn("recordá que", SUGGESTION_PROMPT)
 
 
 if __name__ == "__main__":
