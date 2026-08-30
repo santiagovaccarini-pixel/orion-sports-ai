@@ -17,7 +17,7 @@ class DeploymentConfigTests(unittest.TestCase):
 
     def test_cloud_provider_is_selected_without_hardcoded_credentials(self) -> None:
         content = RENDER_YAML.read_text(encoding="utf-8")
-        self.assertIn("value: cloudflare", content)
+        self.assertIn("- key: ORION_MODEL_PROVIDER\n        value: cerebras", content)
         for secret in (
             "ORION_CLOUDFLARE_ACCOUNT_ID",
             "ORION_CLOUDFLARE_API_TOKEN",
@@ -29,16 +29,18 @@ class DeploymentConfigTests(unittest.TestCase):
             marker = f"- key: {secret}\n        sync: false"
             self.assertIn(marker, content)
 
-    def test_faster_endpoints_are_configured_but_not_yet_the_active_provider(self) -> None:
-        """The faster endpoints ship ahead of the switch on purpose.
+    def test_cloudflare_stays_credentialed_as_the_rollback(self) -> None:
+        """The blueprint and the dashboard must agree on the active provider.
 
-        Deploying the credentials separately from the cutover means the provider
-        can be flipped (and flipped back) by editing one value, with Cloudflare
-        still configured and working underneath.
+        A dashboard change alone is not enough: the blueprint re-applies every
+        `value:` it declares, so leaving this file on the old provider would quietly
+        undo the switch on the next sync. Cloudflare keeps its credentials so
+        rolling back stays a one-value edit rather than a redeploy.
         """
 
         content = RENDER_YAML.read_text(encoding="utf-8")
-        self.assertIn("- key: ORION_MODEL_PROVIDER\n        value: cloudflare", content)
+        self.assertNotIn("value: cloudflare", content)
+        self.assertIn('value: "@cf/openai/gpt-oss-120b"', content)
         self.assertIn('- key: ORION_ENDPOINT_QUICK_REASONING_EFFORT\n        value: "low"', content)
         # The endpoint URL and model id come from the provider's own defaults;
         # pinning them here would mean editing two places to change one thing.

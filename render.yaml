@@ -10,8 +10,11 @@ services:
     startCommand: python -m uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/v1/health
     envVars:
+      # Cerebras serves the same gpt-oss-120b weights: same answers, measured 12x
+      # faster end to end, and without Workers AI's ~8-queries-a-day free ceiling.
+      # Rolling back is this one value; the Cloudflare credentials stay below.
       - key: ORION_MODEL_PROVIDER
-        value: cloudflare
+        value: cerebras
       - key: ORION_CLOUDFLARE_ACCOUNT_ID
         sync: false
       - key: ORION_CLOUDFLARE_API_TOKEN
