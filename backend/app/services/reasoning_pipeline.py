@@ -20,6 +20,7 @@ from backend.app.services.semantic_orchestrator import (
     conservative_fallback_plan,
     create_semantic_plan,
     cross_check_context,
+    drop_sources_about_another_entity,
     format_reasoning_context,
     merge_web_sources,
     partial_sum_context,
@@ -645,6 +646,14 @@ async def build_reasoning_bundle(
             web_sources,
             already_triggered=freshness_backstop_used,
             trace=trace,
+        )
+
+    review, dropped_for_entity = drop_sources_about_another_entity(review)
+    if dropped_for_entity and trace is not None:
+        trace.record_guard(
+            "sources_dropped_wrong_entity",
+            "Fuentes descartadas porque la revisión marcó que no hablan de la "
+            "entidad preguntada: " + ", ".join(dropped_for_entity),
         )
 
     if trace is not None and review.source_checks:

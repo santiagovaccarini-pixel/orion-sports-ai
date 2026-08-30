@@ -8,6 +8,8 @@ from backend.app.domain.schemas import MAX_MESSAGE_CHARACTERS, ChatMessage, Spor
 from backend.app.providers.model_provider import ModelResult
 from backend.app.services.knowledge_base import KnowledgeDocument
 from backend.app.services.semantic_orchestrator import (
+    SourceCheck,
+    drop_sources_about_another_entity,
     build_contract,
     CrossCheckedClaim,
     _cross_checked_claims,
@@ -1239,6 +1241,83 @@ class UnsatisfiedReviewTests(unittest.TestCase):
         self.assertIn("sin bloquear la respuesta", answering)
         self.assertNotIn("LIMITACIÓN NUCLEAR", answering)
         self.assertIn("LIMITACIÓN NUCLEAR", refusing)
+
+
+class WrongEntityTests(unittest.TestCase):
+    """A source about someone else is not partial evidence, it is wrong evidence.
+
+    Orion listed Rosario Central, Racing, Tijuana and Celta de Vigo as clubs a
+    manager had coached. He coached none of them: an accepted source was about a
+    different person with the same name. The reviewer had already recorded that
+    the entity did not match, and nothing acted on it.
+    """
+
+    def _review(self, checks: tuple[SourceCheck, ...]) -> EvidenceReview:
+        return EvidenceReview(
+            sufficient=True,
+            relevant_source_ids=("W1", "W2", "W3"),
+            discarded_source_ids=(),
+            missing_information=(),
+            follow_up_web_query=None,
+            needs_clarification=False,
+            clarifying_question=None,
+            resolved_scope=None,
+            reason="ok",
+            source_checks=checks,
+            cross_checked_claims=(
+                CrossCheckedClaim("Dirigió a Colón", ("W1", "W2")),
+                CrossCheckedClaim("Dirigió a Celta de Vigo", ("W3",)),
+            ),
+        )
+
+    def test_a_source_marked_as_another_entity_is_rejected(self) -> None:
+        review, dropped = drop_sources_about_another_entity(
+            self._review(
+                (
+                    SourceCheck("W1", entity=True),
+                    SourceCheck("W2", entity=True),
+                    SourceCheck("W3", entity=False),
+                )
+            )
+        )
+        self.assertEqual(dropped, ("W3",))
+        self.assertEqual(review.relevant_source_ids, ("W1", "W2"))
+        self.assertIn("W3", review.discarded_source_ids)
+
+    def test_claims_resting_only_on_the_rejected_source_lose_their_support(self) -> None:
+        review, _ = drop_sources_about_another_entity(
+            self._review(
+                (SourceCheck("W1", entity=True), SourceCheck("W3", entity=False))
+            )
+        )
+        by_statement = {claim.statement: claim for claim in review.cross_checked_claims}
+        self.assertEqual(by_statement["Dirigió a Colón"].confidence, "corroborado")
+        # The wrong-person club can no longer be stated at all.
+        self.assertEqual(by_statement["Dirigió a Celta de Vigo"].confidence, "sin respaldo")
+
+    def test_an_incomplete_check_is_not_a_wrong_one(self) -> None:
+        """Missing a period or a unit makes a source partial, not about someone else.
+
+        Dropping those too would repeat the mistake of treating partial evidence
+        as useless, which is what silenced Orion in the first place.
+        """
+
+        review, dropped = drop_sources_about_another_entity(
+            self._review(
+                (
+                    SourceCheck("W1", entity=True, metric=True, period=False),
+                    SourceCheck("W2", entity=True, unit=False),
+                    SourceCheck("W3", entity=True),
+                )
+            )
+        )
+        self.assertEqual(dropped, ())
+        self.assertEqual(review.relevant_source_ids, ("W1", "W2", "W3"))
+
+    def test_a_source_the_reviewer_never_checked_is_left_alone(self) -> None:
+        review, dropped = drop_sources_about_another_entity(self._review(()))
+        self.assertEqual(dropped, ())
+        self.assertEqual(review.relevant_source_ids, ("W1", "W2", "W3"))
 
 
 if __name__ == "__main__":

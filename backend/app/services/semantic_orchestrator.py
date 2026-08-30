@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from typing import Callable, Sequence
 
@@ -216,6 +216,74 @@ class SemanticContract:
     corrected: bool
     correction_reason: str | None
     audited: bool
+
+
+def drop_sources_about_another_entity(
+    review: EvidenceReview,
+) -> tuple[EvidenceReview, tuple[str, ...]]:
+    """Reject accepted sources the reviewer itself marked as another entity.
+
+    Orion listed Rosario Central, Racing, Tijuana and Celta de Vigo as clubs a
+    manager had coached. He never coached any of them: one accepted source was
+    about a different person with the same name, and the answer presented it in a
+    table like everything else. The reviewer had already filled in that the entity
+    did not match — the finding was recorded and then ignored.
+
+    Only `entity` is enforced, not the whole checklist. A source missing the
+    period or the unit is incomplete, and incomplete evidence still contributes;
+    dropping it would repeat the mistake of confusing "partial" with "useless". A
+    source about someone else is not partial, it is wrong, and every claim it
+    contributes is a claim about the wrong subject.
+
+    A source the reviewer never filed a check for is left alone: silence is not
+    evidence of a mismatch.
+    """
+
+    if not review.source_checks or not review.relevant_source_ids:
+        return review, ()
+    mismatched = {
+        check.source_id.strip().upper()
+        for check in review.source_checks
+        if not check.entity
+    }
+    if not mismatched:
+        return review, ()
+    dropped = tuple(
+        source_id
+        for source_id in review.relevant_source_ids
+        if source_id.strip().upper() in mismatched
+    )
+    if not dropped:
+        return review, ()
+    kept = tuple(
+        source_id
+        for source_id in review.relevant_source_ids
+        if source_id.strip().upper() not in mismatched
+    )
+    already_discarded = {item.strip().upper() for item in review.discarded_source_ids}
+    return (
+        replace(
+            review,
+            relevant_source_ids=kept,
+            discarded_source_ids=(
+                *review.discarded_source_ids,
+                *(item for item in dropped if item.strip().upper() not in already_discarded),
+            ),
+            # Claims resting only on a rejected source go with it.
+            cross_checked_claims=tuple(
+                replace(
+                    claim,
+                    supporting_source_ids=tuple(
+                        item
+                        for item in claim.supporting_source_ids
+                        if item.strip().upper() not in mismatched
+                    ),
+                )
+                for claim in review.cross_checked_claims
+            ),
+        ),
+        dropped,
+    )
 
 
 def build_contract(plan: SemanticPlan, review: EvidenceReview) -> SemanticContract:
