@@ -27,6 +27,9 @@ MAX_READ_PAGES = 4
 MAX_EXCERPT_CHARACTERS = 24_000
 # A page shorter than roughly this per window is sent whole rather than sampled.
 WINDOW_TARGET_CHARACTERS = 4_000
+# Marks a gap between sampled windows so the model can see the page is not
+# continuous there, rather than reading across a jump as if it were one sentence.
+WINDOW_SEPARATOR = "\n\n[...]\n\n"
 CACHE_TTL_SECONDS = 300.0
 CACHE_MAX_PAGES = 64
 ALLOWED_CONTENT_TYPES = (
@@ -121,11 +124,16 @@ def _relevant_excerpt(text: str, query: str, limit: int = MAX_EXCERPT_CHARACTERS
     if len(text) <= limit:
         return text
 
-    separator = "\n\n[...]\n\n"
     window_count = max(2, min(8, len(text) // WINDOW_TARGET_CHARACTERS))
     # The separators come out of the budget, otherwise the final trim to `limit`
     # eats the tail of the last window — the end of the page it exists to reach.
-    window_size = (limit - len(separator) * (window_count - 1)) // window_count
+    window_size = (
+        limit - len(WINDOW_SEPARATOR) * (window_count - 1)
+    ) // window_count
+    if window_size < 1:
+        # A budget too small to hold even one window per separator: fall back to a
+        # single head window rather than returning nothing.
+        return text[:limit]
     span = max(0, len(text) - window_size)
     pieces: list[str] = []
     for index in range(window_count):
@@ -136,7 +144,7 @@ def _relevant_excerpt(text: str, query: str, limit: int = MAX_EXCERPT_CHARACTERS
         piece = text[start : start + window_size].strip()
         if piece:
             pieces.append(piece)
-    joined = "\n\n[...]\n\n".join(pieces)
+    joined = WINDOW_SEPARATOR.join(pieces)
     return joined[:limit] or text[:limit]
 
 

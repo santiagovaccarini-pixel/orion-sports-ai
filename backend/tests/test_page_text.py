@@ -5,6 +5,7 @@ import unittest
 from backend.app.services.page_text import visible_text
 from backend.app.services.web_reader import (
     MAX_EXCERPT_CHARACTERS,
+    WINDOW_SEPARATOR,
     _relevant_excerpt,
 )
 
@@ -79,6 +80,22 @@ class ExcerptTests(unittest.TestCase):
         # exactly the content the old keyword scoring used to throw away.
         self.assertIn("INICIO", excerpt)
         self.assertIn("FINAL", excerpt)
+
+
+    def test_a_budget_too_small_to_sample_still_returns_the_head(self) -> None:
+        """A caller passing an absurd budget must get text, never an empty source."""
+
+        page = "contenido " * 500
+        for limit in (5, 10, 40, 200):
+            with self.subTest(limit=limit):
+                excerpt = _relevant_excerpt(page, "pregunta", limit=limit)
+                self.assertTrue(excerpt)
+                self.assertLessEqual(len(excerpt), limit)
+                # Whatever the budget, the first window still starts at the top
+                # of the page rather than somewhere arbitrary in the middle.
+                first_window = excerpt.split(WINDOW_SEPARATOR)[0]
+                self.assertTrue(page.startswith(first_window))
+
 
 
 if __name__ == "__main__":
