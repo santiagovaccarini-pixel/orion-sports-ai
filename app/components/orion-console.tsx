@@ -13,7 +13,9 @@ import { OrionMark } from "./orion-mark";
 import remarkGfm from "remark-gfm";
 import {
   deleteKnowledgeDocument,
+  suggestMemories,
   ChatMessage,
+  MemorySuggestion,
   OrionChart,
   MemoryEntry,
   deleteMemoryEntry,
@@ -212,6 +214,10 @@ export function OrionConsole() {
   const [memoryDraft, setMemoryDraft] = useState("");
   const [memoryBusy, setMemoryBusy] = useState(false);
   const [memoryError, setMemoryError] = useState<string | null>(null);
+  // Orion proposes; nothing is stored until this is accepted. The draft is
+  // editable because the wording it chose is a starting point, not a verdict.
+  const [suggestions, setSuggestions] = useState<MemorySuggestion[]>([]);
+  const [suggestionDrafts, setSuggestionDrafts] = useState<string[]>([]);
   const [warning, setWarning] = useState<PendingWarning | null>(null);
   const [showScrollToLatest, setShowScrollToLatest] = useState(false);
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -322,6 +328,9 @@ export function OrionConsole() {
     const startedAt = performance.now();
     let firstTokenMs: number | null = null;
     let assistantStarted = false;
+    // The streamed chunks are cleared as they are painted, so the full answer
+    // is accumulated separately for whatever runs once it is complete.
+    const answerRef = { current: "" };
     const flushPendingContent = () => {
       const pendingContent = pendingContentRef.current;
       if (!pendingContent) return;
@@ -372,6 +381,7 @@ export function OrionConsole() {
               firstTokenMs = performance.now() - startedAt;
             }
             pendingContentRef.current += content;
+            answerRef.current += content;
             if (contentFrameRef.current !== null) return;
             contentFrameRef.current = requestAnimationFrame(() => {
               const pendingContent = pendingContentRef.current;
@@ -424,6 +434,11 @@ export function OrionConsole() {
               }
             : message,
         ),
+      );
+
+      void askForSuggestions(
+        [...requestMessages, { role: "assistant", content: answerRef.current }],
+        answerRef.current,
       );
     } catch (caught) {
       if (controller.signal.aborted) {
@@ -576,6 +591,45 @@ export function OrionConsole() {
       setKnowledgeMessage(
         caught instanceof Error ? caught.message : "No se pudo importar el documento.",
       );
+    }
+  };
+
+  const dismissSuggestion = (index: number) => {
+    setSuggestions((current) => current.filter((_, i) => i !== index));
+    setSuggestionDrafts((current) => current.filter((_, i) => i !== index));
+  };
+
+  const acceptSuggestion = async (index: number) => {
+    const content = (suggestionDrafts[index] ?? "").trim();
+    if (!content || memoryBusy) return;
+    setMemoryBusy(true);
+    setMemoryError(null);
+    try {
+      const entry = await saveMemoryEntry({ content });
+      setMemoryEntries((current) => [...current, entry]);
+      dismissSuggestion(index);
+    } catch (caught) {
+      setMemoryError(
+        caught instanceof Error ? caught.message : "No se pudo guardar el dato.",
+      );
+    } finally {
+      setMemoryBusy(false);
+    }
+  };
+
+  // Asked once the answer is on screen, so proposing costs the reader no wait.
+  const askForSuggestions = async (
+    conversation: ChatMessage[],
+    answer: string,
+  ) => {
+    if (!answer.trim()) return;
+    try {
+      const proposed = await suggestMemories({ messages: conversation, answer });
+      if (proposed.length === 0) return;
+      setSuggestions(proposed);
+      setSuggestionDrafts(proposed.map((item) => item.content));
+    } catch {
+      // A proposal is a convenience: failing to get one is not worth an error.
     }
   };
 
@@ -940,6 +994,51 @@ export function OrionConsole() {
                     Continuar igualmente
                   </button>
                 </div>
+              </div>
+            ) : null}
+
+            {suggestions.length > 0 ? (
+              <div className="memory-proposal" role="region" aria-label="Propuesta de memoria">
+                <p className="memory-proposal-title">
+                  ¿Querés que recuerde esto para la próxima?
+                </p>
+                {suggestions.map((item, index) => (
+                  <div key={`${item.content}-${index}`} className="memory-proposal-item">
+                    <textarea
+                      value={suggestionDrafts[index] ?? ""}
+                      onChange={(event) =>
+                        setSuggestionDrafts((current) =>
+                          current.map((draft, i) =>
+                            i === index ? event.target.value : draft,
+                          ),
+                        )
+                      }
+                      aria-label="Texto exacto que Orion guardaría"
+                      rows={2}
+                      maxLength={1000}
+                    />
+                    {item.reason ? (
+                      <p className="memory-proposal-reason">{item.reason}</p>
+                    ) : null}
+                    <div className="memory-proposal-actions">
+                      <button
+                        type="button"
+                        className="memory-proposal-accept"
+                        onClick={() => acceptSuggestion(index)}
+                        disabled={memoryBusy || !(suggestionDrafts[index] ?? "").trim()}
+                      >
+                        Guardar
+                      </button>
+                      <button
+                        type="button"
+                        className="memory-proposal-dismiss"
+                        onClick={() => dismissSuggestion(index)}
+                      >
+                        No guardar
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : null}
 

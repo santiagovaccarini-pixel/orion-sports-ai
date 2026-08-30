@@ -20,6 +20,7 @@ const PROXYABLE_PATHS = new Set([
   "chat/stream",
   "knowledge/documents",
   "memory/entries",
+  "memory/suggestions",
   "diagnostics/traces/latest",
 ]);
 

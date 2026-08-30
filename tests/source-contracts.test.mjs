@@ -160,3 +160,23 @@ test("an attached document can actually be withdrawn from Orion", async () => {
   assert.match(css, /\.knowledge-remove\s*\{[^}]*border:\s*1px solid/s);
   assert.match(css, /\.knowledge-remove\s*\{[^}]*background:\s*#fff/s);
 });
+
+test("Orion proposes what to remember and never saves it on its own", async () => {
+  const component = await readFile(new URL("app/components/orion-console.tsx", root), "utf8");
+  assert.match(component, /suggestMemories/);
+  assert.match(component, /askForSuggestions/);
+  // The proposal is editable: the wording Orion chose is a starting point, and
+  // the person rewords it before it becomes their memory.
+  assert.match(component, /suggestionDrafts/);
+  assert.match(component, /Texto exacto que Orion guardaría/);
+  assert.match(component, /No guardar/);
+  // Accepting is what writes: dismissing must leave nothing behind.
+  assert.match(component, /acceptSuggestion/);
+  assert.match(component, /dismissSuggestion/);
+
+  const api = await readFile(new URL("app/lib/orion-api.ts", root), "utf8");
+  assert.match(api, /memory\/suggestions/);
+
+  const proxy = await readFile(new URL("app/api/orion/[...path]/route.ts", root), "utf8");
+  assert.match(proxy, /"memory\/suggestions"/);
+});

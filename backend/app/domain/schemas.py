@@ -108,6 +108,24 @@ class KnowledgeDocumentResponse(BaseModel):
     characters: int
 
 
+class MemorySuggestionRequest(BaseModel):
+    """One finished exchange, offered up so Orion can propose what to remember."""
+
+    messages: list[ChatMessage] = Field(min_length=1, max_length=20)
+    answer: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARACTERS)
+
+
+class MemorySuggestionResponse(BaseModel):
+    """A proposal, never a saved fact.
+
+    The exact `content` is what would be stored, and the user sees it before
+    anything is written: they can save it, reword it, or throw it away.
+    """
+
+    content: str
+    reason: str = ""
+
+
 class MemoryEntryRequest(BaseModel):
     """A fact the user explicitly asks Orion to remember.
 

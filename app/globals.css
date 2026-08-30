@@ -1076,3 +1076,80 @@ button {
     animation-iteration-count: 1 !important;
   }
 }
+
+/* Orion proposes; nothing is stored until this is accepted. The text sits in a
+   textarea rather than a label because the wording it chose is a starting
+   point: the person can reword the sentence before it becomes their memory. */
+.memory-proposal {
+  display: grid;
+  gap: 0.6rem;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 0.9rem;
+  background: var(--surface);
+  padding: 0.85rem 1rem;
+}
+
+.memory-proposal-title {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.memory-proposal-item {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.memory-proposal-item textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: var(--paper);
+  padding: 0.5rem 0.6rem;
+  color: var(--ink);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.memory-proposal-reason {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.memory-proposal-actions {
+  display: flex;
+  gap: 0.45rem;
+}
+
+.memory-proposal-accept,
+.memory-proposal-dismiss {
+  border-radius: 999px;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.memory-proposal-accept {
+  border: 0;
+  background: var(--ink);
+  color: #fff;
+}
+
+.memory-proposal-accept:disabled {
+  opacity: 0.5;
+}
+
+.memory-proposal-dismiss {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+}
+
+.memory-proposal-dismiss:hover {
+  border-color: #a8aa9f;
+  color: var(--ink);
+}

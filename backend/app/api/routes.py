@@ -27,6 +27,8 @@ from backend.app.domain.schemas import (
     KnowledgeDocumentResponse,
     MemoryEntryRequest,
     MemoryEntryResponse,
+    MemorySuggestionRequest,
+    MemorySuggestionResponse,
     RequestedMode,
     SportContext,
     StatusResponse,
@@ -58,6 +60,7 @@ from backend.app.services.memory_repository import (
     create_memory_repository,
 )
 from backend.app.services.memory_store import MemoryEntry, format_memory_context
+from backend.app.services.memory_suggestions import suggest_memories
 from backend.app.services.mode_router import recommend_mode
 from backend.app.services.orchestrator import OrchestrationPlan, create_plan
 from backend.app.services.rate_limit import (
@@ -702,6 +705,39 @@ async def delete_knowledge_document(document_id: str) -> dict[str, str]:
             },
         )
     return {"status": "deleted", "id": document_id}
+
+
+@router.post(
+    "/memory/suggestions",
+    response_model=list[MemorySuggestionResponse],
+    dependencies=[Depends(require_api_key), Depends(limit_chat_rate)],
+)
+async def suggest_memory_entries(
+    request: MemorySuggestionRequest,
+) -> list[MemorySuggestionResponse]:
+    """Propose what to remember. Nothing is written here.
+
+    Orion never saves on its own: this returns the exact sentences it would
+    store, and the person decides whether any of them becomes memory.
+    """
+
+    provider = _provider_or_http_error()
+    try:
+        suggestions = await suggest_memories(
+            provider,
+            request.messages,
+            request.answer,
+            memory_context=await _memory_context(),
+        )
+    except (ModelProviderUnavailableError, ModelProviderConfigurationError):
+        # A proposal is a convenience, never the point of the request: when the
+        # model cannot be reached, offer nothing rather than failing the caller.
+        logger.warning("No se pudieron proponer recuerdos", exc_info=True)
+        return []
+    return [
+        MemorySuggestionResponse(content=item.content, reason=item.reason)
+        for item in suggestions
+    ]
 
 
 def _memory_store() -> MemoryRepository:

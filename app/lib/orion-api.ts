@@ -368,6 +368,25 @@ export async function uploadKnowledgeDocument(file: File): Promise<KnowledgeDocu
   return parseResponse<KnowledgeDocument>(response);
 }
 
+export type MemorySuggestion = { content: string; reason: string };
+
+/** What Orion would remember, before anything is written.
+ *
+ * Nothing is saved by this call: the user reads the exact sentence, edits it if
+ * the wording is off, and only then does it become memory. */
+export async function suggestMemories(input: {
+  messages: ChatMessage[];
+  answer: string;
+}): Promise<MemorySuggestion[]> {
+  const response = await fetch(`${API_BASE}/memory/suggestions`, {
+    method: "POST",
+    headers: API_HEADERS,
+    body: JSON.stringify({ messages: input.messages, answer: input.answer }),
+  });
+  if (!response.ok) return [];
+  return parseResponse<MemorySuggestion[]>(response);
+}
+
 export async function deleteKnowledgeDocument(documentId: string): Promise<void> {
   const response = await fetch(
     `${API_BASE}/knowledge/documents/${encodeURIComponent(documentId)}`,
