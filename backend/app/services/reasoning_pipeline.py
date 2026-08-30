@@ -21,6 +21,7 @@ from backend.app.services.semantic_orchestrator import (
     create_semantic_plan,
     cross_check_context,
     drop_sources_about_another_entity,
+    force_verification_for_named_entities,
     format_reasoning_context,
     merge_web_sources,
     partial_sum_context,
@@ -524,6 +525,16 @@ async def build_reasoning_bundle(
     attempted_page_reads: set[str] = set()
     recency_days = plan.recency_window_days if plan.volatile_information else None
     freshness_backstop_used = False
+
+    plan, verification_forced = force_verification_for_named_entities(
+        plan, web_enabled=settings.web_enabled
+    )
+    if verification_forced and trace is not None:
+        trace.record_guard(
+            "verification_forced_for_named_entity",
+            "El plan nombraba algo concreto y elegía responder de memoria; Orion "
+            "verifica igual: " + ", ".join(plan.entities),
+        )
 
     if plan.use_web and settings.web_enabled:
         initial_query = plan.web_query or plan.objective

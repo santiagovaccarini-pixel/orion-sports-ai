@@ -7,7 +7,8 @@ from dataclasses import dataclass, replace
 from datetime import date
 from typing import Callable, Sequence
 
-from backend.app.core.identity import institutional_identity_brief
+from backend.app.core.config import get_settings
+from backend.app.core.identity import ORION_CREATOR_NAME, institutional_identity_brief
 from backend.app.domain.models import SelectedMode
 from backend.app.domain.schemas import ChatMessage, SportContext
 from backend.app.providers.model_provider import ModelProvider, ModelResult
@@ -216,6 +217,73 @@ class SemanticContract:
     corrected: bool
     correction_reason: str | None
     audited: bool
+
+
+def force_verification_for_named_entities(
+    plan: SemanticPlan, *, web_enabled: bool
+) -> tuple[SemanticPlan, bool]:
+    """Make Orion check a named thing instead of recalling it.
+
+    Asked what a McGill test evaluates, with football already in the request,
+    Orion answered about the McGill Pain Questionnaire in a second and searched
+    nothing. It knew the right answer — spelling out the field got it — so the
+    context was there and unused. Instructing the planner to doubt did not work:
+    it declared no ambiguity at all, because a name that collides across fields
+    does not feel ambiguous from inside one of them. Nothing the model is told
+    about being careful helps when it is not aware it should be.
+
+    So the decision leaves the model. When a plan names a specific thing and
+    still chooses to answer from memory, Orion verifies. The test is structural —
+    is the entity list empty, is the web available — and never reads what the
+    entity says, so it behaves the same on any engine.
+
+    Measured on the deployment, this fires exactly where it should: a question
+    naming a test triggers it, while "¿qué es la carga interna?" and "¿cuánto es
+    12 por 8?" declare no entities and stay as fast as they were.
+    """
+
+    if not web_enabled or plan.use_web or plan.needs_clarification:
+        return plan, False
+    if not plan.entities:
+        return plan, False
+    if plan.calculation_expression or plan.csv_operation or plan.use_local_data:
+        # A computation or a local document carries its own evidence; there is
+        # nothing about a named entity left to confirm on the web.
+        return plan, False
+    if _all_entities_are_supplied_facts(plan.entities):
+        return plan, False
+    query = plan.web_query or plan.objective or plan.resolved_request
+    if not query.strip():
+        return plan, False
+    return replace(plan, use_web=True, web_query=query), True
+
+
+def _all_entities_are_supplied_facts(entities: Sequence[str]) -> bool:
+    """True when every named entity is something Orion was handed, not recalled.
+
+    Orion's own engine and its creator arrive as institutional context in the
+    prompt; they are given, not remembered, so there is nothing for a search to
+    confirm and forcing one would only cost seconds. This compares the entity
+    against values Orion itself injected — it is asking "did we supply this?",
+    not judging what the user meant, which stays the model's job.
+    """
+
+    supplied = {
+        value.casefold()
+        for value in (
+            get_settings().endpoint_quick_model,
+            get_settings().endpoint_deep_model,
+            get_settings().cloudflare_quick_model,
+            get_settings().cloudflare_deep_model,
+            ORION_CREATOR_NAME,
+            "Orion",
+        )
+        if value
+    }
+    return all(
+        any(item in entity.casefold() or entity.casefold() in item for item in supplied)
+        for entity in entities
+    )
 
 
 def drop_sources_about_another_entity(

@@ -5,13 +5,20 @@ import unittest
 from datetime import date, timedelta
 from unittest.mock import AsyncMock, patch
 
-from backend.app.core.config import Settings
-from backend.app.domain.schemas import ChatRequest
+from dataclasses import replace
+
+from backend.app.core.config import Settings, get_settings
+from backend.app.domain.schemas import ChatMessage, ChatRequest
 from backend.app.providers.model_provider import (
     ModelProviderUnavailableError,
     ModelResult,
 )
 from backend.app.services.reasoning_pipeline import build_reasoning_bundle
+from backend.app.services.semantic_orchestrator import (
+    SemanticPlan,
+    conservative_fallback_plan,
+    force_verification_for_named_entities,
+)
 from backend.app.services.web_reader import PageRead
 from backend.app.services.web_research import WebSource
 
@@ -456,6 +463,69 @@ class ReasoningPipelineTests(unittest.TestCase):
         self.assertFalse(bundle.plan.needs_clarification)
         self.assertFalse(bundle.review.needs_clarification)
         self.assertTrue(bundle.review.sufficient)
+
+
+class ForcedVerificationTests(unittest.TestCase):
+    """Asked what a McGill test evaluates, with football already in the request,
+    Orion answered about the McGill Pain Questionnaire in a second and searched
+    nothing. Telling the planner to doubt did not work: it declared no ambiguity
+    at all, because a name that collides across fields does not feel ambiguous
+    from inside one of them. So the decision leaves the model.
+    """
+
+    def _plan(self, **overrides) -> SemanticPlan:
+        base = conservative_fallback_plan(
+            [ChatMessage(role="user", content="Pregunta")],
+            web_available=True,
+            documents=[],
+        )
+        defaults = {"use_web": False, "entities": ("Test de McGill",)}
+        defaults.update(overrides)
+        return replace(base, **defaults)
+
+    def test_a_named_thing_answered_from_memory_gets_verified(self) -> None:
+        plan, forced = force_verification_for_named_entities(
+            self._plan(), web_enabled=True
+        )
+        self.assertTrue(forced)
+        self.assertTrue(plan.use_web)
+        self.assertTrue((plan.web_query or "").strip())
+
+    def test_a_question_naming_nothing_stays_as_fast_as_it_was(self) -> None:
+        """Measured on the deployment: "¿qué es la carga interna?" and "¿cuánto es
+        12 por 8?" both declare no entities, so neither pays for a search.
+        """
+
+        plan, forced = force_verification_for_named_entities(
+            self._plan(entities=()), web_enabled=True
+        )
+        self.assertFalse(forced)
+        self.assertFalse(plan.use_web)
+
+    def test_a_calculation_carries_its_own_evidence(self) -> None:
+        _plan, forced = force_verification_for_named_entities(
+            self._plan(calculation_expression="12*8"), web_enabled=True
+        )
+        self.assertFalse(forced)
+
+    def test_facts_orion_was_handed_are_not_searched_for(self) -> None:
+        """Its own engine arrives as institutional context: given, not recalled.
+
+        Measured live, that question declares the model name as an entity, so
+        without this it would pay for a search to confirm something it was told.
+        """
+
+        settings = get_settings()
+        _plan, forced = force_verification_for_named_entities(
+            self._plan(entities=(settings.cloudflare_quick_model,)), web_enabled=True
+        )
+        self.assertFalse(forced)
+
+    def test_nothing_is_forced_when_the_web_is_off(self) -> None:
+        _plan, forced = force_verification_for_named_entities(
+            self._plan(), web_enabled=False
+        )
+        self.assertFalse(forced)
 
 
 if __name__ == "__main__":
