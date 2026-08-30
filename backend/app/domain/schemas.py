@@ -26,9 +26,20 @@ class SportContext(str, Enum):
     CYCLING = "cycling"
 
 
+# What one person may send in one message. This is an abuse control on incoming
+# requests, enforced on ChatRequest below where user input actually arrives.
+MAX_USER_MESSAGE_CHARACTERS = 20_000
+
+# What the type can carry. Orion builds its own messages internally — the whole
+# body of evidence handed to the reviewer travels as one — and those are not user
+# input. Binding both to the same number silently capped how much evidence Orion
+# could weigh, no matter how large the model's context was.
+MAX_MESSAGE_CHARACTERS = 100_000
+
+
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
-    content: str = Field(min_length=1, max_length=20_000)
+    content: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARACTERS)
 
     @field_validator("content")
     @classmethod
@@ -49,6 +60,11 @@ class ChatRequest(BaseModel):
     def validate_conversation(self) -> "ChatRequest":
         if self.messages[-1].role != "user":
             raise ValueError("El último mensaje debe pertenecer al usuario.")
+        for message in self.messages:
+            if len(message.content) > MAX_USER_MESSAGE_CHARACTERS:
+                raise ValueError(
+                    "Un mensaje supera el tamaño máximo permitido por consulta."
+                )
         total_characters = sum(len(message.content) for message in self.messages)
         if total_characters > 50_000:
             raise ValueError("La conversación supera el límite temporal del prototipo.")

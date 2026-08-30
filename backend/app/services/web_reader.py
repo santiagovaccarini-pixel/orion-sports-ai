@@ -11,6 +11,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from backend.app.services.page_text import visible_text
 from backend.app.services.safe_http import create_ssrf_safe_transport
 from backend.app.services.web_research import WebSource, published_age_days
 
@@ -18,7 +19,14 @@ from backend.app.services.web_research import WebSource, published_age_days
 MAX_PAGE_BYTES = 750_000
 MAX_REDIRECTS = 3
 MAX_READ_PAGES = 4
-MAX_EXCERPT_CHARACTERS = 6_000
+# Sized for the engine Orion runs on now. The old 6.000 dates from when every
+# token was scarce and the daily quota ran out after eight questions; measured on
+# a reference article it discarded 80% of the page before any model saw it, which
+# is the largest single cause of Orion reporting data as unavailable from pages
+# that contain it.
+MAX_EXCERPT_CHARACTERS = 24_000
+# A page shorter than roughly this per window is sent whole rather than sampled.
+WINDOW_TARGET_CHARACTERS = 4_000
 CACHE_TTL_SECONDS = 300.0
 CACHE_MAX_PAGES = 64
 ALLOWED_CONTENT_TYPES = (
@@ -66,26 +74,6 @@ def _safe_url_syntax(url: str) -> tuple[str, str] | None:
     return parsed.scheme, host
 
 
-def _visible_text(html: str) -> str:
-    article = re.search(
-        r"<article\b[^>]*>([\s\S]*?)</article>",
-        html,
-        flags=re.IGNORECASE,
-    )
-    value = article.group(1) if article else html
-    value = re.sub(
-        r"<(script|style|noscript|svg|nav|footer|header|form)[^>]*>[\s\S]*?</\1>",
-        " ",
-        value,
-        flags=re.IGNORECASE,
-    )
-    value = re.sub(r"<br\s*/?>|</p>|</li>|</h[1-6]>", "\n", value, flags=re.IGNORECASE)
-    value = re.sub(r"<[^>]+>", " ", value)
-    value = unescape(value).replace("\xa0", " ")
-    lines = [re.sub(r"\s+", " ", line).strip() for line in value.splitlines()]
-    return "\n".join(line for line in lines if len(line) >= 2).strip()
-
-
 def _title(html: str, fallback: str) -> str:
     match = re.search(r"<title[^>]*>([\s\S]*?)</title>", html, flags=re.IGNORECASE)
     if not match:
@@ -110,63 +98,46 @@ def _published_date(html: str) -> str | None:
     return None
 
 
-def _query_terms(query: str) -> tuple[str, ...]:
-    return tuple(
-        dict.fromkeys(
-            term.casefold()
-            for term in re.findall(r"[\wáéíóúüñ]{3,}", query, flags=re.IGNORECASE)
-        )
-    )
-
-
 def _relevant_excerpt(text: str, query: str, limit: int = MAX_EXCERPT_CHARACTERS) -> str:
+    """Fit a page inside the size budget without deciding what it is about.
+
+    This used to score windows by how many words of the user's question appeared
+    literally in them. That is lexical classification, which this project forbids,
+    and measuring it showed exactly why the rule exists: on a manager's Wikipedia
+    article the highest-scoring text was the citation markup, because every
+    reference title repeated his name, while the career table — which names clubs
+    and years without repeating the question's wording — lost and was dropped.
+    Orion then reported the career as unavailable, from a page that held it in
+    full.
+
+    Python's only job here is to fit the page in the budget. Pages under the limit
+    pass through whole. Longer ones are sampled at evenly spaced offsets so the
+    entire document is represented end to end, instead of only the parts that echo
+    the question. Judging what matters is the model's job, and it can only do that
+    with the text in front of it.
+    """
+
+    _ = query  # kept for call-site compatibility; relevance is not decided here
     if len(text) <= limit:
         return text
-    terms = _query_terms(query)
-    if not terms:
-        return text[:limit]
 
-    folded = text.casefold()
-    anchors: list[int] = []
-    for term in terms:
-        start = 0
-        while len(anchors) < 80:
-            index = folded.find(term, start)
-            if index < 0:
-                break
-            anchors.append(index)
-            start = index + len(term)
-    if not anchors:
-        return text[:limit]
-
-    window_size = min(1_800, limit)
-    candidates: list[tuple[int, int, str]] = []
-    for anchor in anchors[:40]:
-        start = max(0, anchor - window_size // 3)
-        window = text[start : start + window_size]
-        folded_window = window.casefold()
-        score = sum(1 for term in terms if term in folded_window)
-        candidates.append((score, start, window.strip()))
-    candidates.sort(key=lambda item: (-item[0], item[1]))
-
+    separator = "\n\n[...]\n\n"
+    window_count = max(2, min(8, len(text) // WINDOW_TARGET_CHARACTERS))
+    # The separators come out of the budget, otherwise the final trim to `limit`
+    # eats the tail of the last window — the end of the page it exists to reach.
+    window_size = (limit - len(separator) * (window_count - 1)) // window_count
+    span = max(0, len(text) - window_size)
     pieces: list[str] = []
-    used_ranges: list[tuple[int, int]] = []
-    remaining = limit
-    for _, start, window in candidates:
-        end = start + len(window)
-        if any(not (end <= old_start or start >= old_end) for old_start, old_end in used_ranges):
-            continue
-        if not window:
-            continue
-        piece = window[:remaining].strip()
-        if not piece:
-            continue
-        pieces.append(piece)
-        used_ranges.append((start, end))
-        remaining -= len(piece) + 2
-        if remaining <= 250:
-            break
-    return "\n\n…\n\n".join(pieces)[:limit] or text[:limit]
+    for index in range(window_count):
+        # Spread the windows so the first starts at the top and the last ends at
+        # the very bottom: a career table or a results list often sits at the end
+        # of an article, and a step that falls short would clip it off.
+        start = (span * index) // (window_count - 1)
+        piece = text[start : start + window_size].strip()
+        if piece:
+            pieces.append(piece)
+    joined = "\n\n[...]\n\n".join(pieces)
+    return joined[:limit] or text[:limit]
 
 
 async def _cache_get(url: str) -> CachedPage | None:
@@ -240,7 +211,7 @@ async def _download_page(
         final_safe = _safe_url_syntax(final_url)
         if final_safe is None:
             return None
-        visible = _visible_text(html)
+        visible = visible_text(html)
         if len(visible) < 40:
             return None
         domain = final_safe[1].removeprefix("www.")

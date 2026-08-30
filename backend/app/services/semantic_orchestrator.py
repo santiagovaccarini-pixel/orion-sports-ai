@@ -24,9 +24,20 @@ from backend.app.services.web_research import WebSource
 
 # Must stay below ChatMessage.content's max_length (20_000, schemas.py) since
 # this string is sent verbatim as a user message to the reviewer model.
-MAX_REVIEW_INPUT_CHARACTERS = 19_500
-REVIEW_SOURCE_CLIP = 1_100
-REVIEW_DEEPENED_SOURCE_CLIP = 3_000
+# The reviewer's whole view of the world: every source, every excerpt, in one
+# prompt. At 19.500 it could not hold four pages at the old 6.000-per-page cap,
+# so evidence Orion had already fetched was thrown away before being judged. That
+# number was sized for a provider charging by a scarce daily quota; the current
+# engine takes 131.000 tokens of context, so the constraint no longer applies.
+MAX_REVIEW_INPUT_CHARACTERS = 70_000
+# How much of one source the reviewer is allowed to read. This, not the page
+# reader's own limit, is what actually decides how much of a page reaches the
+# model: opening a full article and then showing the reviewer 3.000 characters of
+# it meant Orion judged a career question on a sixth of the page that answered it,
+# and truthfully reported the rest as unavailable. A snippet from a search result
+# is short by nature; a page Orion chose to open should arrive close to whole.
+REVIEW_SOURCE_CLIP = 2_500
+REVIEW_DEEPENED_SOURCE_CLIP = 16_000
 VALID_EVIDENCE_POLICIES = frozenset({"model_knowledge", "external", "local", "mixed"})
 ModelResultCallback = Callable[[str, ModelResult], None]
 

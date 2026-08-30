@@ -4,10 +4,12 @@ import asyncio
 import unittest
 
 from backend.app.domain.models import SelectedMode
-from backend.app.domain.schemas import ChatMessage, SportContext
+from backend.app.domain.schemas import MAX_MESSAGE_CHARACTERS, ChatMessage, SportContext
 from backend.app.providers.model_provider import ModelResult
 from backend.app.services.knowledge_base import KnowledgeDocument
 from backend.app.services.semantic_orchestrator import (
+    REVIEW_DEEPENED_SOURCE_CLIP,
+    REVIEW_SOURCE_CLIP,
     MAX_REVIEW_INPUT_CHARACTERS,
     UNTRUSTED_CLOSE,
     UNTRUSTED_CONTENT_RULE,
@@ -406,16 +408,19 @@ class SemanticOrchestratorTests(unittest.TestCase):
             )
             for index in range(12)
         ]
-        local = [LocalEvidence("L1", "grande.csv", "L" * 30_000, True)]
+        local = [LocalEvidence("L1", "grande.csv", "L" * 120_000, True)]
         asyncio.run(review_evidence(provider, plan, web_sources, local))
         sent = provider.calls[0]["messages"][0].content
-        # Must stay under ChatMessage's own hard cap (schemas.py), not just
-        # under MAX_REVIEW_INPUT_CHARACTERS, which is meaningless if the two
-        # values were ever allowed to drift apart (as happened once already).
-        self.assertLessEqual(len(sent), 20_000)
+        # Must stay under ChatMessage's own hard cap (schemas.py), not just under
+        # MAX_REVIEW_INPUT_CHARACTERS, which is meaningless if the two values were
+        # ever allowed to drift apart (as happened once already). Both are read
+        # from the source constants so raising one cannot silently break the other.
+        self.assertLessEqual(len(sent), MAX_MESSAGE_CHARACTERS)
         self.assertLessEqual(len(sent), MAX_REVIEW_INPUT_CHARACTERS)
         # A fixture large enough to actually exercise clipping, not a no-op.
-        self.assertGreater(len(sent), 15_000)
+        # Comfortably past the old 19.500 ceiling: the point of the fixture is
+        # to prove the reviewer's view actually grew, not just that it clips.
+        self.assertGreater(len(sent), 25_000)
         ChatMessage(role="user", content=sent)
 
     def test_reviewer_input_keeps_newest_sources_when_clipping(self) -> None:
@@ -442,8 +447,9 @@ class SemanticOrchestratorTests(unittest.TestCase):
             WebSource(
                 f"Fuente {index}",
                 f"https://example{index}.org/a",
-                "W" * 5_000,
+                "W" * 20_000,
                 f"example{index}.org",
+                deepened=True,
             )
             for index in range(20)
         ]
@@ -870,7 +876,7 @@ class SemanticOrchestratorTests(unittest.TestCase):
         deepened = WebSource(
             "Profunda",
             "https://a.test/nota",
-            "D" * 5_000,
+            "D" * 20_000,
             "a.test",
             published_date="2026-08-25",
             published_age_days=2,
@@ -881,9 +887,13 @@ class SemanticOrchestratorTests(unittest.TestCase):
         sent = provider.calls[0]["messages"][0].content
         self.assertIn("Fecha publicación: 2026-08-25 (hace 2 días)", sent)
         self.assertIn("Fecha publicación: no detectable", sent)
-        self.assertIn("D" * 2_900, sent)
-        self.assertNotIn("D" * 3_100, sent)
-        self.assertNotIn("S" * 1_200, sent)
+        # A page Orion opened arrives close to whole; a search snippet stays
+        # short. Both read from the constants, so raising one cannot leave this
+        # test asserting a limit the code no longer uses.
+        self.assertIn("D" * (REVIEW_DEEPENED_SOURCE_CLIP - 100), sent)
+        self.assertNotIn("D" * (REVIEW_DEEPENED_SOURCE_CLIP + 100), sent)
+        self.assertNotIn("S" * (REVIEW_SOURCE_CLIP + 100), sent)
+        self.assertGreater(REVIEW_DEEPENED_SOURCE_CLIP, REVIEW_SOURCE_CLIP * 4)
 
     def test_context_includes_date_line_for_relevant_sources(self) -> None:
         plan = conservative_fallback_plan(
