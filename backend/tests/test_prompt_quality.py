@@ -115,5 +115,42 @@ class PromptQualityTests(unittest.TestCase):
         self.assertEqual(general_request.sport, SportContext.GENERAL)
 
 
+class NameCollisionRuleTests(unittest.TestCase):
+    """Orion answered about the McGill Pain Questionnaire when asked, with
+    sport=football already in the request, about McGill's core endurance test.
+
+    It knew the right answer: asked again with "en preparación física" spelled
+    out, it described holding positions timed to failure. The sport context was
+    there and unused, and it answered from memory in a second rather than
+    doubting. The planner is where that gets decided.
+    """
+
+    def test_the_planner_is_told_to_settle_collisions_with_the_sport_context(self) -> None:
+        from backend.app.services.semantic_orchestrator import PLANNER_PROMPT
+
+        self.assertIn("designar cosas distintas en campos distintos", PLANNER_PROMPT)
+        # Using the context is half the rule; the other half is refusing to guess
+        # when the context is not enough.
+        self.assertIn("use_web=true", PLANNER_PROMPT)
+        self.assertIn("respondiendo de memoria", PLANNER_PROMPT)
+
+    def test_the_planner_reads_a_range_as_the_name_of_a_band(self) -> None:
+        from backend.app.services.semantic_orchestrator import PLANNER_PROMPT
+
+        self.assertIn("2 a 3 m/s", PLANNER_PROMPT)
+        self.assertIn("banda", PLANNER_PROMPT)
+
+    def test_the_sport_actually_reaches_the_planner(self) -> None:
+        """A rule about using the context is worthless if the context is absent."""
+
+        from backend.app.domain.schemas import SportContext
+        from backend.app.services.semantic_orchestrator import _capability_context
+
+        context = _capability_context(
+            web_available=True, documents=[], sport=SportContext.FOOTBALL
+        )
+        self.assertIn("football", context)
+
+
 if __name__ == "__main__":
     unittest.main()

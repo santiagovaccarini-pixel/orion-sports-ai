@@ -31,7 +31,24 @@ DEFAULT_CLOUD_URL = "https://orion-core-prototype.onrender.com/api/v1"
 CASES_PATH = Path(__file__).with_name("coding_cases.json")
 EXECUTION_TIMEOUT_SECONDS = 10
 
-_FENCE_RE = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.DOTALL)
+_FENCE_RE = re.compile(r"```[a-zA-Z0-9_+-]*\s*\n(.*?)```", re.DOTALL)
+
+
+# Injected into every harness. Compares shape, not container type: a function
+# asked for "una lista de tuplas" that returns tuples is correct, and grading it
+# against literal JSON lists would fail it for obeying the spec.
+_NORM_SOURCE = (
+    "def _norm(_v):\n"
+    "    if isinstance(_v, (list, tuple)):\n"
+    "        return [_norm(_i) for _i in _v]\n"
+    "    if isinstance(_v, dict):\n"
+    "        return {_k: _norm(_i) for _k, _i in _v.items()}\n"
+    "    return _v\n"
+)
+
+# Orion's own rate limiter is a single shared bucket for the whole deployment, so
+# a battery fired back to back trips it and grades its own requests as failures.
+PAUSE_BETWEEN_CASES_SECONDS = 8.0
 
 
 def extract_code(answer: str) -> str:
@@ -52,6 +69,7 @@ def _harness(code: str, entrypoint: str, checks: list[dict]) -> str:
         code
         + "\n\nimport json as _json\n"
         + f"_checks = _json.loads({json.dumps(json.dumps(checks))})\n"
+        + _NORM_SOURCE
         + "_results = []\n"
         + "for _c in _checks:\n"
         + "    _args = _c['input']\n"
@@ -60,17 +78,75 @@ def _harness(code: str, entrypoint: str, checks: list[dict]) -> str:
         + "        _args = [(_args[0] * _repeat)[:_repeat]] + list(_args[1:])\n"
         + "    try:\n"
         + f"        _got = {entrypoint}(*_args)\n"
-        + "        _results.append({'ok': _got == _c['expected'], 'got': repr(_got)})\n"
+        + "        _results.append({'ok': _norm(_got) == _norm(_c['expected']), 'got': repr(_got)})\n"
         + "    except Exception as _exc:\n"
         + "        _results.append({'ok': False, 'got': f'{type(_exc).__name__}: {_exc}'})\n"
         + "print('__RESULT__' + _json.dumps(_results))\n"
     )
 
 
+def _class_harness(code: str, class_name: str, checks: list[dict]) -> str:
+    """Drive a class through a sequence of calls, keeping one instance alive.
+
+    A function is judged by one return value; an object is judged by whether its
+    state survives the calls in order, which is where designs actually break.
+    """
+
+    return (
+        code
+        + "\n\nimport json as _json\n"
+        + f"_checks = _json.loads({json.dumps(json.dumps(checks))})\n"
+        + _NORM_SOURCE
+        + "_results = []\n"
+        + "for _c in _checks:\n"
+        + "    try:\n"
+        + f"        _obj = {class_name}()\n"
+        + "        _got = None\n"
+        + "        for _call in _c['calls']:\n"
+        + "            _got = getattr(_obj, _call[0])(*_call[1:])\n"
+        + "        _results.append({'ok': _norm(_got) == _norm(_c['expected']), 'got': repr(_got)})\n"
+        + "    except Exception as _exc:\n"
+        + "        _results.append({'ok': False, 'got': f'{type(_exc).__name__}: {_exc}'})\n"
+        + "print('__RESULT__' + _json.dumps(_results))\n"
+    )
+
+
+def _sql_harness(query: str, checks: list[dict]) -> str:
+    """Create the table, load the rows, run the query, compare the result set."""
+
+    return (
+        "import json as _json, sqlite3 as _sq\n"
+        + f"_query = _json.loads({json.dumps(json.dumps(query))})\n"
+        + f"_checks = _json.loads({json.dumps(json.dumps(checks))})\n"
+        + _NORM_SOURCE
+        + "_results = []\n"
+        + "for _c in _checks:\n"
+        + "    try:\n"
+        + "        _cx = _sq.connect(':memory:')\n"
+        + "        _cx.execute(_c['schema'])\n"
+        + "        _cols = ','.join('?' * len(_c['rows'][0]))\n"
+        + "        _table = _c['schema'].split()[2]\n"
+        + "        _cx.executemany(f'INSERT INTO {_table} VALUES ({_cols})', _c['rows'])\n"
+        + "        _got = [list(_r) for _r in _cx.execute(_query).fetchall()]\n"
+        + "        _results.append({'ok': _norm(_got) == _norm(_c['expected']), 'got': repr(_got)})\n"
+        + "    except Exception as _exc:\n"
+        + "        _results.append({'ok': False, 'got': f'{type(_exc).__name__}: {_exc}'})\n"
+        + "print('__RESULT__' + _json.dumps(_results))\n"
+    )
+
+
+def _build_harness(code: str, entrypoint: str, checks: list[dict]) -> str:
+    if entrypoint == "__SQL__":
+        return _sql_harness(code, checks)
+    if entrypoint.startswith("__CLASS__"):
+        return _class_harness(code, entrypoint.removeprefix("__CLASS__"), checks)
+    return _harness(code, entrypoint, checks)
+
+
 def run_checks(code: str, entrypoint: str, checks: list[dict]) -> tuple[bool, list[dict]]:
     with tempfile.TemporaryDirectory() as folder:
         script = Path(folder) / "candidate.py"
-        script.write_text(_harness(code, entrypoint, checks), encoding="utf-8")
+        script.write_text(_build_harness(code, entrypoint, checks), encoding="utf-8")
         try:
             completed = subprocess.run(
                 [sys.executable, str(script)],
@@ -129,7 +205,9 @@ def main() -> int:
         timeout=300.0,
         headers={"X-Orion-Api-Key": api_key, "Content-Type": "application/json"},
     ) as client:
-        for case in cases:
+        for position, case in enumerate(cases):
+            if position:
+                time.sleep(PAUSE_BETWEEN_CASES_SECONDS)
             answer, seconds = _ask(client, base_url, case)
             code = extract_code(answer)
             ok, results = run_checks(code, case["entrypoint"], case["checks"])
