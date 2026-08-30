@@ -33,18 +33,18 @@ services:
         value: "1536"
       - key: ORION_CLOUDFLARE_DEEP_MAX_TOKENS
         value: "3072"
-      # Groq serves the same gpt-oss weights an order of magnitude faster. The
-      # switch is ORION_MODEL_PROVIDER above; these values stay inert until then,
-      # so the Cloudflare credentials remain a working fallback.
+      # Cerebras and Groq serve the same gpt-oss weights an order of magnitude
+      # faster than Workers AI. Each keeps its own key so more than one can stay
+      # configured; the switch (and the rollback) is ORION_MODEL_PROVIDER above,
+      # with Cloudflare still credentialed underneath. The base URL and model id
+      # come from that provider's defaults, so neither is repeated here.
+      - key: ORION_CEREBRAS_API_KEY
+        sync: false
       - key: ORION_GROQ_API_KEY
         sync: false
-      - key: ORION_GROQ_QUICK_MODEL
-        value: "openai/gpt-oss-120b"
-      - key: ORION_GROQ_DEEP_MODEL
-        value: "openai/gpt-oss-120b"
-      - key: ORION_GROQ_QUICK_REASONING_EFFORT
+      - key: ORION_ENDPOINT_QUICK_REASONING_EFFORT
         value: "low"
-      - key: ORION_GROQ_DEEP_REASONING_EFFORT
+      - key: ORION_ENDPOINT_DEEP_REASONING_EFFORT
         value: "medium"
       - key: ORION_WEB_ENABLED
         value: "true"

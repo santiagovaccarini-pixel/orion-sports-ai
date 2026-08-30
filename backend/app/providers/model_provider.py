@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import AsyncIterator, Protocol
 
-from backend.app.core.config import Settings
+from backend.app.core.config import OPENAI_ENDPOINT_PROVIDERS, Settings
 from backend.app.domain.models import SelectedMode
 from backend.app.domain.schemas import ChatMessage
 from backend.app.providers.cloudflare_ai import (
@@ -13,7 +13,7 @@ from backend.app.providers.cloudflare_ai import (
     CloudAIUnavailableError,
     CloudflareAIClient,
 )
-from backend.app.providers.groq_ai import GroqAIClient
+from backend.app.providers.openai_endpoint import OpenAIEndpointClient
 from backend.app.providers.ollama import (
     ModelNotInstalledError,
     OllamaClient,
@@ -429,17 +429,25 @@ class CloudflareModelProvider(_CloudModelProvider):
         )
 
 
-class GroqModelProvider(_CloudModelProvider):
-    name = "groq"
+class OpenAIEndpointModelProvider(_CloudModelProvider):
+    """Cerebras, Groq, or any other endpoint listed in ENDPOINT_DEFAULTS.
 
-    def _create_client(self, settings: Settings) -> GroqAIClient:
-        return GroqAIClient(settings)
+    The provider name is carried from the settings rather than fixed, so the
+    status line and the error messages say which company actually answered.
+    """
+
+    def __init__(self, settings: Settings) -> None:
+        self.name = settings.model_provider
+        super().__init__(settings)
+
+    def _create_client(self, settings: Settings) -> OpenAIEndpointClient:
+        return OpenAIEndpointClient(settings)
 
     def model_for(self, mode: SelectedMode) -> str:
         return (
-            self.settings.groq_quick_model
+            self.settings.endpoint_quick_model
             if mode is SelectedMode.QUICK
-            else self.settings.groq_deep_model
+            else self.settings.endpoint_deep_model
         )
 
 
@@ -448,8 +456,8 @@ def create_model_provider(settings: Settings) -> ModelProvider:
         return OllamaModelProvider(settings)
     if settings.model_provider == "cloudflare":
         return CloudflareModelProvider(settings)
-    if settings.model_provider == "groq":
-        return GroqModelProvider(settings)
+    if settings.model_provider in OPENAI_ENDPOINT_PROVIDERS:
+        return OpenAIEndpointModelProvider(settings)
     raise ModelProviderConfigurationError(
         f"Proveedor de modelo no soportado: {settings.model_provider}."
     )

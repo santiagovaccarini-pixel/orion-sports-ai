@@ -42,9 +42,25 @@ def _read_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+# Providers reached through a plain OpenAI Chat Completions endpoint. They differ
+# only by URL, model id and key, so adding one is an entry here, not a code path.
+# Each keeps its own key variable so more than one can stay configured and the
+# switch (or the rollback) is a single change to ORION_MODEL_PROVIDER.
+ENDPOINT_DEFAULTS: dict[str, tuple[str, str, str]] = {
+    # provider: (base URL, model id, name of the variable holding the key)
+    "cerebras": ("https://api.cerebras.ai/v1", "gpt-oss-120b", "ORION_CEREBRAS_API_KEY"),
+    "groq": (
+        "https://api.groq.com/openai/v1",
+        "openai/gpt-oss-120b",
+        "ORION_GROQ_API_KEY",
+    ),
+}
+
+OPENAI_ENDPOINT_PROVIDERS = frozenset(ENDPOINT_DEFAULTS)
+
 # Providers that run the model on someone else's hardware. They share one token
 # budget; only Ollama, on the user's own machine, is sized differently.
-CLOUD_MODEL_PROVIDERS = frozenset({"cloudflare", "groq"})
+CLOUD_MODEL_PROVIDERS = OPENAI_ENDPOINT_PROVIDERS | {"cloudflare"}
 
 
 def _read_provider() -> str:
@@ -94,12 +110,14 @@ class Settings:
     cloudflare_deep_reasoning_effort: str = "medium"
     cloudflare_quick_max_tokens: int = 1536
     cloudflare_deep_max_tokens: int = 3072
-    groq_api_key: str | None = None
-    groq_base_url: str = "https://api.groq.com/openai/v1"
-    groq_quick_model: str = "openai/gpt-oss-120b"
-    groq_deep_model: str = "openai/gpt-oss-120b"
-    groq_quick_reasoning_effort: str = "low"
-    groq_deep_reasoning_effort: str = "medium"
+    # Resolved from the selected provider's defaults; every one is overridable so a
+    # new OpenAI-compatible endpoint needs no code change to try.
+    endpoint_api_key: str | None = None
+    endpoint_base_url: str = "https://api.cerebras.ai/v1"
+    endpoint_quick_model: str = "gpt-oss-120b"
+    endpoint_deep_model: str = "gpt-oss-120b"
+    endpoint_quick_reasoning_effort: str = "low"
+    endpoint_deep_reasoning_effort: str = "medium"
     quick_context: int = 4096
     deep_context: int = 8192
     quick_threads: int = 8
@@ -153,6 +171,12 @@ def get_settings() -> Settings:
     )
     local_quick_max_tokens = _read_positive_int("ORION_QUICK_MAX_TOKENS", 768)
     local_deep_max_tokens = _read_positive_int("ORION_DEEP_MAX_TOKENS", 1536)
+    # Each endpoint provider keeps its own key variable, so several can stay
+    # configured at once and switching between them is one value on the provider.
+    endpoint_base_url, endpoint_model, endpoint_key_env = ENDPOINT_DEFAULTS.get(
+        provider, ENDPOINT_DEFAULTS["cerebras"]
+    )
+    endpoint_key = os.getenv(endpoint_key_env) or None
     origins = tuple(
         item.strip()
         for item in os.getenv("ORION_CORS_ORIGINS", "").split(",")
@@ -183,17 +207,17 @@ def get_settings() -> Settings:
         ),
         cloudflare_quick_max_tokens=cloud_quick_max_tokens,
         cloudflare_deep_max_tokens=cloud_deep_max_tokens,
-        groq_api_key=os.getenv("ORION_GROQ_API_KEY") or None,
-        groq_base_url=os.getenv(
-            "ORION_GROQ_BASE_URL", "https://api.groq.com/openai/v1"
-        ).rstrip("/"),
-        groq_quick_model=os.getenv("ORION_GROQ_QUICK_MODEL", "openai/gpt-oss-120b"),
-        groq_deep_model=os.getenv("ORION_GROQ_DEEP_MODEL", "openai/gpt-oss-120b"),
-        groq_quick_reasoning_effort=_read_reasoning_effort(
-            "ORION_GROQ_QUICK_REASONING_EFFORT", "low"
+        endpoint_api_key=endpoint_key,
+        endpoint_base_url=os.getenv("ORION_ENDPOINT_BASE_URL", endpoint_base_url).rstrip(
+            "/"
         ),
-        groq_deep_reasoning_effort=_read_reasoning_effort(
-            "ORION_GROQ_DEEP_REASONING_EFFORT", "medium"
+        endpoint_quick_model=os.getenv("ORION_ENDPOINT_QUICK_MODEL", endpoint_model),
+        endpoint_deep_model=os.getenv("ORION_ENDPOINT_DEEP_MODEL", endpoint_model),
+        endpoint_quick_reasoning_effort=_read_reasoning_effort(
+            "ORION_ENDPOINT_QUICK_REASONING_EFFORT", "low"
+        ),
+        endpoint_deep_reasoning_effort=_read_reasoning_effort(
+            "ORION_ENDPOINT_DEEP_REASONING_EFFORT", "medium"
         ),
         quick_context=_read_positive_int("ORION_QUICK_CONTEXT", 4096),
         deep_context=_read_positive_int("ORION_DEEP_CONTEXT", 8192),

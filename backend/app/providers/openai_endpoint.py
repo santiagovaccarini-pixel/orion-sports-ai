@@ -1,11 +1,15 @@
-"""Groq client for Orion's reasoning models.
+"""Client for any cloud endpoint that speaks the OpenAI Chat Completions dialect.
 
-Groq serves the same gpt-oss weights Orion already runs on Cloudflare, over the
-OpenAI Chat Completions dialect, so the payload builder, the parsers and the
-retry policy are shared with every other cloud provider through
-`openai_compatible`. What is Groq-specific lives here: the endpoint, the
-credentials, the model ids, and the fact that reasoning effort travels inside the
-Chat Completions body instead of a separate Responses API.
+Cerebras, Groq and several others serve the same gpt-oss weights Orion already
+runs on Cloudflare, over the same wire format, so one client covers all of them:
+which one is in use is a base URL and a model id, not a code path. That matters
+in practice, because provider availability moves — Groq closed its paid tier to
+new accounts — and Orion should be able to follow without a rewrite.
+
+The payload builder, parsers and retry policy are shared through
+`openai_compatible`. What lives here is the part that differs from Cloudflare:
+reasoning effort travels inside the Chat Completions body rather than through a
+separate Responses API.
 
 Hidden reasoning is never surfaced or stored. Only the token count is read, from
 `usage.completion_tokens_details`.
@@ -42,14 +46,12 @@ from backend.app.providers.openai_compatible import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
-
 
 def _selected_model(settings: Settings, mode: SelectedMode) -> str:
     return (
-        settings.groq_quick_model
+        settings.endpoint_quick_model
         if mode is SelectedMode.QUICK
-        else settings.groq_deep_model
+        else settings.endpoint_deep_model
     )
 
 
@@ -77,25 +79,30 @@ def _reasoning_effort(
     if override:
         return override
     return (
-        settings.groq_quick_reasoning_effort
+        settings.endpoint_quick_reasoning_effort
         if mode is SelectedMode.QUICK
-        else settings.groq_deep_reasoning_effort
+        else settings.endpoint_deep_reasoning_effort
     )
 
 
-class GroqAIClient:
-    """Talks to Groq's OpenAI-compatible endpoint."""
+class OpenAIEndpointClient:
+    """Talks to whichever OpenAI-compatible endpoint the settings point at."""
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        if not settings.groq_api_key:
-            raise CloudAIConfigurationError("Falta ORION_GROQ_API_KEY.")
-        self.base_url = (settings.groq_base_url or DEFAULT_BASE_URL).rstrip("/")
+        if not settings.endpoint_api_key:
+            raise CloudAIConfigurationError(
+                "Falta la clave del proveedor de modelo configurado "
+                f"({settings.model_provider})."
+            )
+        self.base_url = settings.endpoint_base_url.rstrip("/")
         self.headers = {
-            "Authorization": f"Bearer {settings.groq_api_key}",
+            "Authorization": f"Bearer {settings.endpoint_api_key}",
             "Content-Type": "application/json",
         }
         self.timeout = httpx.Timeout(settings.request_timeout_seconds)
+        # Named in the errors Santiago reads, so a failure says who refused.
+        self.provider_label = settings.model_provider.capitalize()
 
     def _payload(
         self,
@@ -334,8 +341,7 @@ class GroqAIClient:
                     "No se pudo conectar con el motor cloud."
                 ) from exc
 
-    @staticmethod
-    def _raise_status_error(exc: httpx.HTTPStatusError) -> None:
+    def _raise_status_error(self, exc: httpx.HTTPStatusError) -> None:
         detail = ""
         try:
             detail = exc.response.text[:500]
@@ -344,18 +350,19 @@ class GroqAIClient:
         status_code = exc.response.status_code
         if status_code in {401, 403}:
             raise CloudAIConfigurationError(
-                "Groq rechazó la clave configurada para Orion."
+                f"{self.provider_label} rechazó la clave configurada para Orion."
             ) from exc
         if status_code == 429:
-            # On Groq's free plan this fires on almost every Orion query, because a
-            # single review turn is larger than the free per-minute allowance.
+            # On the free plans of these providers this fires on almost every Orion
+            # query: a single review turn is larger than their per-minute allowance.
             raise CloudAIUnavailableError(
-                "Groq frenó la consulta por límite de uso. Si la cuenta sigue en el "
-                "plan gratuito, ese límite es más chico que una consulta de Orion."
+                f"{self.provider_label} frenó la consulta por límite de uso. Si la "
+                "cuenta sigue en el plan gratuito, ese límite es más chico que una "
+                "consulta de Orion."
             ) from exc
         if status_code == 404:
             raise CloudAIConfigurationError(
-                "Groq no reconoce el modelo configurado para Orion."
+                f"{self.provider_label} no reconoce el modelo configurado para Orion."
             ) from exc
         raise CloudAIUnavailableError(
             f"El motor cloud respondió con error {status_code}. {detail}".strip()

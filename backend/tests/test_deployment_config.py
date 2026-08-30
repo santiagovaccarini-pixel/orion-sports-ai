@@ -21,6 +21,7 @@ class DeploymentConfigTests(unittest.TestCase):
         for secret in (
             "ORION_CLOUDFLARE_ACCOUNT_ID",
             "ORION_CLOUDFLARE_API_TOKEN",
+            "ORION_CEREBRAS_API_KEY",
             "ORION_GROQ_API_KEY",
             "ORION_API_KEY",
             "ORION_TAVILY_API_KEY",
@@ -28,8 +29,8 @@ class DeploymentConfigTests(unittest.TestCase):
             marker = f"- key: {secret}\n        sync: false"
             self.assertIn(marker, content)
 
-    def test_groq_is_configured_but_not_yet_the_active_provider(self) -> None:
-        """The Groq settings ship ahead of the switch on purpose.
+    def test_faster_endpoints_are_configured_but_not_yet_the_active_provider(self) -> None:
+        """The faster endpoints ship ahead of the switch on purpose.
 
         Deploying the credentials separately from the cutover means the provider
         can be flipped (and flipped back) by editing one value, with Cloudflare
@@ -37,9 +38,12 @@ class DeploymentConfigTests(unittest.TestCase):
         """
 
         content = RENDER_YAML.read_text(encoding="utf-8")
-        self.assertIn('- key: ORION_GROQ_QUICK_MODEL\n        value: "openai/gpt-oss-120b"', content)
-        self.assertIn('- key: ORION_GROQ_DEEP_MODEL\n        value: "openai/gpt-oss-120b"', content)
         self.assertIn("- key: ORION_MODEL_PROVIDER\n        value: cloudflare", content)
+        self.assertIn('- key: ORION_ENDPOINT_QUICK_REASONING_EFFORT\n        value: "low"', content)
+        # The endpoint URL and model id come from the provider's own defaults;
+        # pinning them here would mean editing two places to change one thing.
+        self.assertNotIn("ORION_ENDPOINT_BASE_URL", content)
+        self.assertNotIn("ORION_ENDPOINT_QUICK_MODEL", content)
 
     def test_cloud_prototype_uses_stronger_120b_brain_for_controlled_benchmark(self) -> None:
         content = RENDER_YAML.read_text(encoding="utf-8")

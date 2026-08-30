@@ -10,13 +10,13 @@ import httpx
 from backend.app.core.config import Settings
 from backend.app.domain.models import SelectedMode
 from backend.app.domain.schemas import ChatMessage
-from backend.app.providers.groq_ai import (
-    GroqAIClient,
+from backend.app.providers.openai_endpoint import (
+    OpenAIEndpointClient,
     _reasoning_effort,
     _selected_model,
 )
 from backend.app.providers.model_provider import (
-    GroqModelProvider,
+    OpenAIEndpointModelProvider,
     ModelProviderConfigurationError,
     ModelProviderUnavailableError,
     create_model_provider,
@@ -31,8 +31,8 @@ from backend.app.providers.openai_compatible import (
 
 def _settings(**overrides: object) -> Settings:
     base: dict[str, object] = {
-        "model_provider": "groq",
-        "groq_api_key": "clave-de-prueba",
+        "model_provider": "cerebras",
+        "endpoint_api_key": "clave-de-prueba",
         "quick_max_tokens": 1536,
         "deep_max_tokens": 3072,
     }
@@ -52,7 +52,7 @@ def _completion_json(content: str, *, reasoning_tokens: int | None = None) -> di
     }
 
 
-def _run_with_transport(client: GroqAIClient, handler, coroutine_factory):
+def _run_with_transport(client: OpenAIEndpointClient, handler, coroutine_factory):
     transport = httpx.MockTransport(handler)
     real_async_client = httpx.AsyncClient
 
@@ -60,22 +60,22 @@ def _run_with_transport(client: GroqAIClient, handler, coroutine_factory):
         return real_async_client(transport=transport, timeout=kwargs.get("timeout"))
 
     with patch(
-        "backend.app.providers.groq_ai.httpx.AsyncClient", side_effect=client_factory
+        "backend.app.providers.openai_endpoint.httpx.AsyncClient", side_effect=client_factory
     ):
         return asyncio.run(coroutine_factory())
 
 
-class GroqClientTests(unittest.TestCase):
+class EndpointClientTests(unittest.TestCase):
     def test_client_requires_an_api_key(self) -> None:
         with self.assertRaises(CloudAIConfigurationError):
-            GroqAIClient(Settings(model_provider="groq"))
+            OpenAIEndpointClient(Settings(model_provider="cerebras"))
 
     def test_models_and_effort_are_selected_by_mode(self) -> None:
         settings = _settings(
-            groq_quick_model="modelo-rapido",
-            groq_deep_model="modelo-profundo",
-            groq_quick_reasoning_effort="low",
-            groq_deep_reasoning_effort="high",
+            endpoint_quick_model="modelo-rapido",
+            endpoint_deep_model="modelo-profundo",
+            endpoint_quick_reasoning_effort="low",
+            endpoint_deep_reasoning_effort="high",
         )
         self.assertEqual(_selected_model(settings, SelectedMode.QUICK), "modelo-rapido")
         self.assertEqual(_selected_model(settings, SelectedMode.DEEP), "modelo-profundo")
@@ -98,7 +98,7 @@ class GroqClientTests(unittest.TestCase):
                 200, request=request, json=_completion_json('{"objective":"ok"}')
             )
 
-        client = GroqAIClient(_settings(groq_quick_model="openai/gpt-oss-120b"))
+        client = OpenAIEndpointClient(_settings(endpoint_quick_model="openai/gpt-oss-120b"))
         result = _run_with_transport(
             client,
             handler,
@@ -111,7 +111,7 @@ class GroqClientTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(captured_path, "/openai/v1/chat/completions")
+        self.assertEqual(captured_path, "/v1/chat/completions")
         self.assertEqual(captured_payload["model"], "openai/gpt-oss-120b")
         # Groq takes the reasoning knob inline; Cloudflare needs a separate API for it.
         self.assertEqual(captured_payload["reasoning_effort"], "low")
@@ -126,7 +126,7 @@ class GroqClientTests(unittest.TestCase):
             payload["choices"][0]["message"]["reasoning"] = "borrador interno"
             return httpx.Response(200, request=request, json=payload)
 
-        client = GroqAIClient(_settings())
+        client = OpenAIEndpointClient(_settings())
         result = _run_with_transport(
             client,
             handler,
@@ -162,7 +162,7 @@ class GroqClientTests(unittest.TestCase):
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, request=request, content=body.encode("utf-8"))
 
-        client = GroqAIClient(_settings())
+        client = OpenAIEndpointClient(_settings())
 
         async def collect() -> list:
             return [
@@ -189,7 +189,7 @@ class GroqClientTests(unittest.TestCase):
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(429, request=request, text="rate_limit_exceeded")
 
-        client = GroqAIClient(_settings())
+        client = OpenAIEndpointClient(_settings())
         with self.assertRaises(CloudAIUnavailableError) as caught:
             _run_with_transport(
                 client,
@@ -206,7 +206,7 @@ class GroqClientTests(unittest.TestCase):
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(401, request=request, text="invalid api key")
 
-        client = GroqAIClient(_settings())
+        client = OpenAIEndpointClient(_settings())
         with self.assertRaises(CloudAIConfigurationError):
             _run_with_transport(
                 client,
@@ -219,7 +219,7 @@ class GroqClientTests(unittest.TestCase):
             )
 
 
-class GroqParsingTests(unittest.TestCase):
+class EndpointParsingTests(unittest.TestCase):
     def test_reasoning_tokens_are_read_from_the_nested_usage_details(self) -> None:
         self.assertEqual(
             _completion_reasoning_tokens(
@@ -236,7 +236,7 @@ class GroqParsingTests(unittest.TestCase):
         self.assertEqual(_delta_content({"choices": []}), "")
 
 
-class GroqTokenBudgetTests(unittest.TestCase):
+class EndpointTokenBudgetTests(unittest.TestCase):
     """Groq must inherit the cloud budget, not Ollama's much smaller local one."""
 
     def test_groq_gets_the_cloud_token_budget(self) -> None:
@@ -245,17 +245,18 @@ class GroqTokenBudgetTests(unittest.TestCase):
 
         previous = {
             key: os.environ.get(key)
-            for key in ("ORION_MODEL_PROVIDER", "ORION_GROQ_API_KEY")
+            for key in ("ORION_MODEL_PROVIDER", "ORION_CEREBRAS_API_KEY")
         }
-        os.environ["ORION_MODEL_PROVIDER"] = "groq"
-        os.environ["ORION_GROQ_API_KEY"] = "clave-de-prueba"
+        os.environ["ORION_MODEL_PROVIDER"] = "cerebras"
+        os.environ["ORION_CEREBRAS_API_KEY"] = "clave-de-prueba"
         get_settings.cache_clear()
         try:
             settings = get_settings()
-            self.assertEqual(settings.model_provider, "groq")
+            self.assertEqual(settings.model_provider, "cerebras")
             self.assertEqual(settings.quick_max_tokens, settings.cloudflare_quick_max_tokens)
             self.assertEqual(settings.deep_max_tokens, settings.cloudflare_deep_max_tokens)
-            self.assertEqual(settings.groq_quick_model, "openai/gpt-oss-120b")
+            self.assertEqual(settings.endpoint_quick_model, "gpt-oss-120b")
+            self.assertEqual(settings.endpoint_base_url, "https://api.cerebras.ai/v1")
         finally:
             for key, value in previous.items():
                 if value is None:
@@ -274,7 +275,7 @@ class GroqTokenBudgetTests(unittest.TestCase):
         try:
             with self.assertRaises(RuntimeError) as caught:
                 get_settings()
-            self.assertIn("groq", str(caught.exception))
+            self.assertIn("cerebras", str(caught.exception))
         finally:
             if previous is None:
                 os.environ.pop("ORION_MODEL_PROVIDER", None)
@@ -283,20 +284,24 @@ class GroqTokenBudgetTests(unittest.TestCase):
             get_settings.cache_clear()
 
 
-class GroqProviderWiringTests(unittest.TestCase):
-    def test_the_factory_builds_the_groq_provider(self) -> None:
-        provider = create_model_provider(_settings())
-        self.assertIsInstance(provider, GroqModelProvider)
-        self.assertEqual(provider.name, "groq")
-        self.assertFalse(provider.uses_local_resources)
+class EndpointProviderWiringTests(unittest.TestCase):
+    def test_the_factory_builds_the_endpoint_provider_named_for_the_company(self) -> None:
+        for name in ("cerebras", "groq"):
+            with self.subTest(provider=name):
+                provider = create_model_provider(_settings(model_provider=name))
+                self.assertIsInstance(provider, OpenAIEndpointModelProvider)
+                # The name travels into the status line and into every error, so a
+                # failure says which company actually refused.
+                self.assertEqual(provider.name, name)
+                self.assertFalse(provider.uses_local_resources)
 
     def test_a_missing_key_surfaces_as_configuration_not_as_a_crash(self) -> None:
         with self.assertRaises(ModelProviderConfigurationError):
-            create_model_provider(Settings(model_provider="groq"))
+            create_model_provider(Settings(model_provider="cerebras"))
 
-    def test_status_reports_the_configured_groq_models(self) -> None:
+    def test_status_reports_the_configured_models(self) -> None:
         provider = create_model_provider(
-            _settings(groq_quick_model="rapido", groq_deep_model="profundo")
+            _settings(endpoint_quick_model="rapido", endpoint_deep_model="profundo")
         )
         status = asyncio.run(provider.status())
         self.assertTrue(status.online)
@@ -314,7 +319,7 @@ class GroqProviderWiringTests(unittest.TestCase):
             return real_async_client(transport=transport, timeout=kwargs.get("timeout"))
 
         with patch(
-            "backend.app.providers.groq_ai.httpx.AsyncClient", side_effect=client_factory
+            "backend.app.providers.openai_endpoint.httpx.AsyncClient", side_effect=client_factory
         ):
             with self.assertRaises(ModelProviderUnavailableError):
                 asyncio.run(
