@@ -257,5 +257,106 @@
       "valor instantáneo de velocidad",
       "zona de velocidad"
     ]
+  },
+  {
+    "id": "domain_08_mcgill_test",
+    "category": "sports_science",
+    "mode": "quick",
+    "sport": "football",
+    "prompt": "¿Qué se evalúa en un Test de McGill?",
+    "ground_truth": "Cuánto tiempo puede sostener un atleta las posiciones de prono, lumbar, lado izquierdo y lado derecho antes de caer al suelo. Referencia: Santiago Vaccarini, 30-08-2026.",
+    "note": "Es resistencia del core medida en tiempo, no fuerza máxima ni movilidad.",
+    "required_any": [
+      [
+        "resistencia",
+        "tiempo",
+        "aguanta",
+        "sostiene",
+        "mantiene la posición",
+        "mantener la posición"
+      ],
+      [
+        "prono",
+        "plancha frontal",
+        "puente frontal"
+      ],
+      [
+        "lateral",
+        "lado izquierdo",
+        "lado derecho",
+        "puente lateral"
+      ],
+      [
+        "lumbar",
+        "extensor",
+        "extensión de tronco",
+        "extension de tronco",
+        "Biering-Sorensen",
+        "Sorensen"
+      ]
+    ],
+    "forbidden": [
+      "fuerza máxima",
+      "una repetición máxima",
+      "consumo de oxígeno",
+      "salto vertical"
+    ]
+  },
+  {
+    "id": "domain_09_plantar_fascia",
+    "category": "anatomy",
+    "mode": "quick",
+    "sport": "football",
+    "prompt": "¿Dónde se ubica la fascia plantar en el cuerpo?",
+    "ground_truth": "En la planta del pie. Referencia: Santiago Vaccarini, 30-08-2026.",
+    "required_any": [
+      [
+        "planta del pie",
+        "plantar del pie",
+        "suela del pie"
+      ]
+    ],
+    "forbidden": [
+      "en la pantorrilla",
+      "en el muslo",
+      "en la espalda",
+      "en la palma de la mano"
+    ]
+  },
+  {
+    "id": "domain_10_meters_vs_count_direct",
+    "category": "sports_science",
+    "mode": "deep",
+    "sport": "football",
+    "prompt": "¿Cuál es la diferencia entre metros recorridos en aceleraciones y número de aceleraciones?",
+    "ground_truth": "Cuántos metros se hacen dentro del umbral definido de la variable, y cuántas veces se entra a ese umbral. Referencia: Santiago Vaccarini, 30-08-2026.",
+    "note": "La misma distinción que domain_07, preguntada sin ambigüedad. Si esta sale bien y aquella mal, el problema es leer la notación de la banda, no entender el concepto.",
+    "required_any": [
+      [
+        "metros",
+        "distancia"
+      ],
+      [
+        "cuántas veces",
+        "cuantas veces",
+        "número de",
+        "numero de",
+        "conteo",
+        "cantidad de",
+        "eventos",
+        "repeticiones"
+      ],
+      [
+        "umbral",
+        "banda",
+        "zona",
+        "rango"
+      ]
+    ],
+    "forbidden": [
+      "son la misma variable",
+      "miden exactamente lo mismo",
+      "no hay diferencia"
+    ]
   }
 ]
