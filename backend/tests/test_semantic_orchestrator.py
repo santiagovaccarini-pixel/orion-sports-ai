@@ -8,6 +8,7 @@ from backend.app.domain.schemas import MAX_MESSAGE_CHARACTERS, ChatMessage, Spor
 from backend.app.providers.model_provider import ModelResult
 from backend.app.services.knowledge_base import KnowledgeDocument
 from backend.app.services.semantic_orchestrator import (
+    build_contract,
     CrossCheckedClaim,
     _cross_checked_claims,
     cross_check_context,
@@ -1172,6 +1173,72 @@ class CrossCheckTests(unittest.TestCase):
             reason="ok",
         )
         self.assertEqual(cross_check_context(review), "")
+
+
+class UnsatisfiedReviewTests(unittest.TestCase):
+    """Running out of review rounds is not the same as having no evidence.
+
+    Live testing found the same question answered in full on one run and refused
+    on the next. The difference was only whether the reviewer happened to declare
+    itself satisfied: if it did not, every leftover gap was promoted to the bucket
+    that tells the final stage to state nothing as confirmed — even when the
+    reviewer had accepted sources that answered the question.
+    """
+
+    def _review(self, *, sufficient: bool, accepted: tuple[str, ...]) -> EvidenceReview:
+        return EvidenceReview(
+            sufficient=sufficient,
+            relevant_source_ids=accepted,
+            discarded_source_ids=(),
+            missing_information=("Años exactos de cada etapa",),
+            follow_up_web_query=None,
+            needs_clarification=False,
+            clarifying_question=None,
+            resolved_scope=None,
+            reason="ok",
+        )
+
+    def _plan(self) -> SemanticPlan:
+        return conservative_fallback_plan(
+            [ChatMessage(role="user", content="Pregunta")],
+            web_available=True,
+            documents=[],
+        )
+
+    def test_accepted_sources_make_a_leftover_gap_refine_not_block(self) -> None:
+        contract = build_contract(
+            self._plan(), self._review(sufficient=False, accepted=("W1", "W2"))
+        )
+        self.assertIn("Años exactos de cada etapa", contract.missing_for_precision)
+        self.assertNotIn("Años exactos de cada etapa", contract.missing_for_core)
+
+    def test_without_a_single_accepted_source_the_gap_still_blocks(self) -> None:
+        contract = build_contract(
+            self._plan(), self._review(sufficient=False, accepted=())
+        )
+        self.assertIn("Años exactos de cada etapa", contract.missing_for_core)
+
+    def test_the_two_buckets_reach_the_answer_as_opposite_instructions(self) -> None:
+        """The reason the misfiling mattered: they are contradictory orders."""
+
+        plan = self._plan()
+        answering = format_reasoning_context(
+            plan,
+            self._review(sufficient=False, accepted=("W1",)),
+            (),
+            (),
+            original_user_request="Pregunta",
+        )
+        refusing = format_reasoning_context(
+            plan,
+            self._review(sufficient=False, accepted=()),
+            (),
+            (),
+            original_user_request="Pregunta",
+        )
+        self.assertIn("sin bloquear la respuesta", answering)
+        self.assertNotIn("LIMITACIÓN NUCLEAR", answering)
+        self.assertIn("LIMITACIÓN NUCLEAR", refusing)
 
 
 if __name__ == "__main__":

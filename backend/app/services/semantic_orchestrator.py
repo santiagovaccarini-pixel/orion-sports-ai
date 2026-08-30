@@ -224,13 +224,29 @@ def build_contract(plan: SemanticPlan, review: EvidenceReview) -> SemanticContra
     if review.corrected_resolved_request:
         resolved_request = review.corrected_resolved_request
     missing_for_core = plan.missing_for_core
+    missing_for_precision = plan.missing_for_precision
     if review.audited and not review.sufficient:
         extra = tuple(
             item
             for item in review.missing_information
-            if item not in missing_for_core
+            if item not in missing_for_core and item not in missing_for_precision
         )
-        missing_for_core = (*missing_for_core, *extra)
+        if review.relevant_source_ids:
+            # The review loop ending unsatisfied is not the same as having nothing.
+            # These two buckets give the final stage opposite orders — core gaps say
+            # "do not state anything as confirmed", precision gaps say "answer with
+            # what you have and name what is missing" — and every leftover gap used
+            # to land in the blocking one. That is why the same question answered in
+            # full on one run and was refused on the next: whether the reviewer
+            # happened to declare itself satisfied decided whether Orion would speak
+            # at all, even with sources it had already accepted.
+            #
+            # Sources accepted means an answer is possible. What is still missing
+            # refines it. Deciding this by counting accepted sources keeps it out of
+            # the model's mood.
+            missing_for_precision = (*missing_for_precision, *extra)
+        else:
+            missing_for_core = (*missing_for_core, *extra)
     return SemanticContract(
         resolved_request=resolved_request,
         objective=plan.objective,
@@ -238,7 +254,7 @@ def build_contract(plan: SemanticPlan, review: EvidenceReview) -> SemanticContra
         constraints=plan.constraints,
         ambiguities=plan.ambiguities,
         missing_for_core=missing_for_core,
-        missing_for_precision=plan.missing_for_precision,
+        missing_for_precision=missing_for_precision,
         evidence_policy=plan.evidence_policy,
         resolved_scope=review.resolved_scope,
         corrected=corrected,
