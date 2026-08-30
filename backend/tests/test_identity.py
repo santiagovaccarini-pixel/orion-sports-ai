@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import unittest
 from datetime import date
+from typing import get_args
 
+from backend.app.core.config import CLOUD_MODEL_PROVIDERS, Settings
 from backend.app.core.identity import (
     ORION_CREATOR_NAME,
+    _engine_for_provider,
     creator_age,
     creator_context,
     current_engine_fact,
     direct_creator_answer,
     institutional_identity_brief,
 )
+from backend.app.domain.schemas import StatusResponse
 
 
 class OrionIdentityTests(unittest.TestCase):
@@ -76,6 +80,60 @@ class OrionIdentityTests(unittest.TestCase):
         self.assertIn("No es GPT-4", fact)
         self.assertIn(fact, creator_context())
         self.assertIn(fact, institutional_identity_brief())
+
+    def test_engine_fact_names_the_company_actually_serving_the_model(self) -> None:
+        """The same weights come from several companies, so the host must follow config.
+
+        Caught by running Orion on Cerebras: the fact was reading Cloudflare's
+        settings unconditionally, so Orion would have stated a false thing about
+        itself — the exact self-identity failure this fact exists to prevent.
+        """
+
+        cases = (
+            (
+                Settings(model_provider="cerebras", endpoint_quick_model="gpt-oss-120b"),
+                "Cerebras",
+                "gpt-oss-120b",
+            ),
+            (
+                Settings(
+                    model_provider="groq", endpoint_quick_model="openai/gpt-oss-120b"
+                ),
+                "Groq",
+                "openai/gpt-oss-120b",
+            ),
+            (
+                Settings(model_provider="ollama", quick_model="qwen3:4b-instruct"),
+                "Ollama en esta computadora",
+                "qwen3:4b-instruct",
+            ),
+            (
+                Settings(model_provider="cloudflare"),
+                "Cloudflare Workers AI",
+                "@cf/openai/gpt-oss-120b",
+            ),
+        )
+        for settings, expected_host, expected_model in cases:
+            with self.subTest(provider=settings.model_provider):
+                quick, _deep, host = _engine_for_provider(settings)
+                self.assertEqual(host, expected_host)
+                self.assertEqual(quick, expected_model)
+                # No provider may leak another provider's name into the fact.
+                for other in ("Cerebras", "Groq", "Cloudflare", "Ollama"):
+                    if other not in expected_host:
+                        self.assertNotIn(other, host)
+
+
+class StatusSchemaTests(unittest.TestCase):
+    def test_every_configurable_provider_is_accepted_by_the_status_route(self) -> None:
+        """A provider missing from the schema breaks the whole status route.
+
+        Caught live: selecting Cerebras made /status return a 500, because the
+        response model still only allowed the two original providers.
+        """
+
+        declared = get_args(StatusResponse.model_fields["model_provider"].annotation)
+        self.assertEqual(set(declared), CLOUD_MODEL_PROVIDERS | {"ollama"})
 
 
 if __name__ == "__main__":

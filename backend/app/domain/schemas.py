@@ -114,7 +114,9 @@ class MemoryEntryResponse(BaseModel):
 class StatusResponse(BaseModel):
     service: Literal["online"] = "online"
     version: str
-    model_provider: Literal["ollama", "cloudflare"] = "ollama"
+    # Kept in step with config.MODEL_PROVIDERS by a test; a provider missing
+    # here makes the whole status route fail validation, not just this field.
+    model_provider: Literal["ollama", "cloudflare", "cerebras", "groq"] = "ollama"
     model_provider_online: bool = False
     ollama_online: bool
     installed_models: list[str]

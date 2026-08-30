@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from datetime import date
 
-from backend.app.core.config import get_settings
+from backend.app.core.config import (
+    OPENAI_ENDPOINT_PROVIDERS,
+    Settings,
+    get_settings,
+)
 
 
 ORION_CREATOR_NAME = "Santiago Vaccarini"
@@ -79,18 +83,40 @@ def current_engine_fact() -> str:
     """
 
     settings = get_settings()
-    quick = settings.cloudflare_quick_model
-    deep = settings.cloudflare_deep_model
+    quick, deep, host = _engine_for_provider(settings)
     if quick == deep:
         models = f"el modelo {quick}"
     else:
         models = f"los modelos {quick} (modo rápido) y {deep} (modo profundo)"
     return (
         f"HECHO SOBRE VOS MISMO: el motor de lenguaje que estás usando ahora mismo "
-        f"para generar esta respuesta es {models}, servido a través de Cloudflare "
-        "Workers AI. No es GPT-4 ni ningún otro modelo: si te preguntan qué modelo o "
+        f"para generar esta respuesta es {models}, servido a través de {host}. "
+        "No es GPT-4 ni ningún otro modelo: si te preguntan qué modelo o "
         "motor te hace funcionar, respondé con este dato exacto en vez de adivinar "
         "a partir de lo que creas recordar sobre vos mismo."
+    )
+
+
+def _engine_for_provider(settings: Settings) -> tuple[str, str, str]:
+    """The models and the company actually serving them, for the selected provider.
+
+    The same weights are available from several companies, so naming the host has
+    to follow the configuration. Reading it off one provider's settings would make
+    Orion state a false fact about itself the moment the provider changes.
+    """
+
+    if settings.model_provider == "ollama":
+        return settings.quick_model, settings.deep_model, "Ollama en esta computadora"
+    if settings.model_provider in OPENAI_ENDPOINT_PROVIDERS:
+        return (
+            settings.endpoint_quick_model,
+            settings.endpoint_deep_model,
+            settings.model_provider.capitalize(),
+        )
+    return (
+        settings.cloudflare_quick_model,
+        settings.cloudflare_deep_model,
+        "Cloudflare Workers AI",
     )
 
 
