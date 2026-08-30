@@ -139,3 +139,24 @@ test("wraps response content and table cells inside the message width", async ()
   assert.match(css, /\.message-content,[\s\S]*overflow-wrap:\s*anywhere/);
   assert.match(css, /\.markdown-content th,[\s\S]*white-space:\s*normal/);
 });
+
+test("an attached document can actually be withdrawn from Orion", async () => {
+  // Reported as "there is no cross above the uploaded files". The control was
+  // there, drawn as grey text on a grey chip, and it only cleared the composer:
+  // the document stayed in the knowledge base and fed every later answer.
+  const component = await readFile(new URL("app/components/orion-console.tsx", root), "utf8");
+  assert.match(component, /deleteKnowledgeDocument/);
+  assert.match(component, /removeAttachment/);
+  assert.match(component, /Quitar el documento de Orion/);
+
+  const api = await readFile(new URL("app/lib/orion-api.ts", root), "utf8");
+  assert.ok(api.includes("knowledge/documents/${encodeURIComponent(documentId)}"));
+
+  const proxy = await readFile(new URL("app/api/orion/[...path]/route.ts", root), "utf8");
+  assert.match(proxy, /knowledge.{1,3}documents/);
+
+  const css = await readFile(new URL("app/globals.css", root), "utf8");
+  // Reads as a button, not as grey text on a grey chip.
+  assert.match(css, /\.knowledge-remove\s*\{[^}]*border:\s*1px solid/s);
+  assert.match(css, /\.knowledge-remove\s*\{[^}]*background:\s*#fff/s);
+});

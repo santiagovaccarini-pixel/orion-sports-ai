@@ -806,23 +806,33 @@ button {
   white-space: nowrap;
 }
 
+/* The × has to read as a button at a glance: Santiago reported there was no way
+   to remove an attached file when the control was already there, drawn as grey
+   text on a grey chip. It now carries its own surface and a border. */
 .knowledge-remove {
   display: grid;
-  width: 1.2rem;
-  height: 1.2rem;
+  width: 1.35rem;
+  height: 1.35rem;
   flex: 0 0 auto;
   place-items: center;
-  border: 0;
+  border: 1px solid #c9cbc1;
   border-radius: 50%;
-  background: transparent;
-  color: #777970;
-  font-size: 1rem;
+  background: #fff;
+  color: #4a4d44;
+  font-size: 0.95rem;
   line-height: 1;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
-.knowledge-remove:hover {
-  background: #e4e6dc;
-  color: var(--ink);
+.knowledge-remove:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.knowledge-remove:hover:not(:disabled) {
+  border-color: #b4553f;
+  background: #b4553f;
+  color: #fff;
 }
 
 .message-attachment {

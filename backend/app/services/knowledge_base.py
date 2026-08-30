@@ -105,6 +105,26 @@ class KnowledgeBase:
             )
         return document
 
+    def delete_document(self, document_id: str) -> bool:
+        """Remove a document for good. Returns False when it was already gone.
+
+        Until this existed, the × on an attachment only cleared the chip in the
+        composer: the document stayed in the knowledge base and kept feeding every
+        later answer. Someone who thought they had withdrawn a file had not.
+        """
+
+        with self._lock:
+            documents = self._read_documents()
+            remaining = [item for item in documents if item.id != document_id]
+            if len(remaining) == len(documents):
+                return False
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text(
+                json.dumps([asdict(item) for item in remaining], ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        return True
+
     def search(self, query: str, *, limit: int = 12) -> list[KnowledgeChunk]:
         query_terms = _terms(query)
         if not query_terms:

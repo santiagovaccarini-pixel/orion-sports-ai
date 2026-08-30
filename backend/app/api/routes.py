@@ -674,6 +674,36 @@ async def add_knowledge_document(
     )
 
 
+@router.delete(
+    "/knowledge/documents/{document_id}",
+    dependencies=[Depends(require_api_key)],
+)
+async def delete_knowledge_document(document_id: str) -> dict[str, str]:
+    """Withdraw a document from everything Orion will answer with.
+
+    Before this existed the × on an attachment only cleared the chip in the
+    composer. The document stayed in the knowledge base and kept feeding every
+    later answer, so someone who believed they had withdrawn a file had not —
+    and the quota error already told them to "borrá alguno" with no way to.
+    """
+
+    try:
+        deleted = await asyncio.to_thread(
+            _knowledge_base().delete_document, document_id
+        )
+    except DatabaseUnavailableError as exc:
+        raise _memory_unavailable(exc) from exc
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "knowledge_document_not_found",
+                "message": "Ese documento ya no está guardado.",
+            },
+        )
+    return {"status": "deleted", "id": document_id}
+
+
 def _memory_store() -> MemoryRepository:
     settings = get_settings()
     return create_memory_repository(

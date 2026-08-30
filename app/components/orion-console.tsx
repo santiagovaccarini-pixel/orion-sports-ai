@@ -12,6 +12,7 @@ import ReactMarkdown from "react-markdown";
 import { OrionMark } from "./orion-mark";
 import remarkGfm from "remark-gfm";
 import {
+  deleteKnowledgeDocument,
   ChatMessage,
   OrionChart,
   MemoryEntry,
@@ -203,7 +204,10 @@ export function OrionConsole() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [knowledgeMessage, setKnowledgeMessage] = useState<string | null>(null);
-  const [knowledgeFile, setKnowledgeFile] = useState<string | null>(null);
+  const [attachment, setAttachment] = useState<{ id: string; name: string } | null>(
+    null,
+  );
+  const [attachmentBusy, setAttachmentBusy] = useState(false);
   const [memoryEntries, setMemoryEntries] = useState<MemoryEntry[]>([]);
   const [memoryDraft, setMemoryDraft] = useState("");
   const [memoryBusy, setMemoryBusy] = useState(false);
@@ -523,16 +527,33 @@ export function OrionConsole() {
     container?.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
   };
 
-  const removeKnowledgeFile = () => {
+  // La × borraba solo el chip del compositor: el documento seguía guardado y
+  // alimentando cada respuesta posterior. Ahora lo retira de verdad, que es lo
+  // que la cruz siempre pareció prometer.
+  const removeAttachment = async () => {
+    if (!attachment || attachmentBusy) return;
     const container = messagesRef.current;
     const scrollTop = container?.scrollTop ?? 0;
-    setKnowledgeFile(null);
-    requestAnimationFrame(() => {
-      if (container) {
-        container.scrollTop = scrollTop;
-        previousScrollTopRef.current = scrollTop;
-      }
-    });
+    setAttachmentBusy(true);
+    setKnowledgeMessage(null);
+    try {
+      await deleteKnowledgeDocument(attachment.id);
+      setAttachment(null);
+    } catch (caught) {
+      setKnowledgeMessage(
+        caught instanceof Error
+          ? caught.message
+          : "No se pudo quitar el documento.",
+      );
+    } finally {
+      setAttachmentBusy(false);
+      requestAnimationFrame(() => {
+        if (container) {
+          container.scrollTop = scrollTop;
+          previousScrollTopRef.current = scrollTop;
+        }
+      });
+    }
   };
 
   const selectSport = (nextSport: Sport) => {
@@ -549,7 +570,7 @@ export function OrionConsole() {
     setKnowledgeMessage("Importando documento…");
     try {
       const document = await uploadKnowledgeDocument(file);
-      setKnowledgeFile(document.name);
+      setAttachment({ id: document.id, name: document.name });
       setKnowledgeMessage(null);
     } catch (caught) {
       setKnowledgeMessage(
@@ -600,14 +621,14 @@ export function OrionConsole() {
       id: makeId("user"),
       role: "user",
       content: clean,
-      attachmentName: knowledgeFile ?? undefined,
+      attachmentName: attachment?.name,
     };
     const nextMessages = [...messages, nextUiMessage];
     shouldFollowRef.current = true;
     setShowScrollToLatest(false);
     setMessages(nextMessages);
     setDraft("");
-    setKnowledgeFile(null);
+    setAttachment(null);
 
     await runRequest(
       nextMessages
@@ -925,18 +946,21 @@ export function OrionConsole() {
             {error ? <div className="error-banner" role="alert">{error}</div> : null}
 
             <form className="composer" onSubmit={handleSubmit}>
-              {knowledgeFile ? (
+              {attachment ? (
                 <div className="knowledge-attachment">
                   <span className="knowledge-file-icon" aria-hidden="true">▤</span>
-                  <span className="knowledge-file-name" title={knowledgeFile}>{knowledgeFile}</span>
+                  <span className="knowledge-file-name" title={attachment.name}>
+                    {attachment.name}
+                  </span>
                   <button
                     type="button"
                     className="knowledge-remove"
-                    aria-label={`Quitar ${knowledgeFile}`}
-                    title="Quitar documento"
-                    onClick={removeKnowledgeFile}
+                    aria-label={`Quitar ${attachment.name} de Orion`}
+                    title="Quitar el documento de Orion"
+                    onClick={removeAttachment}
+                    disabled={attachmentBusy}
                   >
-                    ×
+                    {attachmentBusy ? "…" : "×"}
                   </button>
                 </div>
               ) : null}

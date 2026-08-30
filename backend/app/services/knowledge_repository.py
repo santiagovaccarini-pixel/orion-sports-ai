@@ -68,6 +68,23 @@ class PostgresKnowledgeBase(KnowledgeBase):
         except errors.Error as exc:
             raise DatabaseUnavailableError(str(exc)) from exc
 
+    def delete_document(self, document_id: str) -> bool:
+        try:
+            with self._pool().connection() as conn:
+                with conn.cursor() as cur:
+                    # Scoped by owner: a document id is never enough on its own to
+                    # delete, so the row stays isolated once Orion has more than
+                    # one owner.
+                    cur.execute(
+                        "DELETE FROM knowledge_documents WHERE id = %s AND owner_id = %s",
+                        (document_id, self._owner_id),
+                    )
+                    deleted = cur.rowcount > 0
+                conn.commit()
+            return deleted
+        except errors.Error as exc:
+            raise DatabaseUnavailableError(str(exc)) from exc
+
     def _read_documents(self) -> list[KnowledgeDocument]:
         return self.list_documents()
 

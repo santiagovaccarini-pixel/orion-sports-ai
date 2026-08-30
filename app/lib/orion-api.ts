@@ -368,6 +368,14 @@ export async function uploadKnowledgeDocument(file: File): Promise<KnowledgeDocu
   return parseResponse<KnowledgeDocument>(response);
 }
 
+export async function deleteKnowledgeDocument(documentId: string): Promise<void> {
+  const response = await fetch(
+    `${API_BASE}/knowledge/documents/${encodeURIComponent(documentId)}`,
+    { method: "DELETE", headers: API_HEADERS },
+  );
+  await parseResponse<{ status: string }>(response);
+}
+
 export async function sendChatStream(
   input: {
     messages: ChatMessage[];
