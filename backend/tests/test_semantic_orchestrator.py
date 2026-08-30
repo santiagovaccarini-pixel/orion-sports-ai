@@ -8,6 +8,9 @@ from backend.app.domain.schemas import MAX_MESSAGE_CHARACTERS, ChatMessage, Spor
 from backend.app.providers.model_provider import ModelResult
 from backend.app.services.knowledge_base import KnowledgeDocument
 from backend.app.services.semantic_orchestrator import (
+    CrossCheckedClaim,
+    _cross_checked_claims,
+    cross_check_context,
     REVIEW_DEEPENED_SOURCE_CLIP,
     REVIEW_SOURCE_CLIP,
     MAX_REVIEW_INPUT_CHARACTERS,
@@ -1081,6 +1084,94 @@ class SemanticOrchestratorTests(unittest.TestCase):
         )
         contract = build_contract(plan, review)
         self.assertIn("confirmación con fuente primaria", contract.missing_for_core)
+
+
+class CrossCheckTests(unittest.TestCase):
+    """Contrast between sources, not a choice between them.
+
+    Santiago's objection to "prefer the most complete source": that source can be
+    wrong too. So every claim from every accepted source enters the ledger, and
+    what separates them is how many sources back each one — counted by Python, so
+    the same evidence always yields the same label.
+    """
+
+    def test_confidence_is_counted_not_claimed(self) -> None:
+        cases = (
+            (("W1", "W2"), (), "corroborado"),
+            (("W1",), (), "una sola fuente"),
+            (("W1", "W2"), ("W3",), "en conflicto"),
+            ((), (), "sin respaldo"),
+        )
+        for supporting, conflicting, expected in cases:
+            with self.subTest(expected=expected):
+                claim = CrossCheckedClaim(
+                    statement="Dirigió a Colón entre 2017 y 2018",
+                    supporting_source_ids=supporting,
+                    conflicting_source_ids=conflicting,
+                )
+                self.assertEqual(claim.confidence, expected)
+
+    def test_a_source_cannot_both_support_and_contradict_one_claim(self) -> None:
+        claims = _cross_checked_claims(
+            {
+                "cross_checked_claims": [
+                    {
+                        "statement": "Jugó en Vélez entre 1996 y 2006",
+                        "supporting_source_ids": ["W1", "W2"],
+                        "conflicting_source_ids": ["w2"],
+                    }
+                ]
+            }
+        )
+        # The disagreement is the safer reading, so W2 stays on the conflict side.
+        self.assertEqual(claims[0].supporting_source_ids, ("W1",))
+        self.assertEqual(claims[0].conflicting_source_ids, ("W2",))
+        self.assertEqual(claims[0].confidence, "en conflicto")
+
+    def test_a_claim_only_one_source_makes_still_reaches_the_answer(self) -> None:
+        """This is how a gap in one source gets filled instead of disappearing."""
+
+        review = EvidenceReview(
+            sufficient=True,
+            relevant_source_ids=("W1", "W2"),
+            discarded_source_ids=(),
+            missing_information=(),
+            follow_up_web_query=None,
+            needs_clarification=False,
+            clarifying_question=None,
+            resolved_scope=None,
+            reason="ok",
+            cross_checked_claims=(
+                CrossCheckedClaim("Dirigió a Colón 2017-2018", ("W1", "W2")),
+                CrossCheckedClaim("Dirigió a Independiente en 2022", ("W2",)),
+                CrossCheckedClaim("Jugó en Huracán 1998-2002", ("W1",), ("W2",)),
+            ),
+        )
+        context = cross_check_context(review)
+        self.assertIn("Dirigió a Colón 2017-2018", context)
+        self.assertIn("Dirigió a Independiente en 2022", context)
+        self.assertIn("Jugó en Huracán 1998-2002", context)
+        self.assertIn("CORROBORADO", context)
+        self.assertIn("UNA SOLA FUENTE", context)
+        self.assertIn("EN CONFLICTO", context)
+        # The answer may not quietly drop the thinly-sourced facts, nor promote
+        # them: both instructions must reach the model.
+        self.assertIn("nunca los omitas", context)
+        self.assertIn("Solo podés presentar como confirmado", context)
+
+    def test_no_claims_means_no_added_context(self) -> None:
+        review = EvidenceReview(
+            sufficient=True,
+            relevant_source_ids=(),
+            discarded_source_ids=(),
+            missing_information=(),
+            follow_up_web_query=None,
+            needs_clarification=False,
+            clarifying_question=None,
+            resolved_scope=None,
+            reason="ok",
+        )
+        self.assertEqual(cross_check_context(review), "")
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ from backend.app.services.semantic_orchestrator import (
     collect_local_evidence,
     conservative_fallback_plan,
     create_semantic_plan,
+    cross_check_context,
     format_reasoning_context,
     merge_web_sources,
     partial_sum_context,
@@ -655,6 +656,19 @@ async def build_reasoning_bundle(
                 "source_check_incomplete",
                 "Fuentes aceptadas sin coincidencia completa de entidad/métrica/"
                 "período/competición/unidad: " + ", ".join(incomplete_checks),
+            )
+
+    cross_check = cross_check_context(review)
+    if cross_check:
+        tool_context = f"{tool_context}\n\n{cross_check}" if tool_context else cross_check
+        if trace is not None:
+            counts: dict[str, int] = {}
+            for claim in review.cross_checked_claims:
+                counts[claim.confidence] = counts.get(claim.confidence, 0) + 1
+            trace.record_guard(
+                "cross_check_applied",
+                "Hechos contrastados entre fuentes: "
+                + ", ".join(f"{name}={total}" for name, total in sorted(counts.items())),
             )
 
     partial_sum = partial_sum_context(review)

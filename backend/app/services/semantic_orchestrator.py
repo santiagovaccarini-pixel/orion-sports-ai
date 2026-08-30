@@ -145,6 +145,40 @@ class PartialValue:
 
 
 @dataclass(frozen=True, slots=True)
+class CrossCheckedClaim:
+    """One factual statement, with every source that states it and every source
+    that contradicts it.
+
+    Preferring "the most complete source" is not a safe answer to a fragmented
+    picture: that single table can be wrong too. What makes an answer trustworthy
+    is contrast — a claim two independent sources agree on is worth more than one
+    only a single source makes, and a claim two sources disagree about must never
+    be presented as settled. Filling one entry per claim also merges the gaps: a
+    stint only one source lists still reaches the answer, labelled for what it is.
+    """
+
+    statement: str
+    supporting_source_ids: tuple[str, ...] = ()
+    conflicting_source_ids: tuple[str, ...] = ()
+
+    @property
+    def confidence(self) -> str:
+        """Assigned by counting sources, never by the model's own confidence.
+
+        The model decides what the claims are and which source says what; how much
+        that is worth is arithmetic, and arithmetic is Python's job.
+        """
+
+        if self.conflicting_source_ids:
+            return "en conflicto"
+        if len(self.supporting_source_ids) >= 2:
+            return "corroborado"
+        if len(self.supporting_source_ids) == 1:
+            return "una sola fuente"
+        return "sin respaldo"
+
+
+@dataclass(frozen=True, slots=True)
 class EvidenceReview:
     sufficient: bool
     relevant_source_ids: tuple[str, ...]
@@ -160,6 +194,7 @@ class EvidenceReview:
     freshness_verified: bool | None = None
     source_checks: tuple[SourceCheck, ...] = ()
     partial_values: tuple[PartialValue, ...] = ()
+    cross_checked_claims: tuple[CrossCheckedClaim, ...] = ()
     # False cuando ningún revisor real evaluó la evidencia (atajos y fallbacks):
     # la etapa final no debe tratar el contrato como auditado en esos casos.
     audited: bool = True
@@ -394,6 +429,19 @@ Reglas obligatorias:
   componente (misma entidad, métrica, alcance y período) con valores distintos:
   eso no es una suma, es un conflicto — tratalo con la regla de discrepancia de
   abajo, no acá.
+- Cuando la respuesta sea una enumeración de hechos (una trayectoria, un historial,
+  una lista de partidos, cargos o períodos), completá cross_checked_claims con UNA
+  entrada por hecho, e incluí TODOS los hechos que aparezcan en CUALQUIER fuente
+  aceptada, aunque una sola los mencione. No elijas la fuente que parezca más
+  completa y descartes las demás: esa fuente también puede estar equivocada o tener
+  huecos. En cada entrada:
+  · supporting_source_ids: todas las fuentes que afirman ese hecho.
+  · conflicting_source_ids: las fuentes que afirman algo incompatible con ese hecho
+    (por ejemplo, el mismo período asignado a otro club, o fechas distintas para la
+    misma etapa). Si dos fuentes se contradicen, cargá el hecho una sola vez y poné
+    la fuente que discrepa en conflicting_source_ids; no inventes un promedio ni
+    elijas vos cuál gana.
+  No pongas vos ninguna etiqueta de confianza: Orion la calcula contando fuentes.
 - Comprobá fecha y actualidad cuando el dato pueda cambiar con el tiempo. Cada
   fuente incluye una línea «Fecha publicación»; usala. Poné freshness_verified=true
   solo si las fuentes que aceptaste están fechadas dentro de la ventana que el dato
@@ -463,6 +511,12 @@ Devolvé exclusivamente un objeto JSON válido con estas claves:
   ],
   "partial_values": [
     {"source_id": "W1", "label": "goles en liga", "value": 5}
+  ],
+  "cross_checked_claims": [
+    {"statement": "Dirigió a Colón entre 2017 y 2018",
+     "supporting_source_ids": ["W1", "W3"], "conflicting_source_ids": []},
+    {"statement": "Jugó en Vélez Sarsfield entre 1996 y 2006",
+     "supporting_source_ids": ["W2"], "conflicting_source_ids": ["W4"]}
   ],
   "reason": "explicación breve"
 }
@@ -587,6 +641,46 @@ def _partial_values(payload: dict[str, object]) -> tuple[PartialValue, ...]:
             continue
         items.append(PartialValue(source_id=source_id, label=label, value=float(raw_value)))
     return tuple(items)
+
+
+MAX_CROSS_CHECKED_CLAIMS = 60
+
+
+def _source_id_list(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    seen: list[str] = []
+    for item in value:
+        source_id = str(item or "").strip().upper()
+        if source_id and source_id not in seen:
+            seen.append(source_id)
+    return tuple(seen)
+
+
+def _cross_checked_claims(payload: dict[str, object]) -> tuple[CrossCheckedClaim, ...]:
+    value = payload.get("cross_checked_claims")
+    if not isinstance(value, list):
+        return ()
+    claims: list[CrossCheckedClaim] = []
+    for item in value[:MAX_CROSS_CHECKED_CLAIMS]:
+        if not isinstance(item, dict):
+            continue
+        statement = str(item.get("statement") or "").strip()
+        if not statement:
+            continue
+        supporting = _source_id_list(item.get("supporting_source_ids"))
+        conflicting = _source_id_list(item.get("conflicting_source_ids"))
+        # A source cannot both support and contradict the same claim; when the
+        # model says both, the disagreement is the safer reading to keep.
+        supporting = tuple(item for item in supporting if item not in conflicting)
+        claims.append(
+            CrossCheckedClaim(
+                statement=statement[:400],
+                supporting_source_ids=supporting,
+                conflicting_source_ids=conflicting,
+            )
+        )
+    return tuple(claims)
 
 
 def _evidence_policy(payload: dict[str, object]) -> str:
@@ -723,6 +817,7 @@ def parse_evidence_review(value: str) -> EvidenceReview:
         freshness_verified=_optional_boolean(payload, "freshness_verified"),
         source_checks=_source_checks(payload),
         partial_values=_partial_values(payload),
+        cross_checked_claims=_cross_checked_claims(payload),
         audited=True,
     )
 
@@ -912,6 +1007,56 @@ def _source_date_line(source: WebSource) -> str:
     if source.published_date:
         return f"Fecha publicación: {source.published_date} (no interpretable)"
     return "Fecha publicación: no detectable"
+
+
+def cross_check_context(review: EvidenceReview) -> str:
+    """Group the reviewer's claims by how many sources actually back each one.
+
+    The grouping is arithmetic on source ids, so the labels cannot drift with the
+    model's mood: the same evidence always produces the same confidence. Every
+    claim any accepted source made is here, including the ones a single source
+    mentions — that is how a gap in one source gets filled by another instead of
+    quietly disappearing.
+    """
+
+    claims = [claim for claim in review.cross_checked_claims if claim.statement]
+    if not claims:
+        return ""
+    groups: dict[str, list[CrossCheckedClaim]] = {}
+    for claim in claims:
+        groups.setdefault(claim.confidence, []).append(claim)
+
+    sections: list[str] = []
+    headings = (
+        ("corroborado", "CORROBORADO (dos o más fuentes coinciden)"),
+        ("una sola fuente", "UNA SOLA FUENTE (nadie más lo confirma)"),
+        ("en conflicto", "EN CONFLICTO (las fuentes se contradicen)"),
+        ("sin respaldo", "SIN RESPALDO (ninguna fuente aceptada lo sostiene)"),
+    )
+    for key, heading in headings:
+        items = groups.get(key)
+        if not items:
+            continue
+        lines = []
+        for claim in items:
+            fuentes = ", ".join(claim.supporting_source_ids) or "ninguna"
+            detail = f"- {claim.statement} [{fuentes}]"
+            if claim.conflicting_source_ids:
+                detail += f" — contradicen: {', '.join(claim.conflicting_source_ids)}"
+            lines.append(detail)
+        sections.append(heading + ":\n" + "\n".join(lines))
+
+    return (
+        "CONTRASTE ENTRE FUENTES (agrupado por Orion contando fuentes, no por el "
+        "modelo). Reglas obligatorias para la respuesta:\n"
+        "- Incluí los hechos de todos los grupos: los de una sola fuente también "
+        "son parte de la respuesta, nunca los omitas por tener menos respaldo.\n"
+        "- Solo podés presentar como confirmado lo que está en CORROBORADO. Lo de "
+        "una sola fuente se presenta diciendo que lo afirma una sola fuente.\n"
+        "- Lo que está EN CONFLICTO se presenta mostrando las dos versiones y "
+        "diciendo que las fuentes no coinciden. No elijas una ni promedies.\n"
+        "- No agregues hechos que no estén en esta lista.\n\n" + "\n\n".join(sections)
+    )
 
 
 def partial_sum_context(review: EvidenceReview) -> str:
