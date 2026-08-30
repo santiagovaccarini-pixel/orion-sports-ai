@@ -8,6 +8,8 @@ from pathlib import Path
 
 import httpx
 
+from backend.app.core.config import CLOUD_MODEL_PROVIDERS
+
 from backend.evals.run_local_evaluation import (
     CASES_PATH,
     FOOTBALL_PATH,
@@ -18,11 +20,16 @@ from backend.evals.run_local_evaluation import (
 
 DEFAULT_CLOUD_URL = "https://orion-core-prototype.onrender.com/api/v1"
 DIAGNOSTIC_PATH = Path(__file__).with_name("diagnostic_24_cases.json")
+# Factual accuracy: the existing datasets check how Orion reasons, not whether
+# the facts it states are true. Every case here has a verifiable answer, and
+# several encode a specific way Orion got a fact wrong in live testing.
+FACTUAL_PATH = Path(__file__).with_name("factual_accuracy_cases.json")
 DATASETS = {
     "quality": CASES_PATH,
     "foundations": FOUNDATIONS_PATH,
     "football": FOOTBALL_PATH,
     "diagnostic": DIAGNOSTIC_PATH,
+    "factual": FACTUAL_PATH,
 }
 
 
@@ -251,9 +258,16 @@ def main() -> int:
         status_response = client.get(f"{base_url}/status")
         status_response.raise_for_status()
         status_payload = status_response.json()
-        if status_payload.get("model_provider") != "cloudflare":
+        # The point of this guard is to refuse to grade a local Ollama build as if
+        # it were the deployment. Which cloud company serves the model is not what
+        # it is checking, and pinning it to one name silently disabled the whole
+        # evaluation the day Orion moved to a different provider.
+        provider = str(status_payload.get("model_provider") or "")
+        if provider not in CLOUD_MODEL_PROVIDERS:
             raise SystemExit(
-                "La evaluación cloud se negó a continuar porque /status no reporta cloudflare."
+                "La evaluación cloud se negó a continuar porque /status reporta "
+                f"'{provider or 'nada'}' y no un proveedor cloud "
+                f"({', '.join(sorted(CLOUD_MODEL_PROVIDERS))})."
             )
         report["status"] = {
             "version": status_payload.get("version"),

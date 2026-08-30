@@ -59,6 +59,35 @@ class EvaluationCaseTests(unittest.TestCase):
         self.assertTrue(all(case["correction"].strip() for case in cases))
         self.assertIn("balón fuera del campo", cases[0]["forbidden"])
 
+
+    def test_factual_cases_check_truth_not_only_reasoning(self) -> None:
+        """The other datasets grade how Orion reasons; this one grades whether the
+        facts it states are true, which is the failure class live testing found.
+        """
+
+        import json
+        from pathlib import Path as _Path
+
+        cases = json.loads(
+            (_Path(__file__).resolve().parents[1] / "evals" / "factual_accuracy_cases.json")
+            .read_text(encoding="utf-8")
+        )
+        self.assertGreaterEqual(len(cases), 10)
+        ids = [case["id"] for case in cases]
+        self.assertEqual(len(ids), len(set(ids)))
+        for case in cases:
+            with self.subTest(case=case["id"]):
+                # A factual case is only meaningful with both halves: what the
+                # answer must contain, and the wrong answers it must not contain.
+                self.assertTrue(case.get("required_any"))
+                self.assertTrue(case.get("forbidden"))
+                self.assertTrue(case.get("prompt", "").strip())
+        categories = {case["category"] for case in cases}
+        # The specific ways Orion has been wrong, each with a case that catches it.
+        self.assertIn("factual_entity", categories)
+        self.assertIn("factual_date", categories)
+        self.assertIn("factual_honesty", categories)
+
     def test_diagnostic_cases_are_well_formed_and_unique(self) -> None:
         cases = json.loads(DIAGNOSTIC_PATH.read_text(encoding="utf-8"))
         ids = [case["id"] for case in cases]

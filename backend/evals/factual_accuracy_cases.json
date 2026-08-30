@@ -1,0 +1,209 @@
+[
+  {
+    "id": "fact_01_entity_same_name",
+    "category": "factual_entity",
+    "mode": "quick",
+    "sport": "football",
+    "prompt": "¿Qué equipos dirigió Eduardo Domínguez como entrenador?",
+    "note": "Hay varias personas con ese nombre. Orion llegó a listar Rosario Central, Racing, Tijuana y Celta de Vigo, que corresponden a otra persona.",
+    "required_any": [
+      [
+        "Colón",
+        "Colon"
+      ],
+      [
+        "Estudiantes"
+      ],
+      [
+        "Mineiro"
+      ]
+    ],
+    "forbidden": [
+      "Tijuana",
+      "Celta de Vigo",
+      "Rosario Central"
+    ]
+  },
+  {
+    "id": "fact_02_enumeration_gaps",
+    "category": "factual_completeness",
+    "mode": "quick",
+    "sport": "football",
+    "prompt": "Decime la carrera completa de Eduardo Domínguez, el entrenador argentino.",
+    "note": "Antes se saltaba Colón 2020-2021 e Independiente 2022, dejando un hueco de tres años.",
+    "required_any": [
+      [
+        "Independiente"
+      ],
+      [
+        "Nacional"
+      ],
+      [
+        "Huracán",
+        "Huracan"
+      ]
+    ],
+    "forbidden": [
+      "Tijuana",
+      "Celta de Vigo"
+    ]
+  },
+  {
+    "id": "fact_03_year_libertadores",
+    "category": "factual_date",
+    "mode": "quick",
+    "sport": "football",
+    "prompt": "¿En qué año ganó Estudiantes de La Plata su primera Copa Libertadores?",
+    "required_any": [
+      [
+        "1968"
+      ]
+    ],
+    "forbidden": [
+      "1969",
+      "1970",
+      "1967"
+    ]
+  },
+  {
+    "id": "fact_04_year_founding",
+    "category": "factual_date",
+    "mode": "quick",
+    "sport": "football",
+    "prompt": "¿En qué año se fundó el Club Atlético Independiente?",
+    "required_any": [
+      [
+        "1905"
+      ]
+    ],
+    "forbidden": [
+      "1904",
+      "1906",
+      "1908"
+    ]
+  },
+  {
+    "id": "fact_05_world_cup_final",
+    "category": "factual_event",
+    "mode": "quick",
+    "sport": "football",
+    "prompt": "¿Quién ganó el Mundial de 2022 y contra quién jugó la final?",
+    "required_any": [
+      [
+        "Argentina"
+      ],
+      [
+        "Francia"
+      ]
+    ],
+    "forbidden": [
+      "Brasil ganó",
+      "Croacia en la final",
+      "Alemania"
+    ]
+  },
+  {
+    "id": "fact_06_world_cup_host",
+    "category": "factual_event",
+    "mode": "quick",
+    "sport": "football",
+    "prompt": "¿En qué país se jugó el Mundial de 1986 y quién salió campeón?",
+    "required_any": [
+      [
+        "México",
+        "Mexico"
+      ],
+      [
+        "Argentina"
+      ]
+    ],
+    "forbidden": [
+      "España",
+      "Italia fue la sede",
+      "Brasil salió campeón"
+    ]
+  },
+  {
+    "id": "fact_07_record_holder",
+    "category": "factual_record",
+    "mode": "quick",
+    "sport": "football",
+    "prompt": "¿Qué club argentino ganó más Copas Libertadores y cuántas?",
+    "required_any": [
+      [
+        "Independiente"
+      ],
+      [
+        "7",
+        "siete"
+      ]
+    ],
+    "forbidden": [
+      "Boca Juniors ganó más",
+      "River Plate ganó más"
+    ]
+  },
+  {
+    "id": "fact_08_rule_count",
+    "category": "factual_rule",
+    "mode": "quick",
+    "sport": "football",
+    "prompt": "¿Cuántos jugadores de cada equipo hay en cancha en un partido de fútbol?",
+    "required_any": [
+      [
+        "11",
+        "once"
+      ]
+    ],
+    "forbidden": [
+      "10 jugadores por equipo",
+      "12 jugadores"
+    ]
+  },
+  {
+    "id": "fact_09_no_overclaim",
+    "category": "factual_honesty",
+    "mode": "quick",
+    "sport": "football",
+    "prompt": "¿Cuántos minutos exactos jugó el lateral derecho de Estudiantes en su último partido?",
+    "note": "Dato que Orion no puede tener. Vale declarar la limitación o pedir una aclaración; lo único inaceptable es inventar un número.",
+    "required_any": [
+      [
+        "no dispongo",
+        "no tengo",
+        "no puedo confirmar",
+        "no está disponible",
+        "no encontré",
+        "necesitaría",
+        "podés indicar",
+        "¿a qué",
+        "aclarar",
+        "te referís",
+        "cuál",
+        "indicame"
+      ]
+    ],
+    "forbidden": [
+      "jugó exactamente 90 minutos",
+      "jugó los 90 minutos completos",
+      "disputó 90 minutos"
+    ]
+  },
+  {
+    "id": "fact_10_ambiguous_person",
+    "category": "factual_entity",
+    "mode": "quick",
+    "sport": "football",
+    "prompt": "¿Qué club dirige hoy Eduardo Domínguez?",
+    "required_any": [
+      [
+        "Mineiro"
+      ]
+    ],
+    "forbidden": [
+      "Celta de Vigo",
+      "Tijuana",
+      "Rosario Central"
+    ]
+  }
+]
