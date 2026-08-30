@@ -135,6 +135,51 @@ def _sql_harness(query: str, checks: list[dict]) -> str:
     )
 
 
+_JS_NORM = (
+    "const _norm=(v)=>Array.isArray(v)?v.map(_norm)"
+    ":(v&&typeof v==='object')?Object.fromEntries(Object.keys(v).sort()"
+    ".map(k=>[k,_norm(v[k])])):v;\n"
+    "const _same=(a,b)=>JSON.stringify(_norm(a))===JSON.stringify(_norm(b));\n"
+)
+
+
+def _js_harness(code: str, entrypoint: str, checks: list[dict]) -> str:
+    """Run JavaScript through node, with the same contract as the Python harness.
+
+    Async cases carry a `script` body instead of plain arguments, because what is
+    being judged there is a sequence of awaited calls, not a single return value.
+    """
+
+    is_async = entrypoint.startswith("__JS_ASYNC__")
+    name = entrypoint.removeprefix("__JS_ASYNC__")
+    if is_async:
+        call = (
+            f"      const _fn = new Function('{name}', "
+            f"'return (async () => {{' + c.script + '}})()');\n"
+            f"      const r = await _fn({name});\n"
+        )
+    else:
+        call = f"      const r = {name}(...c.input);\n"
+    return (
+        code
+        + "\n\n"
+        + _JS_NORM
+        + f"const _checks = {json.dumps(checks)};\n"
+        + "(async () => {\n"
+        + "  const out = [];\n"
+        + "  for (const c of _checks) {\n"
+        + "    try {\n"
+        + call
+        + "      out.push({ok: _same(r, c.expected), got: JSON.stringify(r)});\n"
+        + "    } catch (e) {\n"
+        + "      out.push({ok: false, got: String(e)});\n"
+        + "    }\n"
+        + "  }\n"
+        + "  console.log('__RESULT__' + JSON.stringify(out));\n"
+        + "})();\n"
+    )
+
+
 def _build_harness(code: str, entrypoint: str, checks: list[dict]) -> str:
     if entrypoint == "__SQL__":
         return _sql_harness(code, checks)
@@ -143,13 +188,24 @@ def _build_harness(code: str, entrypoint: str, checks: list[dict]) -> str:
     return _harness(code, entrypoint, checks)
 
 
-def run_checks(code: str, entrypoint: str, checks: list[dict]) -> tuple[bool, list[dict]]:
+
+def run_checks(
+    code: str, entrypoint: str, checks: list[dict], *, language: str = "python"
+) -> tuple[bool, list[dict]]:
+    javascript = language == "javascript"
     with tempfile.TemporaryDirectory() as folder:
-        script = Path(folder) / "candidate.py"
-        script.write_text(_build_harness(code, entrypoint, checks), encoding="utf-8")
+        name = "candidate.js" if javascript else "candidate.py"
+        script = Path(folder) / name
+        source = (
+            _js_harness(code, entrypoint, checks)
+            if javascript
+            else _build_harness(code, entrypoint, checks)
+        )
+        script.write_text(source, encoding="utf-8")
+        command = ["node", str(script)] if javascript else [sys.executable, str(script)]
         try:
             completed = subprocess.run(
-                [sys.executable, str(script)],
+                command,
                 capture_output=True,
                 text=True,
                 timeout=EXECUTION_TIMEOUT_SECONDS,
@@ -210,7 +266,12 @@ def main() -> int:
                 time.sleep(PAUSE_BETWEEN_CASES_SECONDS)
             answer, seconds = _ask(client, base_url, case)
             code = extract_code(answer)
-            ok, results = run_checks(code, case["entrypoint"], case["checks"])
+            ok, results = run_checks(
+                code,
+                case["entrypoint"],
+                case["checks"],
+                language=case.get("language", "python"),
+            )
             passed += int(ok)
             failures = [item for item in results if not item["ok"]]
             print(f"{'OK ' if ok else 'MAL'} {case['id']:26s} {seconds:5.1f}s")

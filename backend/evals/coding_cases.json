@@ -673,5 +673,282 @@
         "expected": []
       }
     ]
+  },
+  {
+    "id": "code_11_parse_quoted_csv",
+    "language": "python",
+    "mode": "deep",
+    "prompt": "Escribí una función Python `partir_fila(linea)` que reciba una línea de CSV y devuelva la lista de campos. Los campos pueden venir entre comillas dobles, y dentro de las comillas una coma NO separa campos. Dos comillas seguidas dentro de un campo entrecomillado representan una comilla literal. No uses el módulo csv ni librerías externas. Devolvé solo el código.",
+    "note": "Escribir un parser a mano: estado, escapes y casos borde. Se rompe fácil.",
+    "entrypoint": "partir_fila",
+    "checks": [
+      {
+        "input": [
+          "a,b,c"
+        ],
+        "expected": [
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      {
+        "input": [
+          "a,\"b,c\",d"
+        ],
+        "expected": [
+          "a",
+          "b,c",
+          "d"
+        ]
+      },
+      {
+        "input": [
+          "\"di \"\"hola\"\" ya\",x"
+        ],
+        "expected": [
+          "di \"hola\" ya",
+          "x"
+        ]
+      },
+      {
+        "input": [
+          "a,,c"
+        ],
+        "expected": [
+          "a",
+          "",
+          "c"
+        ]
+      },
+      {
+        "input": [
+          ""
+        ],
+        "expected": [
+          ""
+        ]
+      }
+    ]
+  },
+  {
+    "id": "code_12_efficiency_large_input",
+    "language": "python",
+    "mode": "deep",
+    "prompt": "Escribí una función Python `pares_que_suman(valores, objetivo)` que devuelva la cantidad de pares de índices distintos (i < j) cuyos valores sumen exactamente el objetivo. Tiene que funcionar con listas de 200.000 elementos sin tardar minutos. No uses librerías externas. Devolvé solo el código.",
+    "note": "La solución obvia con dos bucles tarda una eternidad con 200.000 elementos. El límite de 10 segundos del ejecutor es el que decide.",
+    "entrypoint": "pares_que_suman",
+    "checks": [
+      {
+        "input": [
+          [
+            1,
+            2,
+            3,
+            4
+          ],
+          5
+        ],
+        "expected": 2
+      },
+      {
+        "input": [
+          [
+            2,
+            2,
+            2
+          ],
+          4
+        ],
+        "expected": 3
+      },
+      {
+        "input": [
+          [
+            1
+          ],
+          2
+        ],
+        "expected": 0
+      },
+      {
+        "input": [
+          [
+            1,
+            2
+          ],
+          100
+        ],
+        "expected": 0
+      },
+      {
+        "input": [
+          [
+            1,
+            3
+          ],
+          4
+        ],
+        "expected": 40000,
+        "repeat_input_to": 400
+      }
+    ]
+  },
+  {
+    "id": "code_13_javascript_grouping",
+    "language": "javascript",
+    "mode": "deep",
+    "prompt": "Escribí una función JavaScript `resumenPorJugador(filas)` que reciba un array de objetos con las propiedades `jugador` y `distancia`, y devuelva un objeto donde cada clave es un jugador y el valor es un objeto con `total` (suma de distancias) y `sesiones` (cantidad de filas). Las filas cuya distancia no sea un número finito se ignoran por completo. Devolvé solo el código, sin usar librerías.",
+    "entrypoint": "resumenPorJugador",
+    "checks": [
+      {
+        "input": [
+          [
+            {
+              "jugador": "A",
+              "distancia": 10
+            },
+            {
+              "jugador": "A",
+              "distancia": 5
+            },
+            {
+              "jugador": "B",
+              "distancia": 3
+            }
+          ]
+        ],
+        "expected": {
+          "A": {
+            "total": 15,
+            "sesiones": 2
+          },
+          "B": {
+            "total": 3,
+            "sesiones": 1
+          }
+        }
+      },
+      {
+        "input": [
+          [
+            {
+              "jugador": "A",
+              "distancia": "x"
+            },
+            {
+              "jugador": "A",
+              "distancia": 2
+            }
+          ]
+        ],
+        "expected": {
+          "A": {
+            "total": 2,
+            "sesiones": 1
+          }
+        }
+      },
+      {
+        "input": [
+          []
+        ],
+        "expected": {}
+      }
+    ]
+  },
+  {
+    "id": "code_14_javascript_async",
+    "language": "javascript",
+    "mode": "deep",
+    "prompt": "Escribí una función JavaScript asíncrona `conReintento(tarea, intentos)` que ejecute la función `tarea` (que devuelve una promesa) y, si falla, la reintente hasta `intentos` veces en total. Si todos los intentos fallan, tiene que propagar el último error. Si alguno funciona, devuelve su valor. Sin esperas entre intentos y sin librerías. Devolvé solo el código.",
+    "note": "Asincronía y manejo de errores: el reintento que cuenta mal es un clásico.",
+    "entrypoint": "__JS_ASYNC__conReintento",
+    "checks": [
+      {
+        "script": "let n=0; const t=async()=>{n++; if(n<3) throw new Error('x'); return 'ok';}; return await conReintento(t,5);",
+        "expected": "ok"
+      },
+      {
+        "script": "let n=0; const t=async()=>{n++; throw new Error('siempre');}; try{ await conReintento(t,3); return 'no lanzo'; }catch(e){ return n; }",
+        "expected": 3
+      },
+      {
+        "script": "const t=async()=>'directo'; return await conReintento(t,1);",
+        "expected": "directo"
+      }
+    ]
+  },
+  {
+    "id": "code_15_sql_window_function",
+    "language": "sql",
+    "mode": "deep",
+    "prompt": "Tengo una tabla `cargas(jugador TEXT, dia INTEGER, carga REAL)`. Escribí una consulta SQL que devuelva jugador, dia, carga y el acumulado de carga de ese jugador hasta ese día inclusive, ordenado por jugador y después por día. Devolvé solo la consulta.",
+    "note": "Función de ventana con marco acumulado. Un GROUP BY no resuelve esto.",
+    "entrypoint": "__SQL__",
+    "checks": [
+      {
+        "schema": "CREATE TABLE cargas (jugador TEXT, dia INTEGER, carga REAL)",
+        "rows": [
+          [
+            "A",
+            1,
+            10.0
+          ],
+          [
+            "A",
+            2,
+            20.0
+          ],
+          [
+            "A",
+            3,
+            5.0
+          ],
+          [
+            "B",
+            1,
+            100.0
+          ],
+          [
+            "B",
+            2,
+            50.0
+          ]
+        ],
+        "expected": [
+          [
+            "A",
+            1,
+            10.0,
+            10.0
+          ],
+          [
+            "A",
+            2,
+            20.0,
+            30.0
+          ],
+          [
+            "A",
+            3,
+            5.0,
+            35.0
+          ],
+          [
+            "B",
+            1,
+            100.0,
+            100.0
+          ],
+          [
+            "B",
+            2,
+            50.0,
+            150.0
+          ]
+        ]
+      }
+    ]
   }
 ]
