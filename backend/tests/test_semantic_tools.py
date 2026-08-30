@@ -103,10 +103,33 @@ class SemanticToolsTests(unittest.TestCase):
         )
         self.assertEqual(unsupported, ())
 
-    def test_audit_tolerates_years(self) -> None:
+    def test_audit_flags_a_year_the_evidence_never_mentions(self) -> None:
+        """A date is a claim, and it was the one claim the audit could not see.
+
+        Years used to be tolerated across 1900-2100, so Orion could state that a
+        manager played somewhere "1998-2002" — wrong on both counts — and the
+        audit stayed silent, because both numbers looked like years.
+        """
+
+        unsupported = audit_numeric_support(
+            "Jugó en Huracán entre 1998 y 2002.",
+            allowed_texts=["Jugó en Vélez Sarsfield entre 1996 y 2006."],
+        )
+        self.assertEqual(unsupported, ("1998", "2002"))
+
+    def test_audit_accepts_a_year_the_evidence_supports(self) -> None:
         unsupported = audit_numeric_support(
             "El torneo se disputó en 2026.",
-            allowed_texts=[],
+            allowed_texts=["La edición 2026 del torneo terminó en agosto."],
+        )
+        self.assertEqual(unsupported, ())
+
+    def test_audit_still_ignores_counts_and_ordinals(self) -> None:
+        """Small integers come from sentence structure, not from evidence."""
+
+        unsupported = audit_numeric_support(
+            "Dirigió 3 clubes y quedó 2 veces en el puesto 5.",
+            allowed_texts=["Historial del entrenador."],
         )
         self.assertEqual(unsupported, ())
 

@@ -281,8 +281,6 @@ def execute_calculation(expression: str | None) -> SemanticToolExecution:
 
 _NUMERIC_TOKEN_RE = re.compile(r"\d+(?:[.,]\d+)*%?")
 _TOLERATED_SMALL_INT_MAX = 12
-_TOLERATED_YEAR_MIN = 1900
-_TOLERATED_YEAR_MAX = 2100
 
 
 def _normalize_numeric_token(token: str) -> str | None:
@@ -312,6 +310,19 @@ def _normalize_numeric_token(token: str) -> str | None:
 
 
 def _is_tolerated_numeric(normalized: str) -> bool:
+    """Numbers that carry no factual claim on their own.
+
+    Small integers are ordinals and counts ("los 3 clubes", "punto 2") that appear
+    from sentence structure rather than from evidence, so flagging them is noise.
+
+    Years used to be tolerated the same way, across the whole 1900-2100 range.
+    That made the audit blind to the error it matters most for: a date attached to
+    a fact. Orion answered that a manager played at one club "1998-2002" when he
+    was at another, and the audit could not see it, because both numbers looked
+    like years. A year is a claim like any other and is now only accepted when the
+    evidence actually contains it.
+    """
+
     if normalized.endswith("%"):
         return False
     try:
@@ -320,10 +331,7 @@ def _is_tolerated_numeric(normalized: str) -> bool:
         return False
     if value != int(value):
         return False
-    int_value = int(value)
-    if 0 <= int_value <= _TOLERATED_SMALL_INT_MAX:
-        return True
-    return _TOLERATED_YEAR_MIN <= int_value <= _TOLERATED_YEAR_MAX
+    return 0 <= int(value) <= _TOLERATED_SMALL_INT_MAX
 
 
 def audit_numeric_support(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import date
 import hashlib
 import hmac
 import json
@@ -344,7 +345,15 @@ def _allowed_numeric_texts(
     relevant_ids = {
         source_id.strip().upper() for source_id in bundle.review.relevant_source_ids
     }
-    texts = [message.content for message in request.messages]
+    # Today's date reaches the model through the system prompt, not through any of
+    # the sources below, so without it every answer that says "hoy es ..." looked
+    # like an unsupported figure. Now that years are audited rather than tolerated
+    # wholesale, that false positive would fire on almost every dated answer.
+    today = date.today()
+    texts = [
+        f"{today.isoformat()} {today.day} {today.month} {today.year}",
+        *(message.content for message in request.messages),
+    ]
     if bundle.tool_context:
         texts.append(bundle.tool_context)
     texts.extend(item.content for item in bundle.local_evidence)
