@@ -24,6 +24,15 @@ test("renders safe Markdown and visible performance metrics", async () => {
   );
   assert.match(component, /ReactMarkdown/);
   assert.match(component, /remarkGfm/);
+  // Orion renders text written by a model out of pages anyone can publish, so
+  // "safe" here is not a style choice. react-markdown escapes HTML and strips
+  // dangerous URL schemes only while these three stay absent: raw-HTML plugins,
+  // a hand-written urlTransform, and any direct DOM injection. Each is a
+  // plausible future edit made for better formatting, and each one alone turns
+  // a quoted page into executable script.
+  assert.doesNotMatch(component, /rehype-raw|rehypeRaw/);
+  assert.doesNotMatch(component, /urlTransform/);
+  assert.doesNotMatch(component, /dangerouslySetInnerHTML|innerHTML/);
   assert.match(component, /normalizeCompletedMarkdown/);
   assert.match(component, /renderMarkdown/);
   assert.match(component, /replace\(\/```\(\?:text\|txt\)\?/);

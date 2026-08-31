@@ -1268,18 +1268,34 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
             # An unexpected (not one of the specific provider errors above)
             # exception must still surface to the client instead of silently
             # closing the connection: the caller needs something to show the
-            # user and something to debug from, not a truncated empty stream.
-            try:
-                yield _ndjson(
-                    {
-                        "type": "error",
-                        "code": "internal_error",
-                        "message": str(exc) or exc.__class__.__name__,
-                    }
-                )
-            except Exception:
-                pass
-            raise
+            # user, not a truncated empty stream.
+            #
+            # Which is why the exception is logged here and the stream then ends
+            # normally, rather than being re-raised. Re-raising aborted the
+            # response, so the error event written just above never reached the
+            # browser and the reader was left watching a spinner over an empty
+            # answer - the exact outcome this block exists to prevent. Nothing
+            # is lost by ending cleanly: the traceback is in the server log and
+            # the failure is on the trace, both of which need the key to read.
+            #
+            # What the event must not carry is the exception's own text. These
+            # are not Orion's curated messages - a driver failure quotes the
+            # connection it tried, so a database outage would put the Postgres
+            # host, user and database name on screen, and from there into a
+            # screenshot. The type is enough to tell one failure from another.
+            logger.exception("Fallo inesperado durante la respuesta")
+            yield _ndjson(
+                {
+                    "type": "error",
+                    "code": "internal_error",
+                    "message": (
+                        "Orion no pudo completar la respuesta por un error "
+                        f"interno ({exc.__class__.__name__}). Quedó registrado "
+                        "en el diagnóstico."
+                    ),
+                }
+            )
+            return
 
     return StreamingResponse(
         generate(),

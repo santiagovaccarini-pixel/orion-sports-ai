@@ -300,11 +300,16 @@ class SemanticStreamRouteTests(unittest.TestCase):
             async def collect() -> list[dict]:
                 streaming_response = await chat_stream(request)
                 events: list[dict] = []
-                with self.assertRaises(RuntimeError):
-                    async for chunk in streaming_response.body_iterator:
-                        for line in chunk.decode("utf-8").splitlines():
-                            if line.strip():
-                                events.append(json.loads(line))
+                # The stream now ends normally after the error frame. It used to
+                # re-raise, and this test reached into body_iterator precisely so
+                # the raise would not hide the frame - but a real browser has no
+                # such reach: aborting the response threw away the frame that had
+                # just been written, and the reader saw an empty answer under a
+                # spinner. Logging happens server-side either way.
+                async for chunk in streaming_response.body_iterator:
+                    for line in chunk.decode("utf-8").splitlines():
+                        if line.strip():
+                            events.append(json.loads(line))
                 return events
 
             events = asyncio.run(collect())
@@ -312,11 +317,18 @@ class SemanticStreamRouteTests(unittest.TestCase):
         error_events = [event for event in events if event.get("type") == "error"]
         self.assertTrue(error_events, "Debe emitirse un frame de error")
         self.assertEqual(error_events[0]["code"], "internal_error")
-        self.assertIn("boom inesperado", error_events[0]["message"])
+        # The type, so two different faults do not look alike from outside.
+        self.assertIn("RuntimeError", error_events[0]["message"])
+        # Not the exception's own words. This one is harmless, but the same line
+        # carries a driver's message, and those name the host, user and database
+        # they failed to reach.
+        self.assertNotIn("boom inesperado", error_events[0]["message"])
         trace = diagnostic_traces.latest()
         self.assertIsNotNone(trace)
         assert trace is not None
+        # Nothing is lost: the detail is on the trace, which needs the key.
         self.assertEqual(trace.snapshot()["status"], "error")
+        self.assertIn("boom inesperado", json.dumps(trace.snapshot()))
 
 
 if __name__ == "__main__":

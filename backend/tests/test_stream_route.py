@@ -351,6 +351,58 @@ class StreamRouteTests(unittest.TestCase):
 
         self.assertIn("INVESTIGACIÓN WEB INSUFICIENTE", context)
 
+    def test_an_unexpected_failure_never_streams_its_own_text_to_the_browser(
+        self,
+    ) -> None:
+        """An internal error message is not Orion's writing, and can carry secrets.
+
+        A database driver quotes the connection it tried, so an outage would put
+        the Postgres host, user and database name on screen - and from there
+        into a screenshot. The browser gets the failure and the exception type,
+        which is enough to tell one fault from another; the text itself stays in
+        the server log and in the key-gated trace.
+        """
+
+        leaky = RuntimeError(
+            "connection to server at 'ep-secreto-123.neon.tech', user "
+            "'orion_admin', database 'orion' failed"
+        )
+
+        with (
+            patch(
+                "backend.app.api.routes._provider_or_http_error",
+                return_value=FakeProvider(),
+            ),
+            patch(
+                "backend.app.api.routes._prepare_chat",
+                side_effect=leaky,
+            ),
+            patch(
+                "backend.app.api.routes.maintain_ollama_priority",
+                new=fake_priority_monitor,
+            ),
+            patch("backend.app.api.routes.lower_ollama_priority"),
+            TestClient(app, raise_server_exceptions=False) as client,
+        ):
+            response = client.post(
+                "/api/v1/chat/stream",
+                json={
+                    "messages": [{"role": "user", "content": "Hola"}],
+                    "mode": "quick",
+                },
+            )
+
+        body = response.text
+        for secret in ("ep-secreto-123.neon.tech", "orion_admin", "database 'orion'"):
+            self.assertNotIn(secret, body)
+        events = [json.loads(line) for line in body.splitlines() if line.strip()]
+        errors = [event for event in events if event.get("type") == "error"]
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0]["code"], "internal_error")
+        # Still says which kind of failure it was, so two different faults do
+        # not look identical from the outside.
+        self.assertIn("RuntimeError", errors[0]["message"])
+
 
 if __name__ == "__main__":
     unittest.main()
