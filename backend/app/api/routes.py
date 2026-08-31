@@ -479,7 +479,7 @@ async def _web_context(request: ChatRequest) -> str:
 
     settings = get_settings()
     query = request.messages[-1].content
-    plan = _create_orchestration_plan(query)
+    plan = await asyncio.to_thread(_create_orchestration_plan, query)
     if not settings.web_enabled or not plan.use_web:
         return ""
     sources = await research(
@@ -611,7 +611,7 @@ async def health() -> dict[str, str]:
     dependencies=[Depends(require_api_key)],
 )
 async def list_knowledge_documents() -> list[KnowledgeDocumentResponse]:
-    documents = _documents()
+    documents = await asyncio.to_thread(_documents)
     return [
         KnowledgeDocumentResponse(
             id=item.id,
@@ -640,7 +640,7 @@ async def add_knowledge_document(
         request.content.strip(),
     )
     knowledge = _knowledge_base()
-    existing = knowledge.list_documents()
+    existing = await asyncio.to_thread(knowledge.list_documents)
     # Re-uploading the same content keeps the same id and just replaces the
     # entry, so it must not count against the quota as a new document.
     replaces_existing = any(item.id == document.id for item in existing)
@@ -669,7 +669,7 @@ async def add_knowledge_document(
                 ),
             },
         )
-    knowledge.add_document(document)
+    await asyncio.to_thread(knowledge.add_document, document)
     return KnowledgeDocumentResponse(
         id=document.id,
         name=document.name,
@@ -909,11 +909,12 @@ async def chat(request: ChatRequest) -> ChatResponse:
         if settings.semantic_orchestration:
             trace = _start_trace(request, settings.diagnostics_enabled)
             await provider.preflight(SelectedMode.QUICK)
+            documents = await asyncio.to_thread(_documents)
             bundle = await build_reasoning_bundle(
                 provider,
                 request,
                 settings,
-                _documents(),
+                documents,
                 trace=trace,
                 memory_context=await _memory_context(),
             )
@@ -968,7 +969,9 @@ async def chat(request: ChatRequest) -> ChatResponse:
                 result = await provider.chat(
                     mode=prepared.selected_mode,
                     messages=request.messages,
-                    system_prompt=_legacy_knowledge_prompt(request, prepared, web_context),
+                    system_prompt=await asyncio.to_thread(
+                        _legacy_knowledge_prompt, request, prepared, web_context
+                    ),
                 )
     except (
         ModelProviderConfigurationError,
@@ -1056,12 +1059,13 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                 yield _ndjson({"type": "stage", "stage": last_stage})
                 await provider.preflight(SelectedMode.QUICK)
                 stage_events: asyncio.Queue[str] = asyncio.Queue()
+                documents = await asyncio.to_thread(_documents)
                 bundle_task = asyncio.create_task(
                     build_reasoning_bundle(
                         provider,
                         request,
                         settings,
-                        _documents(),
+                        documents,
                         trace=trace,
                         on_stage=stage_events.put_nowait,
                         memory_context=await _memory_context(),
@@ -1188,7 +1192,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                     "sport": prepared.sport.value,
                 }
             )
-            if chart := _knowledge_chart(request):
+            if chart := await asyncio.to_thread(_knowledge_chart, request):
                 yield _ndjson({"type": "chart", "chart": chart})
             if _web_is_insufficient(web_context):
                 yield _ndjson(
@@ -1200,7 +1204,9 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                 async for event in provider.chat_stream(
                     mode=prepared.selected_mode,
                     messages=request.messages,
-                    system_prompt=_legacy_knowledge_prompt(request, prepared, web_context),
+                    system_prompt=await asyncio.to_thread(
+                        _legacy_knowledge_prompt, request, prepared, web_context
+                    ),
                 ):
                     if event.content:
                         yield _ndjson({"type": "content", "content": event.content})

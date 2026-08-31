@@ -30,11 +30,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# The browser reaches Orion through the interface's own same-origin proxy, so
+# in normal use no cross-origin request happens at all and this policy is never
+# consulted. It still has to describe the API honestly: withdrawing a document
+# and forgetting a memory entry are DELETE, and leaving them out means a direct
+# call from a browser fails with a CORS error that says nothing about the real
+# cause. The origins stay local-only, and the key is still required either way.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.cors_origins),
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Content-Type", "X-Orion-Api-Key"],
 )
 app.include_router(router, prefix="/api/v1")

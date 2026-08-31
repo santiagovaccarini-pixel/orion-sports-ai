@@ -160,6 +160,27 @@ class DeployGateTests(unittest.TestCase):
             self.assertIn(step, workflow)
             self.assertIn(step, script)
 
+    def test_only_shipped_dependencies_can_block_on_an_advisory(self) -> None:
+        """Blocking on dev tooling would stop real work for a hole nobody can reach.
+
+        Every current advisory is in something that builds or serves the app on
+        one machine - vite, ws, undici - and none of it is sent to a browser.
+        The workflow already treats the audit as a report; the local script must
+        make the same call, or it refuses changes CI would accept. What ships is
+        held to the stricter rule instead, and today it is clean.
+        """
+
+        workflow = (ROOT / ".github" / "workflows" / "frontend-tests.yml").read_text(
+            encoding="utf-8"
+        )
+        script = (ROOT / "scripts" / "verify-like-ci.sh").read_text(encoding="utf-8")
+        audit_step = workflow.split("- name: Audit dependencies", 1)[1].split(
+            "- name:", 1
+        )[0]
+        self.assertIn("continue-on-error: true", audit_step)
+        self.assertIn("npm audit --omit=dev --audit-level=high", script)
+        self.assertIn("npm audit --audit-level=high || true", script)
+
     def test_the_battery_paces_itself_against_the_rate_limiter(self) -> None:
         runner = (ROOT / "backend" / "evals" / "run_cloud_evaluation.py").read_text(
             encoding="utf-8"

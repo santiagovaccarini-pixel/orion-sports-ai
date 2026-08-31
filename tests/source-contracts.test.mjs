@@ -204,3 +204,41 @@ test("no empty band is left between the transcript and the composer", async () =
   assert.match(css, /\.messages\s*\{[^}]*padding-bottom:\s*0\.5rem/s);
   assert.match(css, /\.composer-wrap\s*\{[^}]*padding-top:\s*0\.45rem/s);
 });
+
+test("every response leaves the worker with its security headers", async () => {
+  // Without frame-ancestors/X-Frame-Options any site can iframe Orion and
+  // overlay it, which turns a click on "Recordar" into a click on whatever the
+  // attacker put there. The headers existed but nothing kept them: deleting
+  // withSecurityHeaders left a passing suite and a framable app.
+  const worker = await readFile(new URL("worker/index.ts", root), "utf8");
+  for (const header of [
+    "Content-Security-Policy",
+    "X-Frame-Options",
+    "X-Content-Type-Options",
+    "Referrer-Policy",
+    "Permissions-Policy",
+    "Strict-Transport-Security",
+  ]) {
+    assert.match(worker, new RegExp(`"${header}"`), `falta ${header}`);
+  }
+  assert.match(worker, /frame-ancestors 'none'/);
+  assert.match(worker, /"X-Frame-Options":\s*"DENY"/);
+  // The browser must only ever reach the same-origin proxy: a wider connect-src
+  // would let injected script talk to the core, or anywhere else, directly.
+  assert.match(worker, /connect-src 'self'/);
+
+  // Two calls in this worker produce a response for the browser. Each has to be
+  // wrapped, and each has to appear exactly once, so a second unwrapped call
+  // cannot slip in beside a wrapped one.
+  assert.equal((worker.match(/handler\.fetch\(/g) ?? []).length, 1);
+  assert.equal((worker.match(/handleImageOptimization\(/g) ?? []).length, 1);
+  assert.match(worker, /withSecurityHeaders\(\s*(await\s+)?handler\.fetch\(/);
+  assert.match(
+    worker,
+    /withSecurityHeaders\(\s*(await\s+)?handleImageOptimization\(/,
+  );
+
+  // The streamed answer must stay streamed: buffering it to add headers would
+  // make Orion appear to hang until the whole reply is written.
+  assert.match(worker, /new Response\(response\.body/);
+});

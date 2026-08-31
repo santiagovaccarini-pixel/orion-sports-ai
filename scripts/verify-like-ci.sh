@@ -32,8 +32,17 @@ ORION_SEMANTIC_ORCHESTRATION=false \
 
 [ "${1:-}" = "--backend-only" ] && exit 0
 
-echo "== frontend: audit =="
-npm audit --audit-level=high
+echo "== frontend: audit (lo que se publica) =="
+# Blocking. A high advisory in something that ships to a browser is a real hole
+# in Orion; there is no reading of that which can wait.
+npm audit --omit=dev --audit-level=high
+
+echo "== frontend: audit (herramientas de desarrollo) =="
+# Reported, not enforced - the same choice the workflow makes, and it has to
+# stay the same choice or this script starts refusing work CI would accept.
+# These packages build and serve the app on one developer's machine and never
+# reach a user, so a new advisory here is a queue item, not a stop order.
+npm audit --audit-level=high || true
 
 echo "== frontend: lint =="
 npm run lint

@@ -74,5 +74,54 @@ class SafeHttpTests(unittest.TestCase):
         )
 
 
+class SafeTransportIsActuallyUsedTests(unittest.TestCase):
+    """Having the protection is not the same as reaching for it.
+
+    These two modules are the only places where Orion opens a connection to an
+    address it did not choose: a search result, a link on a page, a redirect. A
+    client built here without the safe transport resolves the hostname again
+    when it connects, which is the exact race the transport exists to close -
+    and it would look completely normal in review, because the failure is a
+    missing argument, not a wrong one.
+    """
+
+    FETCHES_UNTRUSTED_URLS = ("web_reader.py", "web_research.py")
+
+    def test_every_client_that_visits_a_found_url_carries_the_safe_transport(
+        self,
+    ) -> None:
+        import ast
+        from pathlib import Path
+
+        services = Path(__file__).resolve().parents[1] / "app" / "services"
+        checked = 0
+        for name in self.FETCHES_UNTRUSTED_URLS:
+            tree = ast.parse((services / name).read_text(encoding="utf-8"))
+            clients = [
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "AsyncClient"
+            ]
+            self.assertTrue(clients, f"{name} ya no construye un cliente httpx")
+            for call in clients:
+                with self.subTest(module=name):
+                    transport = next(
+                        (kw for kw in call.keywords if kw.arg == "transport"), None
+                    )
+                    self.assertIsNotNone(
+                        transport,
+                        f"{name}: httpx.AsyncClient sin transport=; "
+                        "usa create_ssrf_safe_transport()",
+                    )
+                    self.assertIsInstance(transport.value, ast.Call)
+                    self.assertEqual(
+                        transport.value.func.id, "create_ssrf_safe_transport"
+                    )
+                    checked += 1
+        self.assertGreaterEqual(checked, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
