@@ -102,3 +102,31 @@ class DeploymentConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DeployGateTests(unittest.TestCase):
+    """A live monitoring battery must not be able to block a deploy.
+
+    Render waits on checksPass, so a red mark on any workflow stops the release.
+    The cloud diagnostic talks to the running service, which means it fails when
+    production is slow, rate-limited or briefly down - none of which is a reason
+    to refuse shipping, least of all a fix for production. Several commits sat
+    undeployed while the endpoints they added returned 404.
+    """
+
+    def test_the_live_diagnostic_cannot_block_a_release(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "cloud-diagnostic.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("continue-on-error: true", workflow)
+        # Still runs and still uploads its report: non-blocking is not the same
+        # as not looking.
+        self.assertIn("Run 24-case Orion Cloud diagnostic", workflow)
+        self.assertIn("upload-artifact", workflow)
+
+    def test_the_battery_paces_itself_against_the_rate_limiter(self) -> None:
+        runner = (ROOT / "backend" / "evals" / "run_cloud_evaluation.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("PAUSE_BETWEEN_CASES_SECONDS", runner)
+        self.assertIn("time.sleep(PAUSE_BETWEEN_CASES_SECONDS)", runner)

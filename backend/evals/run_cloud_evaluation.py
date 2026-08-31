@@ -18,6 +18,10 @@ from backend.evals.run_local_evaluation import (
 )
 
 
+# Orion's rate limiter is a single shared bucket for the whole deployment, so a
+# battery fired back to back trips it and then grades its own blocked requests.
+PAUSE_BETWEEN_CASES_SECONDS = 6.0
+
 DEFAULT_CLOUD_URL = "https://orion-core-prototype.onrender.com/api/v1"
 DIAGNOSTIC_PATH = Path(__file__).with_name("diagnostic_24_cases.json")
 # Factual accuracy: the existing datasets check how Orion reasons, not whether
@@ -289,6 +293,8 @@ def main() -> int:
             dataset_results: list[dict[str, object]] = []
 
             for index, case in enumerate(cases, start=1):
+                if index > 1:
+                    time.sleep(PAUSE_BETWEEN_CASES_SECONDS)
                 question = _trace_question(case)
                 streamed = _stream_case(
                     client,

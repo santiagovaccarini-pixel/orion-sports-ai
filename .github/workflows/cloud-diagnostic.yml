@@ -53,8 +53,14 @@ jobs:
             echo "ORION_API_KEY no está configurada como GitHub Actions secret."
           fi
 
+      # Monitoring, not a build gate. This battery talks to the live service, so
+      # it fails when production is slow, rate-limited or briefly down - none of
+      # which is a reason to refuse shipping, least of all a fix for production.
+      # Render waits on checksPass, so a red mark here used to block every
+      # deploy silently.
       - name: Run 24-case Orion Cloud diagnostic
         if: steps.auth.outputs.available == 'true'
+        continue-on-error: true
         env:
           ORION_API_KEY: ${{ secrets.ORION_API_KEY }}
         run: |
