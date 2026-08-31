@@ -144,6 +144,22 @@ class DeployGateTests(unittest.TestCase):
         self.assertIn("unittest discover -s backend/tests", script)
         self.assertIn("unittest discover -s backend/tests", workflow)
 
+    def test_the_local_check_also_covers_the_frontend_gate(self) -> None:
+        """Every gating workflow has to be reachable from one local command.
+
+        The frontend job blocks a deploy exactly like the backend one, and its
+        lint step had been failing for a day without anyone running it here. A
+        check nobody can run locally is a check that only reports damage.
+        """
+
+        workflow = (ROOT / ".github" / "workflows" / "frontend-tests.yml").read_text(
+            encoding="utf-8"
+        )
+        script = (ROOT / "scripts" / "verify-like-ci.sh").read_text(encoding="utf-8")
+        for step in ("npm audit --audit-level=high", "npm run lint", "npm test"):
+            self.assertIn(step, workflow)
+            self.assertIn(step, script)
+
     def test_the_battery_paces_itself_against_the_rate_limiter(self) -> None:
         runner = (ROOT / "backend" / "evals" / "run_cloud_evaluation.py").read_text(
             encoding="utf-8"

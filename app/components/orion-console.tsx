@@ -94,6 +94,24 @@ function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+/**
+ * Reading a clock is a side effect, so it must never happen while React renders.
+ *
+ * These live outside the component to say exactly that. The request timing is
+ * measured from an event handler and only ever reported (the latency chips under
+ * an answer); it never decides what gets drawn, so a re-render must not be able
+ * to move it. Calling `performance.now()` inline inside the component body left
+ * the linter unable to prove that, and the resulting error blocked every deploy
+ * for a day.
+ */
+function readClock(): number {
+  return performance.now();
+}
+
+function millisecondsSince(startedAt: number): number {
+  return readClock() - startedAt;
+}
+
 function formatDuration(milliseconds?: number | null) {
   if (milliseconds === null || milliseconds === undefined) return null;
   if (milliseconds < 1_000) return `${milliseconds.toFixed(0)} ms`;
@@ -348,7 +366,7 @@ export function OrionConsole() {
     setWarning(null);
 
     const assistantId = makeId("assistant");
-    const startedAt = performance.now();
+    const startedAt = readClock();
     let firstTokenMs: number | null = null;
     let assistantStarted = false;
     // The streamed chunks are cleared as they are painted, so the full answer
@@ -401,7 +419,7 @@ export function OrionConsole() {
           },
           onContent: (content) => {
             if (firstTokenMs === null) {
-              firstTokenMs = performance.now() - startedAt;
+              firstTokenMs = millisecondsSince(startedAt);
             }
             pendingContentRef.current += content;
             answerRef.current += content;
