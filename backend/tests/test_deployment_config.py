@@ -100,10 +100,6 @@ class DeploymentConfigTests(unittest.TestCase):
         )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class DeployGateTests(unittest.TestCase):
     """A live monitoring battery must not be able to block a deploy.
 
@@ -130,3 +126,6 @@ class DeployGateTests(unittest.TestCase):
         )
         self.assertIn("PAUSE_BETWEEN_CASES_SECONDS", runner)
         self.assertIn("time.sleep(PAUSE_BETWEEN_CASES_SECONDS)", runner)
+
+if __name__ == "__main__":
+    unittest.main()
