@@ -4,7 +4,7 @@ import unittest
 from datetime import date
 from typing import get_args
 
-from backend.app.core.config import CLOUD_MODEL_PROVIDERS, Settings
+from backend.app.core.config import CLOUD_MODEL_PROVIDERS, Settings, get_settings
 from backend.app.core.identity import (
     ORION_CREATOR_NAME,
     _engine_for_provider,
@@ -70,13 +70,23 @@ class OrionIdentityTests(unittest.TestCase):
 
     def test_current_engine_fact_is_sourced_from_settings_not_hardcoded(self) -> None:
         # Live testing found Orion answering "GPT-4 by OpenAI" when asked which
-        # engine powers it — a self-identity hallucination, since the real engine
-        # is gpt-oss served via Cloudflare Workers AI. This fact must come from
-        # settings (so it can't drift from the real deployment) and be stated
-        # affirmatively so the model has a grounded answer instead of guessing.
+        # engine powers it — a self-identity hallucination. This fact must come
+        # from settings (so it can't drift from the real deployment) and be
+        # stated affirmatively so the model has a grounded answer instead of
+        # guessing.
+        #
+        # Naming one provider here made the assertion depend on whatever
+        # ORION_MODEL_PROVIDER the runner happened to export. CI exports
+        # "ollama", so once the fact started honouring the provider this test
+        # passed locally and failed there — and that red mark silently blocked
+        # every deploy, since Render waits on checksPass. What the fact owes is
+        # agreement with the configuration, whatever it is; the per-provider
+        # wording is pinned by the next test.
+        quick, deep, host = _engine_for_provider(get_settings())
         fact = current_engine_fact()
-        self.assertIn("Cloudflare Workers AI", fact)
-        self.assertIn("gpt-oss", fact)
+        self.assertIn(host, fact)
+        self.assertIn(quick, fact)
+        self.assertIn(deep, fact)
         self.assertIn("No es GPT-4", fact)
         self.assertIn(fact, creator_context())
         self.assertIn(fact, institutional_identity_brief())

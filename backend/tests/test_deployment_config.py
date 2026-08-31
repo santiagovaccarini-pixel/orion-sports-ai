@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -119,6 +120,29 @@ class DeployGateTests(unittest.TestCase):
         # as not looking.
         self.assertIn("Run 24-case Orion Cloud diagnostic", workflow)
         self.assertIn("upload-artifact", workflow)
+
+    def test_the_local_check_runs_under_the_same_environment_as_ci(self) -> None:
+        """"Green locally" has to mean "green in CI", or the gate blocks blindly.
+
+        The suite was usually run here with no ORION_* variables set, while CI
+        exports a provider. An assertion that read the ambient provider passed
+        here and failed there, and that red mark held every deploy back for a
+        day. scripts/verify-like-ci.sh exists to reproduce CI's environment; if
+        the workflow changes and the script does not, it stops being a check and
+        goes back to being a guess.
+        """
+
+        workflow = (ROOT / ".github" / "workflows" / "backend-tests.yml").read_text(
+            encoding="utf-8"
+        )
+        script = (ROOT / "scripts" / "verify-like-ci.sh").read_text(encoding="utf-8")
+        declared = re.findall(r"^\s+(ORION_[A-Z_]+):\s*\"?([^\"\n]*)\"?", workflow, re.M)
+        self.assertTrue(declared, "the workflow no longer pins any ORION_ variable")
+        for name, value in declared:
+            self.assertIn(f"{name}={value}", script)
+        # Same runner, too: unittest and pytest do not collect the same tests.
+        self.assertIn("unittest discover -s backend/tests", script)
+        self.assertIn("unittest discover -s backend/tests", workflow)
 
     def test_the_battery_paces_itself_against_the_rate_limiter(self) -> None:
         runner = (ROOT / "backend" / "evals" / "run_cloud_evaluation.py").read_text(
