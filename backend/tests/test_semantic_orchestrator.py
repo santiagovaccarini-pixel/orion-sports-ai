@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from dataclasses import replace
 
 from backend.app.domain.models import SelectedMode
 from backend.app.domain.schemas import MAX_MESSAGE_CHARACTERS, ChatMessage, SportContext
@@ -1284,7 +1285,16 @@ class WrongEntityTests(unittest.TestCase):
         self.assertEqual(review.relevant_source_ids, ("W1", "W2"))
         self.assertIn("W3", review.discarded_source_ids)
 
-    def test_claims_resting_only_on_the_rejected_source_lose_their_support(self) -> None:
+    def test_claims_resting_only_on_the_rejected_source_leave_with_it(self) -> None:
+        """The homonym's club must vanish, not survive as an "unsupported" line.
+
+        Stripping the claim's sources but keeping the claim put it in the
+        no-support group of the source contrast, and the answer stage covers
+        every group - so the wrong person's clubs walked right back into the
+        answer, now labelled instead of removed. A claim orphaned by this
+        rejection is somebody else's biography.
+        """
+
         review, _ = drop_sources_about_another_entity(
             self._review(
                 (SourceCheck("W1", entity=True), SourceCheck("W3", entity=False))
@@ -1292,8 +1302,38 @@ class WrongEntityTests(unittest.TestCase):
         )
         by_statement = {claim.statement: claim for claim in review.cross_checked_claims}
         self.assertEqual(by_statement["Dirigió a Colón"].confidence, "corroborado")
-        # The wrong-person club can no longer be stated at all.
-        self.assertEqual(by_statement["Dirigió a Celta de Vigo"].confidence, "sin respaldo")
+        self.assertNotIn("Dirigió a Celta de Vigo", by_statement)
+
+    def test_a_claim_with_other_support_only_loses_the_rejected_source(self) -> None:
+        base = self._review(
+            (SourceCheck("W2", entity=False),)
+        )
+        review, _ = drop_sources_about_another_entity(base)
+        by_statement = {claim.statement: claim for claim in review.cross_checked_claims}
+        # W2 also backed "Dirigió a Colón"; the claim keeps W1 and drops to
+        # single-source confidence instead of disappearing.
+        self.assertEqual(by_statement["Dirigió a Colón"].supporting_source_ids, ("W1",))
+        self.assertEqual(by_statement["Dirigió a Colón"].confidence, "una sola fuente")
+
+    def test_a_dispute_sourced_only_from_the_wrong_person_is_not_a_dispute(self) -> None:
+        """Two people disagreeing about their own lives is not a conflict.
+
+        "Debutó en 1998" came from the homonym; the source about the real
+        person contradicts it because they are different careers. Keeping the
+        entry as "en conflicto" would show the reader two competing versions
+        where only one is about the person they asked for.
+        """
+
+        base = self._review((SourceCheck("W3", entity=False),))
+        disputed = CrossCheckedClaim(
+            "Debutó en 1998", supporting_source_ids=("W3",), conflicting_source_ids=("W1",)
+        )
+        base = replace(
+            base, cross_checked_claims=(*base.cross_checked_claims, disputed)
+        )
+        review, _ = drop_sources_about_another_entity(base)
+        statements = {claim.statement for claim in review.cross_checked_claims}
+        self.assertNotIn("Debutó en 1998", statements)
 
     def test_an_incomplete_check_is_not_a_wrong_one(self) -> None:
         """Missing a period or a unit makes a source partial, not about someone else.

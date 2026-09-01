@@ -23,14 +23,23 @@ from backend.app.services.semantic_tools import (
 from backend.app.services.web_research import WebSource
 
 
-# Must stay below ChatMessage.content's max_length (20_000, schemas.py) since
-# this string is sent verbatim as a user message to the reviewer model.
 # The reviewer's whole view of the world: every source, every excerpt, in one
-# prompt. At 19.500 it could not hold four pages at the old 6.000-per-page cap,
-# so evidence Orion had already fetched was thrown away before being judged. That
-# number was sized for a provider charging by a scarce daily quota; the current
-# engine takes 131.000 tokens of context, so the constraint no longer applies.
+# user message. Two other limits sit downstream of this one and both must stay
+# larger, or they - not this constant - become what actually decides how much
+# evidence the reviewer sees: ChatMessage.content's max_length (100_000,
+# schemas.py) validates the message, and the provider's quick history budget
+# (quick_history_characters, config.py) trims it in transport. The trim is the
+# treacherous one: it keeps the head of the message, and the evidence lives at
+# the tail, so an undersized budget silently discards exactly the part this
+# input exists to deliver. It happened: a shared 12.000 budget left the reviewer
+# judging on 17% of what the pipeline had built. test_context_budgets.py pins
+# the ordering so no future resize can quietly invert it again.
 MAX_REVIEW_INPUT_CHARACTERS = 70_000
+# Saved memory is one of the fixed sections of the review input. Unbounded, a
+# fat memory pushes the evidence sections past the final clip - the reviewer
+# would again lose pages, this time to the user's own notes. Memory entries cap
+# at 1.000 characters each, so this holds the ten longest possible entries.
+MAX_REVIEW_MEMORY_CHARACTERS = 10_000
 # How much of one source the reviewer is allowed to read. This, not the page
 # reader's own limit, is what actually decides how much of a page reaches the
 # model: opening a full article and then showing the reviewer 3.000 characters of
@@ -345,6 +354,24 @@ def drop_sources_about_another_entity(
         if source_id.strip().upper() not in mismatched
     )
     already_discarded = {item.strip().upper() for item in review.discarded_source_ids}
+    surviving_claims: list[CrossCheckedClaim] = []
+    for claim in review.cross_checked_claims:
+        remaining_support = tuple(
+            item
+            for item in claim.supporting_source_ids
+            if item.strip().upper() not in mismatched
+        )
+        if claim.supporting_source_ids and not remaining_support:
+            # Everything that asserted this fact was about the wrong person, so
+            # the fact itself is about the wrong person. Stripping the sources
+            # but keeping the claim was not neutral: it landed in the "no
+            # support" group, and the answer stage is told to cover every group
+            # - which walked the homonym's clubs right back into the answer as
+            # "unsupported" lines. A claim orphaned by this rejection is not
+            # under-evidenced; it is somebody else's biography, and it leaves
+            # with its sources.
+            continue
+        surviving_claims.append(replace(claim, supporting_source_ids=remaining_support))
     return (
         replace(
             review,
@@ -353,18 +380,7 @@ def drop_sources_about_another_entity(
                 *review.discarded_source_ids,
                 *(item for item in dropped if item.strip().upper() not in already_discarded),
             ),
-            # Claims resting only on a rejected source go with it.
-            cross_checked_claims=tuple(
-                replace(
-                    claim,
-                    supporting_source_ids=tuple(
-                        item
-                        for item in claim.supporting_source_ids
-                        if item.strip().upper() not in mismatched
-                    ),
-                )
-                for claim in review.cross_checked_claims
-            ),
+            cross_checked_claims=tuple(surviving_claims),
         ),
         dropped,
     )
@@ -1233,12 +1249,17 @@ def cross_check_context(review: EvidenceReview) -> str:
     return (
         "CONTRASTE ENTRE FUENTES (agrupado por Orion contando fuentes, no por el "
         "modelo). Reglas obligatorias para la respuesta:\n"
-        "- Incluí los hechos de todos los grupos: los de una sola fuente también "
-        "son parte de la respuesta, nunca los omitas por tener menos respaldo.\n"
+        "- Incluí los hechos CORROBORADOS, los de UNA SOLA FUENTE y los EN "
+        "CONFLICTO: los de una sola fuente también son parte de la respuesta, "
+        "nunca los omitas por tener menos respaldo.\n"
         "- Solo podés presentar como confirmado lo que está en CORROBORADO. Lo de "
         "una sola fuente se presenta diciendo que lo afirma una sola fuente.\n"
         "- Lo que está EN CONFLICTO se presenta mostrando las dos versiones y "
         "diciendo que las fuentes no coinciden. No elijas una ni promedies.\n"
+        "- Lo que está SIN RESPALDO no puede aparecer como hecho: ninguna fuente "
+        "aceptada lo sostiene. Omitilo, salvo que sea central para lo que se "
+        "preguntó; en ese caso decí explícitamente que ninguna fuente lo "
+        "respalda.\n"
         "- No agregues hechos que no estén en esta lista.\n\n" + "\n\n".join(sections)
     )
 
@@ -1360,8 +1381,11 @@ def _review_input(
     if memory_context:
         # Without this the reviewer can declare a fact "missing" that the user
         # already saved, and the final stage is then told to refuse to answer.
+        # Clipped, because memory shares this input with the evidence: the final
+        # size clip cuts from the tail, and the evidence lives at the tail, so
+        # every unbounded character of notes would evict a character of pages.
         fixed_parts.append(
-            memory_context
+            _clip(memory_context, MAX_REVIEW_MEMORY_CHARACTERS)
             + "\nTratá esta memoria como evidencia provista por el usuario: si "
             "responde lo que falta, no la declares como información faltante."
         )
@@ -1543,7 +1567,7 @@ def format_reasoning_context(
         + json.dumps(header, ensure_ascii=False),
     ]
     if memory_context:
-        sections.append(memory_context)
+        sections.append(_clip(memory_context, MAX_REVIEW_MEMORY_CHARACTERS))
     if contract.audited:
         sections.append(
             "CONTRATO SEMÁNTICO AUDITADO: respondé exactamente a resolved_request. "
@@ -1626,11 +1650,23 @@ def format_reasoning_context(
         for index, source in enumerate(web_sources, start=1):
             source_id = f"W{index}"
             if include_all or source_id in relevant_ids:
+                # Same clip as the review stage: the reviewer validated these
+                # sources reading at most this much of each, so text beyond it
+                # is text no review ever audited - and on four deepened pages it
+                # was ~30.000 characters of unaudited prompt per answer.
                 included_blocks.append(
                     f"[{source_id}] {_fence_untrusted(source.title)}\n"
                     f"URL: {_safe_line(source.url)}\n"
                     f"{_source_date_line(source)}\n"
-                    f"Extracto: {_fence_untrusted(source.excerpt)}"
+                    "Extracto: "
+                    + _fence_untrusted(
+                        _clip(
+                            source.excerpt,
+                            REVIEW_DEEPENED_SOURCE_CLIP
+                            if source.deepened
+                            else REVIEW_SOURCE_CLIP,
+                        )
+                    )
                 )
             else:
                 excluded_blocks.append(f"[{source_id}] {_fence_untrusted(source.title)}")

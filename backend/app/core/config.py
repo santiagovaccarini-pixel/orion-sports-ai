@@ -125,6 +125,14 @@ class Settings:
     # Ollama compatibility budgets. Cloudflare uses the explicit cloud fields above.
     quick_max_tokens: int = 768
     deep_max_tokens: int = 1536
+    # Transport trim for outgoing messages. The dataclass default is the LOCAL
+    # budget (a small model on Santiago's CPU); get_settings() resolves the cloud
+    # budget by provider, exactly like max_tokens above. This number is load-
+    # bearing far beyond chat history: the evidence reviewer packs its whole
+    # world - conversation, plan, every fetched page - into ONE quick-mode user
+    # message, and whatever does not fit here is silently discarded before any
+    # model sees it. With the old shared 12.000 the reviewer was judging on 17%
+    # of what the pipeline had built for it, deepened pages first to go.
     quick_history_characters: int = 12_000
     deep_history_characters: int = 30_000
     keep_alive: str = "10m"
@@ -233,11 +241,16 @@ def get_settings() -> Settings:
             if provider in CLOUD_MODEL_PROVIDERS
             else local_deep_max_tokens
         ),
+        # Cloud engines read 131k tokens of context, so the trim only needs to
+        # bound abuse, not economize; local models get the small budgets that
+        # keep a CPU answer arriving this year. One env var overrides either.
         quick_history_characters=_read_positive_int(
-            "ORION_QUICK_HISTORY_CHARACTERS", 12_000
+            "ORION_QUICK_HISTORY_CHARACTERS",
+            120_000 if provider in CLOUD_MODEL_PROVIDERS else 12_000,
         ),
         deep_history_characters=_read_positive_int(
-            "ORION_DEEP_HISTORY_CHARACTERS", 30_000
+            "ORION_DEEP_HISTORY_CHARACTERS",
+            160_000 if provider in CLOUD_MODEL_PROVIDERS else 30_000,
         ),
         keep_alive=os.getenv("ORION_KEEP_ALIVE", "10m"),
         request_timeout_seconds=_read_int("ORION_REQUEST_TIMEOUT", 300),
