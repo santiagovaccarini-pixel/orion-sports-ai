@@ -505,7 +505,7 @@ async def build_reasoning_bundle(
             trace=trace,
         )
 
-    local_evidence = collect_local_evidence(
+    local_evidence = await collect_local_evidence(
         documents,
         plan,
         original_user_request=request.messages[-1].content,

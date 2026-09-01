@@ -57,6 +57,12 @@ services:
         sync: false
       - key: ORION_WEB_MINIMUM_SOURCES
         value: "3"
+      # Ranking memory and document chunks by meaning. Uses the Cloudflare
+      # credentials already configured below, on a model inside the free
+      # allowance; if either is missing, or the call is slow, both fall back to
+      # the previous behaviour, so this can be turned off with one value.
+      - key: ORION_EMBEDDINGS_ENABLED
+        value: "true"
       - key: ORION_SEMANTIC_ORCHESTRATION
         value: "true"
       - key: ORION_SEMANTIC_MAX_TOOL_ROUNDS

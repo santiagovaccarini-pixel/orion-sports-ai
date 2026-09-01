@@ -190,6 +190,87 @@ def retrieve_local_chunks(
             )
 
     candidates.sort(key=lambda item: (-item.score, item.document_name, item.chunk_index))
+    return _fit(candidates, max_characters=max_characters, max_chunks=max_chunks)
+
+
+async def retrieve_local_chunks_by_meaning(
+    documents: Sequence[KnowledgeDocument],
+    query: str,
+    *,
+    provider,
+    timeout_seconds: float,
+    selected_names: Sequence[str] = (),
+    max_characters: int = 12_000,
+    max_chunks: int = 12,
+) -> tuple[RetrievedLocalChunk, ...]:
+    """Pick chunks by what they mean, falling back to word overlap.
+
+    Overlap fails precisely where a person needs this most: the row answering
+    "¿cuánto corrió Pérez?" reads "Perez,9800,420" and shares no word with the
+    question, while a paragraph that happens to repeat "cuánto" wins. An
+    embedding compares meanings instead, so the row is found for saying the
+    thing rather than for echoing the wording.
+
+    Every failure path returns the lexical result: not configured, provider
+    down, request too slow, nothing to rank. Relevance degrades; the answer
+    never does.
+    """
+
+    lexical = retrieve_local_chunks(
+        documents,
+        query,
+        selected_names=selected_names,
+        max_characters=max_characters,
+        max_chunks=max_chunks,
+    )
+    if not getattr(provider, "available", False) or not query.strip():
+        return lexical
+
+    wanted = {name.casefold() for name in selected_names if name.strip()}
+    pool: list[tuple[str, int, str]] = []
+    for document in documents:
+        if wanted and document.name.casefold() not in wanted:
+            continue
+        for index, chunk in enumerate(_split_document(document)):
+            pool.append((document.name, index, chunk))
+    if len(pool) <= max_chunks:
+        # Everything already fits: ranking would spend a network call to
+        # reorder a list that travels whole either way.
+        return lexical
+
+    from backend.app.services.embeddings import rank_with_timeout
+
+    chosen = await rank_with_timeout(
+        provider,
+        query,
+        [chunk for _name, _index, chunk in pool],
+        limit=max_chunks,
+        timeout_seconds=timeout_seconds,
+    )
+    if chosen is None:
+        return lexical
+
+    ranked = [
+        RetrievedLocalChunk(
+            document_name=pool[position][0],
+            chunk_index=pool[position][1],
+            content=pool[position][2],
+            # Rank order, highest first, so _fit keeps the closest matches when
+            # the character budget runs out.
+            score=len(chosen) - order,
+            truncated=True,
+        )
+        for order, position in enumerate(chosen)
+    ]
+    return _fit(ranked, max_characters=max_characters, max_chunks=max_chunks)
+
+
+def _fit(
+    candidates: list[RetrievedLocalChunk],
+    *,
+    max_characters: int,
+    max_chunks: int,
+) -> tuple[RetrievedLocalChunk, ...]:
     remaining = max_characters
     result: list[RetrievedLocalChunk] = []
     for candidate in candidates:

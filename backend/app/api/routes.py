@@ -73,6 +73,7 @@ from backend.app.services.conversation_repository import (
 from backend.app.services.conversation_store import StoredMessage
 from backend.app.services.database import DatabaseUnavailableError
 from backend.app.services.document_text import DocumentExtractionError, extract_text
+from backend.app.services.embeddings import create_embedding_provider, rank_with_timeout
 from backend.app.services.knowledge_repository import create_knowledge_base
 from backend.app.services.memory_repository import (
     MemoryRepository,
@@ -548,23 +549,50 @@ def _documents() -> list[KnowledgeDocument]:
     return _knowledge_base().list_documents()
 
 
-async def _memory_context() -> str:
+async def _memory_context(query: str = "") -> str:
     """Saved memory as prompt context, or empty when the user saved nothing.
 
     Runs in a thread: the store may be Postgres, and blocking the event loop on
     network I/O would stall every other in-flight request. A memory failure
     degrades to no memory rather than failing the whole chat - answering without
     saved context is far better than not answering.
+
+    Every entry travels while the list is short, which is the honest default:
+    the model reads them all and judges relevance by meaning. Past the
+    threshold that stops being viable - memory enters three prompts per
+    question and would start crowding out the evidence it exists to support -
+    so the entries closest in meaning to the request are selected first. That
+    ranking is arithmetic on embeddings, never word overlap, and when it is
+    unavailable the whole list travels exactly as before.
     """
 
-    def _load() -> str:
-        return format_memory_context(_memory_store().list_entries())
+    settings = get_settings()
+
+    def _load() -> list[MemoryEntry]:
+        return _memory_store().list_entries()
 
     try:
-        return await asyncio.to_thread(_load)
+        entries = await asyncio.to_thread(_load)
     except DatabaseUnavailableError:
         logger.warning("No se pudo leer la memoria; sigo sin ella", exc_info=True)
         return ""
+
+    if len(entries) > settings.memory_ranking_threshold and query.strip():
+        chosen = await rank_with_timeout(
+            create_embedding_provider(settings),
+            query,
+            [f"{entry.category}: {entry.content}" for entry in entries],
+            limit=settings.memory_ranking_keep,
+            timeout_seconds=settings.embeddings_timeout_seconds,
+        )
+        if chosen is not None:
+            # Kept in their saved order, not in score order: the list is
+            # something the user reads back, and reordering it by a hidden
+            # score would make the same memory look different every question.
+            keep = set(chosen)
+            entries = [entry for index, entry in enumerate(entries) if index in keep]
+
+    return format_memory_context(entries)
 
 
 def _direct_response(
@@ -801,7 +829,7 @@ async def suggest_memory_entries(
             provider,
             request.messages,
             request.answer,
-            memory_context=await _memory_context(),
+            memory_context=await _memory_context(request.messages[-1].content),
         )
     except (ModelProviderUnavailableError, ModelProviderConfigurationError):
         # A proposal is a convenience, never the point of the request: when the
@@ -1129,7 +1157,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
                 settings,
                 documents,
                 trace=trace,
-                memory_context=await _memory_context(),
+                memory_context=await _memory_context(request.messages[-1].content),
             )
             prepared = await _prepare_selected_chat(
                 request,
@@ -1281,7 +1309,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                         documents,
                         trace=trace,
                         on_stage=stage_events.put_nowait,
-                        memory_context=await _memory_context(),
+                        memory_context=await _memory_context(request.messages[-1].content),
                     )
                 )
                 try:

@@ -276,11 +276,13 @@ class SemanticOrchestratorTests(unittest.TestCase):
         rows.extend(f"Jugador {index},dato-{index}" for index in range(100))
         rows.append("Jugador B,ZETA=98765")
         document = KnowledgeDocument("2", "b.csv", "\n".join(rows))
-        evidence = collect_local_evidence(
-            [KnowledgeDocument("1", "a.csv", "irrelevante"), document],
-            plan,
-            original_user_request="¿Cuál es ZETA para Jugador B?",
-            max_characters=4_000,
+        evidence = asyncio.run(
+            collect_local_evidence(
+                [KnowledgeDocument("1", "a.csv", "irrelevante"), document],
+                plan,
+                original_user_request="¿Cuál es ZETA para Jugador B?",
+                max_characters=4_000,
+            )
         )
         self.assertTrue(evidence)
         self.assertTrue(all(item.document_name == "b.csv" for item in evidence))

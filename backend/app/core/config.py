@@ -148,6 +148,17 @@ class Settings:
     # deliberately small: it must stay a set of deliberate facts, not a log.
     memory_max_entries: int = 100
     memory_max_entry_characters: int = 1_000
+    # Ranking by meaning for memory and local documents. Off unless enabled and
+    # Cloudflare credentials exist; when off, both fall back to the behaviour
+    # they had before, so this is a relevance feature and never a dependency.
+    # bge-m3 is multilingual on purpose: the text is Spanish.
+    embeddings_enabled: bool = False
+    embeddings_model: str = "@cf/baai/bge-m3"
+    embeddings_timeout_seconds: float = 4.0
+    # Below this many saved entries, every one still travels: ranking a short
+    # list costs a network call to save nothing.
+    memory_ranking_threshold: int = 12
+    memory_ranking_keep: int = 10
     web_enabled: bool = True
     web_provider: str = "auto"
     tavily_api_key: str | None = None
@@ -275,6 +286,15 @@ def get_settings() -> Settings:
         memory_max_entry_characters=_read_positive_int(
             "ORION_MEMORY_MAX_ENTRY_CHARACTERS", 1_000
         ),
+        embeddings_enabled=_read_bool("ORION_EMBEDDINGS_ENABLED", False),
+        embeddings_model=os.getenv("ORION_EMBEDDINGS_MODEL", "@cf/baai/bge-m3"),
+        embeddings_timeout_seconds=float(
+            _read_positive_int("ORION_EMBEDDINGS_TIMEOUT_SECONDS", 4)
+        ),
+        memory_ranking_threshold=_read_positive_int(
+            "ORION_MEMORY_RANKING_THRESHOLD", 12
+        ),
+        memory_ranking_keep=_read_positive_int("ORION_MEMORY_RANKING_KEEP", 10),
         web_enabled=_read_bool("ORION_WEB_ENABLED", True),
         web_provider=_read_web_provider(),
         tavily_api_key=os.getenv("ORION_TAVILY_API_KEY") or None,

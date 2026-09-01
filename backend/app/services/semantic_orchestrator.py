@@ -16,7 +16,8 @@ from backend.app.services.knowledge_base import (
     KnowledgeDocument,
     is_tabular_document,
 )
-from backend.app.services.local_retrieval import retrieve_local_chunks
+from backend.app.services.embeddings import create_embedding_provider
+from backend.app.services.local_retrieval import retrieve_local_chunks_by_meaning
 from backend.app.services.semantic_tools import (
     CsvFilter,
     CsvOperationSpec,
@@ -1138,13 +1139,20 @@ def conservative_fallback_plan(
     )
 
 
-def collect_local_evidence(
+async def collect_local_evidence(
     documents: Sequence[KnowledgeDocument],
     plan: SemanticPlan,
     *,
     original_user_request: str = "",
     max_characters: int = 12_000,
 ) -> tuple[LocalEvidence, ...]:
+    """Pull the parts of the uploaded documents that bear on this request.
+
+    Chunks are ranked by meaning when an embedding model is configured, and by
+    word overlap otherwise - the fallback is the behaviour Orion always had, so
+    this is a relevance improvement and never a new dependency.
+    """
+
     if not plan.use_local_data or not documents or max_characters <= 0:
         return ()
     retrieval_query = "\n".join(
@@ -1158,9 +1166,12 @@ def collect_local_evidence(
         )
         if item
     )
-    chunks = retrieve_local_chunks(
+    settings = get_settings()
+    chunks = await retrieve_local_chunks_by_meaning(
         documents,
         retrieval_query,
+        provider=create_embedding_provider(settings),
+        timeout_seconds=settings.embeddings_timeout_seconds,
         selected_names=plan.local_document_names,
         max_characters=max_characters,
         max_chunks=12,
