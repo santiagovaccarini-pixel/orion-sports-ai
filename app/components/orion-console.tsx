@@ -63,6 +63,18 @@ const MODE_LABELS: Record<RequestedMode, string> = {
   deep: "Profundo",
 };
 
+/** What the reasoning pipeline is doing right now, in the reader's words.
+ *
+ * The keys are the pipeline's own stage names - a closed set Orion emits, not
+ * user text being classified. An unknown stage falls back to the generic label
+ * rather than showing an internal identifier. */
+const STAGE_LABELS: Record<string, string> = {
+  planning: "Entendiendo la consulta",
+  searching: "Buscando en la web",
+  reading: "Leyendo las páginas elegidas",
+  reviewing: "Contrastando la evidencia",
+};
+
 const SPORT_OPTIONS: ReadonlyArray<{
   value: Sport;
   label: string;
@@ -244,6 +256,7 @@ export function OrionConsole() {
   const [sport, setSport] = useState<Sport>("football");
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
+  const [liveStage, setLiveStage] = useState<string | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [knowledgeMessage, setKnowledgeMessage] = useState<string | null>(null);
@@ -362,6 +375,7 @@ export function OrionConsole() {
     peakCpuRef.current = status?.snapshot.cpu_percent ?? 0;
     setElapsedSeconds(0);
     setLoading(true);
+    setLiveStage(null);
     setError(null);
     setWarning(null);
 
@@ -417,9 +431,13 @@ export function OrionConsole() {
               ),
             );
           },
+          onStage: (stage) => {
+            setLiveStage(STAGE_LABELS[stage] ?? null);
+          },
           onContent: (content) => {
             if (firstTokenMs === null) {
               firstTokenMs = millisecondsSince(startedAt);
+              setLiveStage("Escribiendo la respuesta");
             }
             pendingContentRef.current += content;
             answerRef.current += content;
@@ -972,7 +990,9 @@ export function OrionConsole() {
               })}
               {loading ? (
                 <div className="thinking" role="status">
-                  <span className="thinking-label">Orion está respondiendo</span>
+                  <span className="thinking-label">
+                    {liveStage ?? "Orion está respondiendo"}
+                  </span>
                   <span className="thinking-clock">{elapsedSeconds}s</span>
                   <span className="thinking-dots" aria-hidden="true">
                     <i /><i /><i />

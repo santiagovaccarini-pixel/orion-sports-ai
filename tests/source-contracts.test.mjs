@@ -251,3 +251,26 @@ test("every response leaves the worker with its security headers", async () => {
   // make Orion appear to hang until the whole reply is written.
   assert.match(worker, /new Response\(response\.body/);
 });
+
+test("the reader sees which pipeline stage is running, not a blind spinner", async () => {
+  // The core has always streamed stage events (planning, searching, reading,
+  // reviewing); the interface dropped them, so a 30-second deep query looked
+  // like a hang while Orion was busy narrating exactly what it was doing.
+  const api = await readFile(new URL("app/lib/orion-api.ts", root), "utf8");
+  assert.match(api, /type: "stage"/);
+  assert.match(api, /onStage\?\: \(stage: string\) => void/);
+  assert.match(api, /handlers\.onStage\?\.\(event\.stage\)/);
+
+  const component = await readFile(
+    new URL("app/components/orion-console.tsx", root),
+    "utf8",
+  );
+  for (const stage of ["planning", "searching", "reading", "reviewing"]) {
+    assert.match(component, new RegExp(`${stage}:`), `falta la etapa ${stage}`);
+  }
+  assert.match(component, /STAGE_LABELS\[stage\] \?\? null/);
+  // The strip shows the live stage and falls back to the generic label.
+  assert.match(component, /liveStage \?\? "Orión está respondiendo"|liveStage \?\? "Orion está respondiendo"/);
+  // A fresh request must not inherit the previous one's last stage.
+  assert.match(component, /setLoading\(true\);\s*\n\s*setLiveStage\(null\)/);
+});

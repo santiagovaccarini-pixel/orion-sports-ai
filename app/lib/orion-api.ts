@@ -1,6 +1,6 @@
 export type RequestedMode = "auto" | "quick" | "deep";
 export type SelectedMode = "quick" | "deep";
-export type ModelProvider = "ollama" | "cloudflare";
+export type ModelProvider = "ollama" | "cloudflare" | "cerebras" | "groq";
 export type Sport =
   | "general"
   | "football"
@@ -218,6 +218,15 @@ type ChatStreamContent = {
   content: string;
 };
 
+/** Progress marker from the reasoning pipeline (planning, searching, reading,
+ * reviewing). The core has always sent these; the interface used to drop them
+ * on the floor, leaving the reader a spinner for 30 seconds while the answer
+ * was already narrating exactly what it was doing. */
+type ChatStreamStage = {
+  type: "stage";
+  stage: string;
+};
+
 type ChatStreamError = {
   type: "error";
   code?: string;
@@ -229,6 +238,7 @@ type ChatStreamChart = { type: "chart"; chart: OrionChart };
 type ChatStreamEvent =
   | ChatStreamMeta
   | ChatStreamContent
+  | ChatStreamStage
   | ChatStreamDone
   | ChatStreamChart
   | ChatStreamError;
@@ -406,6 +416,7 @@ export async function sendChatStream(
     onMeta: (event: ChatStreamMeta) => void;
     onContent: (content: string) => void;
     onChart: (chart: OrionChart) => void;
+    onStage?: (stage: string) => void;
   },
   signal?: AbortSignal,
 ): Promise<ChatStreamResult> {
@@ -452,6 +463,8 @@ export async function sendChatStream(
       done = event;
     } else if (event.type === "chart") {
       handlers.onChart(event.chart);
+    } else if (event.type === "stage") {
+      handlers.onStage?.(event.stage);
     } else if (event.type === "error") {
       throw new OrionApiError(503, event);
     }
