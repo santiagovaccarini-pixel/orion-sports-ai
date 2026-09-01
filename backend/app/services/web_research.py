@@ -36,6 +36,11 @@ DEFAULT_ALLOWED_DOMAINS = (
     "365scores.com",
 )
 
+# The fallback path downloads pages a search engine chose, so both its size and
+# its excerpt are bounded the same way the deliberate page reader is.
+MAX_FALLBACK_PAGE_BYTES = 750_000
+FALLBACK_EXCERPT_CHARACTERS = 4_000
+
 FOOTBALL_STATS_DOMAINS = (
     "bocajuniors.com.ar",
     "afa.com.ar",
@@ -206,43 +211,38 @@ def _visible_text(value: str) -> str:
     ).strip()
 
 
-def _relevant_excerpt(value: str, query: str, limit: int = 1400) -> str:
-    """Legacy HTML fallback extraction; semantic routing does not depend on it."""
+def _fallback_excerpt(value: str, limit: int = FALLBACK_EXCERPT_CHARACTERS) -> str:
+    """Fit a page into the budget without deciding what it is about.
+
+    This used to score windows by how many of the question's words appeared in
+    them, and keep the winner. Measuring that on the page reader showed why the
+    rule against lexical selection exists: on a reference article the
+    highest-scoring text was the citation markup, because every footnote
+    repeated the subject's name, while the table holding the answer - which
+    names clubs and years without echoing the question - lost and was dropped.
+
+    So Python only fits the page into the budget, sampling evenly from start to
+    end so the whole document is represented. Deciding what matters is the
+    reviewer's job, and it can only do that with the text in front of it. Same
+    approach as web_reader._relevant_excerpt, for the same reason.
+    """
 
     visible = _visible_text(value)
     if len(visible) <= limit:
         return visible
-    folded = _fold(visible)
-    terms = _query_terms(query)
-    if not terms:
+    window_count = 4
+    separator = " […] "
+    window_size = (limit - len(separator) * (window_count - 1)) // window_count
+    if window_size < 1:
         return visible[:limit]
-    candidate_starts: set[int] = {0}
-    for term in terms:
-        offset = 0
-        while len(candidate_starts) < 80:
-            index = folded.find(term, offset)
-            if index < 0:
-                break
-            candidate_starts.add(max(0, index - limit // 3))
-            offset = index + len(term)
-    best_start = 0
-    best_score = -1.0
-    for start in candidate_starts:
-        window = visible[start : start + limit]
-        folded_window = _fold(window)
-        term_hits = sum(3 for term in terms if term in folded_window)
-        repeated_hits = sum(min(folded_window.count(term), 3) for term in terms)
-        numeric_bonus = 2 if re.search(r"\b\d{1,4}\b", window) else 0
-        score = term_hits + repeated_hits + numeric_bonus
-        if score > best_score:
-            best_score = score
-            best_start = start
-    excerpt = visible[best_start : best_start + limit].strip()
-    if best_start > 0:
-        excerpt = f"…{excerpt}"
-    if best_start + limit < len(visible):
-        excerpt = f"{excerpt}…"
-    return excerpt
+    span = max(0, len(visible) - window_size)
+    pieces: list[str] = []
+    for index in range(window_count):
+        start = (span * index) // (window_count - 1)
+        piece = visible[start : start + window_size].strip()
+        if piece:
+            pieces.append(piece)
+    return separator.join(pieces)[:limit] or visible[:limit]
 
 
 def _search_domains(
@@ -438,12 +438,16 @@ async def _research_duckduckgo(
     )
     sources: list[WebSource] = []
     source_domains: set[str] = set()
-    query_terms = _query_terms(query)
     for url in urls:
         try:
             response = await client.get(url)
             response.raise_for_status()
         except httpx.HTTPError:
+            continue
+        # Bounded like the page reader is. This path downloads pages nobody
+        # chose - whatever a search engine happened to return - so an
+        # unbounded read is a size a stranger gets to pick for the server.
+        if len(response.content) > MAX_FALLBACK_PAGE_BYTES:
             continue
         title_match = re.search(
             r"<title[^>]*>(.*?)</title>",
@@ -455,12 +459,16 @@ async def _research_duckduckgo(
             if title_match
             else url
         )
-        body = _relevant_excerpt(response.text, query)
+        body = _fallback_excerpt(response.text)
         if len(body) < 80:
             continue
-        folded_body = _fold(body)
-        if query_terms and not any(term in folded_body for term in query_terms):
-            continue
+        # No lexical filter here any more. Dropping a page because none of the
+        # question's words appear in it is the keyword classification this
+        # project forbids everywhere else, and it discards exactly the useful
+        # page: a squad table answers "¿en qué club juega?" by naming the club,
+        # never by repeating "club" or "juega". Whether a source is relevant is
+        # the semantic reviewer's decision, on the same terms it judges Tavily's
+        # results - this stage only fetches.
         domain = _source_key(
             urlparse(str(response.url)).hostname or "", allowed_domains
         )

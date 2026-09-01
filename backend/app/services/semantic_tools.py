@@ -17,7 +17,11 @@ from backend.app.services.knowledge_base import (
 
 
 VALID_AGGREGATIONS = frozenset({"none", "count", "sum", "average", "min", "max"})
-VALID_CHART_TYPES = frozenset({"bar"})
+# Bars compare separate things; a line reads a sequence. Load across a
+# microcycle, a test repeated over a season, distance week by week - the
+# question a physical trainer asks most often is "how did this move", and a bar
+# chart answers it by making the reader mentally connect the tops themselves.
+VALID_CHART_TYPES = frozenset({"bar", "line"})
 MAX_CHART_POINTS = 40
 MAX_MATCHED_ROWS = 500
 MAX_ABS_EXPONENT = 12
@@ -254,7 +258,7 @@ def execute_csv_operation(
             if not points:
                 raise SemanticToolError("El gráfico no encontró puntos numéricos válidos.")
             chart = {
-                "type": "bar",
+                "type": spec.chart_type,
                 "title": spec.title or f"{value_column} por {x_column}",
                 "unit": "",
                 "source": document.name,

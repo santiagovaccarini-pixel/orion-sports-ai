@@ -340,3 +340,26 @@ test("conversations survive a reload instead of dying with the tab", async () =>
   assert.match(css, /\.conversation-list\s*\{[^}]*overflow-y:\s*auto/s);
   assert.match(css, /\.conversation-list\s*\{[^}]*max-height/s);
 });
+
+test("a progression is drawn as a line, not as bars to connect by eye", async () => {
+  // Load across a microcycle or a test repeated over a season is a sequence.
+  // Bars answer "how did this move" by making the reader join the tops.
+  const component = await readFile(
+    new URL("app/components/orion-console.tsx", root),
+    "utf8",
+  );
+  assert.match(component, /chart\.type === "line"/);
+  assert.match(component, /<polyline/);
+  assert.match(component, /chart-dot/);
+  // A single point has no span to spread across; centring it beats pinning it
+  // to the left edge with the rest of the axis empty.
+  assert.match(component, /chart\.points\.length === 1/);
+
+  const api = await readFile(new URL("app/lib/orion-api.ts", root), "utf8");
+  assert.match(api, /type: "bar" \| "line"/);
+
+  const css = await readFile(new URL("app/globals.css", root), "utf8");
+  // Same green as the bars: one palette, so both read as one system.
+  assert.match(css, /\.chart-line\s*\{[^}]*stroke:\s*#8db92d/s);
+  assert.match(css, /\.chart-line\s*\{[^}]*fill:\s*none/s);
+});

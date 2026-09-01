@@ -57,7 +57,7 @@ export type MemoryEntry = {
 
 export type ChartPoint = { label: string; value: number };
 export type OrionChart = {
-  type: "bar";
+  type: "bar" | "line";
   title: string;
   unit: string;
   source: string;

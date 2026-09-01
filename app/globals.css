@@ -668,6 +668,22 @@ button {
   fill: #8db92d;
 }
 
+/* The same green as the bars: one chart palette, so a bar chart and a line
+   chart in the same answer read as one system rather than two. */
+.chart-line {
+  fill: none;
+  stroke: #8db92d;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.chart-dot {
+  fill: #8db92d;
+  stroke: #fbfbf7;
+  stroke-width: 1.5;
+}
+
 .chart-value,
 .chart-label {
   fill: #5e6257;

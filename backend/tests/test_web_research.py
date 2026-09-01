@@ -15,7 +15,8 @@ from backend.app.services.web_research import (
     _allowed,
     _discover_duckduckgo_urls,
     _extract_search_urls,
-    _relevant_excerpt,
+    _fallback_excerpt,
+    FALLBACK_EXCERPT_CHARACTERS,
     _search_domains,
     _tavily_sources,
     _tavily_time_range,
@@ -60,20 +61,33 @@ class WebResearchTests(unittest.TestCase):
         )
         self.assertEqual(domains[0], "bocajuniors.com.ar")
 
-    def test_relevant_excerpt_keeps_statistic_far_from_page_header(self) -> None:
+    def test_the_fallback_excerpt_represents_the_whole_page(self) -> None:
+        """It fits the page into the budget; it does not choose what matters.
+
+        The old version scored windows by how many of the question's words they
+        contained and kept the winner - keyword selection, which this project
+        forbids, and which fails exactly where it counts: a table answering
+        "¿en qué club juega?" names the club and never repeats "club". Now
+        the page is sampled end to end and the reviewer decides.
+        """
+
         html = (
-            "<html><body>"
-            + ("Menú navegación patrocinadores " * 120)
-            + "Miguel Merentiel registra 50 goles en Boca Juniors en partidos oficiales. "
-            + ("Noticias relacionadas " * 120)
-            + "</body></html>"
+            "<html><body>INICIO_DEL_DOCUMENTO "
+            + ("relleno " * 4_000)
+            + " MEDIO_DEL_DOCUMENTO "
+            + ("relleno " * 4_000)
+            + " FINAL_DEL_DOCUMENTO</body></html>"
         )
-        excerpt = _relevant_excerpt(
-            html, "¿Cuántos goles tiene Miguel Merentiel en Boca?"
-        )
-        self.assertIn("Miguel Merentiel", excerpt)
-        self.assertIn("50 goles", excerpt)
-        self.assertIn("Boca Juniors", excerpt)
+        excerpt = _fallback_excerpt(html)
+        self.assertLessEqual(len(excerpt), FALLBACK_EXCERPT_CHARACTERS)
+        # Both ends survive: a squad table or a results list usually sits at the
+        # bottom of a page, where a head-only clip would never reach it.
+        self.assertIn("INICIO_DEL_DOCUMENTO", excerpt)
+        self.assertIn("FINAL_DEL_DOCUMENTO", excerpt)
+
+    def test_a_short_page_passes_through_whole(self) -> None:
+        excerpt = _fallback_excerpt("<html><body>Un dato corto y completo.</body></html>")
+        self.assertEqual(excerpt, "Un dato corto y completo.")
 
     def test_duckduckgo_parser_does_not_depend_on_result_css_class(self) -> None:
         html = """

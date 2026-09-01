@@ -223,31 +223,101 @@ function renderMarkdown(content: string) {
   );
 }
 
+/** One chart, drawn as bars or as a line.
+ *
+ * Bars compare separate things; a line reads a sequence. Load across a
+ * microcycle or a test repeated over a season is a sequence, and drawing it as
+ * bars makes the reader connect the tops themselves to see the trend that is
+ * the entire point of asking.
+ *
+ * The scale starts at zero in both. On a progression that is not cosmetic:
+ * cropping the axis to the data makes a 3% week-to-week change look like a
+ * cliff, which is exactly the misreading a training decision must not be built
+ * on.
+ */
 function ChartPreview({ chart }: { chart: OrionChart }) {
   const width = 640;
   const height = 260;
   const padding = { top: 42, right: 24, bottom: 48, left: 52 };
   const max = Math.max(...chart.points.map((point) => point.value), 1);
   const chartHeight = height - padding.top - padding.bottom;
-  const barWidth = (width - padding.left - padding.right) / chart.points.length * 0.62;
+  const plotWidth = width - padding.left - padding.right;
+  const slot = plotWidth / chart.points.length;
+  const barWidth = slot * 0.62;
+  const baseline = height - padding.bottom;
+  const isLine = chart.type === "line";
+  // A single point has no span to spread across, so it is centred rather than
+  // pinned to the left edge with the rest of the axis left empty.
+  const pointX = (index: number) =>
+    chart.points.length === 1
+      ? padding.left + plotWidth / 2
+      : padding.left + (plotWidth * index) / (chart.points.length - 1);
+  const pointY = (value: number) => baseline - (value / max) * chartHeight;
+
   return (
     <figure className="chart-preview">
       <figcaption>{chart.title}</figcaption>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${chart.title}. Fuente: ${chart.source}`}>
-        <line x1={padding.left} y1={height - padding.bottom} x2={width - padding.right} y2={height - padding.bottom} className="chart-axis" />
-        {chart.points.map((point, index) => {
-          const slot = (width - padding.left - padding.right) / chart.points.length;
-          const barHeight = (point.value / max) * chartHeight;
-          const x = padding.left + slot * index + (slot - barWidth) / 2;
-          const y = height - padding.bottom - barHeight;
-          return (
-            <g key={`${point.label}-${index}`}>
-              <rect x={x} y={y} width={barWidth} height={barHeight} rx="4" className="chart-bar" />
-              <text x={x + barWidth / 2} y={Math.max(y - 8, 18)} textAnchor="middle" className="chart-value">{point.value.toLocaleString("es-AR")}</text>
-              <text x={x + barWidth / 2} y={height - 20} textAnchor="middle" className="chart-label">{point.label}</text>
-            </g>
-          );
-        })}
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label={`${chart.title}. Fuente: ${chart.source}`}
+      >
+        <line
+          x1={padding.left}
+          y1={baseline}
+          x2={width - padding.right}
+          y2={baseline}
+          className="chart-axis"
+        />
+        {isLine ? (
+          <>
+            <polyline
+              className="chart-line"
+              points={chart.points
+                .map((point, index) => `${pointX(index)},${pointY(point.value)}`)
+                .join(" ")}
+            />
+            {chart.points.map((point, index) => (
+              <g key={`${point.label}-${index}`}>
+                <circle
+                  cx={pointX(index)}
+                  cy={pointY(point.value)}
+                  r="4"
+                  className="chart-dot"
+                />
+                <text
+                  x={pointX(index)}
+                  y={Math.max(pointY(point.value) - 10, 18)}
+                  textAnchor="middle"
+                  className="chart-value"
+                >
+                  {point.value.toLocaleString("es-AR")}
+                </text>
+                <text
+                  x={pointX(index)}
+                  y={height - 20}
+                  textAnchor="middle"
+                  className="chart-label"
+                >
+                  {point.label}
+                </text>
+              </g>
+            ))}
+          </>
+        ) : (
+          chart.points.map((point, index) => {
+            const barHeight = (point.value / max) * chartHeight;
+            const x = padding.left + slot * index + (slot - barWidth) / 2;
+            const y = baseline - barHeight;
+            return (
+              <g key={`${point.label}-${index}`}>
+                <rect x={x} y={y} width={barWidth} height={barHeight} rx="4" className="chart-bar" />
+                <text x={x + barWidth / 2} y={Math.max(y - 8, 18)} textAnchor="middle" className="chart-value">{point.value.toLocaleString("es-AR")}</text>
+                <text x={x + barWidth / 2} y={height - 20} textAnchor="middle" className="chart-label">{point.label}</text>
+              </g>
+            );
+          })
+        )}
       </svg>
       <small>Unidad: {chart.unit} · Fuente local: {chart.source}</small>
     </figure>

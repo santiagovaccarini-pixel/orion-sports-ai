@@ -155,5 +155,70 @@ class SemanticToolsTests(unittest.TestCase):
         self.assertEqual(unsupported, ("250",))
 
 
+
+class LineChartTests(unittest.TestCase):
+    """A line reads a sequence; bars compare separate things.
+
+    Load across a microcycle, a test repeated over a season, distance week by
+    week: the question a physical trainer asks most is "how did this move", and
+    only bars made the reader connect the tops themselves to see it.
+    """
+
+    DOCUMENT = KnowledgeDocument(
+        "1",
+        "cargas.csv",
+        "\n".join(["Semana,Carga", "S1,300", "S2,340", "S3,410", "S4,380"]),
+    )
+
+    def test_a_progression_can_be_drawn_as_a_line(self) -> None:
+        result = execute_csv_operation(
+            [self.DOCUMENT],
+            CsvOperationSpec(
+                document_name="cargas.csv",
+                x_column="Semana",
+                value_column="Carga",
+                chart_type="line",
+                aggregation="none",
+            ),
+        )
+        self.assertIsNone(result.error)
+        assert result.chart is not None
+        self.assertEqual(result.chart["type"], "line")
+        self.assertEqual(
+            [point["label"] for point in result.chart["points"]],
+            ["S1", "S2", "S3", "S4"],
+        )
+
+    def test_bars_still_report_themselves_as_bars(self) -> None:
+        """The type must follow the request, not a constant left over from when
+        bars were the only option."""
+
+        result = execute_csv_operation(
+            [self.DOCUMENT],
+            CsvOperationSpec(
+                document_name="cargas.csv",
+                x_column="Semana",
+                value_column="Carga",
+                chart_type="bar",
+                aggregation="none",
+            ),
+        )
+        assert result.chart is not None
+        self.assertEqual(result.chart["type"], "bar")
+
+    def test_an_unknown_chart_type_is_still_refused(self) -> None:
+        result = execute_csv_operation(
+            [self.DOCUMENT],
+            CsvOperationSpec(
+                document_name="cargas.csv",
+                x_column="Semana",
+                value_column="Carga",
+                chart_type="pie",
+            ),
+        )
+        self.assertIsNotNone(result.error)
+        self.assertIn("pie", result.error or "")
+
+
 if __name__ == "__main__":
     unittest.main()

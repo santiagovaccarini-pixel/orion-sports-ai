@@ -513,8 +513,12 @@ Reglas obligatorias:
 - Para cálculos o gráficos sobre un CSV, usá csv_operation con nombres EXACTOS de
   documento y columnas presentes en el catálogo. Los filtros son igualdades explícitas
   de columna/valor. aggregation puede ser none, count, sum, average, min o max. Para
-  un gráfico, use_chart=true y csv_operation debe incluir chart_type="bar", x_column
-  y value_column. No inventes columnas.
+  un gráfico, use_chart=true y csv_operation debe incluir chart_type, x_column y
+  value_column. Elegí el tipo por lo que el dato es, no por palabras del pedido:
+  "bar" para comparar cosas distintas entre sí (jugadores, equipos, categorías),
+  "line" cuando el eje x es una secuencia y lo que importa es cómo evoluciona
+  (fechas, semanas, jornadas, sesiones sucesivas, mediciones repetidas del mismo
+  sujeto). No inventes columnas.
 - use_calculator/use_chart significan que existe una especificación ejecutable. No los
   actives como una promesa abstracta si no podés completar calculation_expression o
   csv_operation con lo disponible.
@@ -571,7 +575,7 @@ Devolvé exclusivamente un objeto JSON válido con estas claves:
     "value_column": "HSR",
     "aggregation": "average",
     "x_column": null,
-    "chart_type": null,
+    "chart_type": "bar" or "line" or null,
     "title": null
   } or null
 }
