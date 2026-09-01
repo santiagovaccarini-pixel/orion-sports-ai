@@ -368,12 +368,18 @@ export async function deleteMemoryEntry(entryId: string): Promise<void> {
   await parseResponse<{ status: string }>(response);
 }
 
+/** Send the file itself, and let the core turn it into text.
+ *
+ * The browser can read a .txt; it cannot read a PDF, a workbook or a Word
+ * file, and asking someone to convert each one by hand is asking them to do
+ * the work the tool exists to do. The bytes go up as multipart - no
+ * Content-Type header here on purpose, the browser sets it with the boundary. */
 export async function uploadKnowledgeDocument(file: File): Promise<KnowledgeDocument> {
-  const content = await file.text();
-  const response = await fetch(`${API_BASE}/knowledge/documents`, {
+  const body = new FormData();
+  body.append("file", file, file.name);
+  const response = await fetch(`${API_BASE}/knowledge/files`, {
     method: "POST",
-    headers: API_HEADERS,
-    body: JSON.stringify({ name: file.name, content }),
+    body,
   });
   return parseResponse<KnowledgeDocument>(response);
 }

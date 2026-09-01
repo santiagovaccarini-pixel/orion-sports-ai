@@ -167,6 +167,11 @@ class Settings:
     max_concurrent_chats: int = 4
     knowledge_max_documents: int = 200
     knowledge_max_total_characters: int = 20_000_000
+    # Ceiling on one uploaded file, before extraction. A PDF or a workbook is
+    # much larger than the text inside it, so this sits well above the
+    # character limit extraction enforces; it exists so an unbounded read can
+    # never be the caller's choice.
+    knowledge_max_upload_bytes: int = 25 * 1024 * 1024
 
 
 @lru_cache(maxsize=1)
@@ -296,6 +301,9 @@ def get_settings() -> Settings:
             "ORION_RATE_LIMIT_UPLOADS_PER_MINUTE", 6
         ),
         max_concurrent_chats=_read_positive_int("ORION_MAX_CONCURRENT_CHATS", 4),
+        knowledge_max_upload_bytes=_read_positive_int(
+            "ORION_KNOWLEDGE_MAX_UPLOAD_BYTES", 25 * 1024 * 1024
+        ),
         knowledge_max_documents=_read_positive_int(
             "ORION_KNOWLEDGE_MAX_DOCUMENTS", 200
         ),

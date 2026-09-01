@@ -7,7 +7,10 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Sequence
 
-from backend.app.services.knowledge_base import KnowledgeDocument
+from backend.app.services.knowledge_base import (
+    KnowledgeDocument,
+    is_tabular_document,
+)
 
 
 WORD_PATTERN = re.compile(r"[\wáéíóúüñ]+", re.IGNORECASE)
@@ -120,7 +123,7 @@ def _csv_chunks(content: str, *, size: int = 1_500) -> list[str]:
 
 
 def _split_document(document: KnowledgeDocument) -> list[str]:
-    if document.name.lower().endswith(".csv"):
+    if is_tabular_document(document.name):
         return _csv_chunks(document.content)
     return _text_chunks(document.content)
 

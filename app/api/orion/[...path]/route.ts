@@ -19,6 +19,7 @@ const PROXYABLE_PATHS = new Set([
   "chat",
   "chat/stream",
   "knowledge/documents",
+  "knowledge/files",
   "memory/entries",
   "memory/suggestions",
   "conversations",
@@ -67,10 +68,13 @@ async function proxy(request: Request, path: string[]): Promise<Response> {
     upstream = await fetch(`${backendBase()}/${target}`, {
       method: request.method,
       headers,
+      // Forwarded as bytes, not text. An uploaded PDF or workbook is binary,
+      // and reading it as a string would decode it through UTF-8 and hand the
+      // core a corrupted file that no parser can open.
       body:
         request.method === "GET" || request.method === "DELETE"
           ? undefined
-          : await request.text(),
+          : await request.arrayBuffer(),
       signal: request.signal,
     });
   } catch {

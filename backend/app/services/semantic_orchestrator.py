@@ -12,7 +12,10 @@ from backend.app.core.identity import ORION_CREATOR_NAME, institutional_identity
 from backend.app.domain.models import SelectedMode
 from backend.app.domain.schemas import ChatMessage, SportContext
 from backend.app.providers.model_provider import ModelProvider, ModelResult
-from backend.app.services.knowledge_base import KnowledgeDocument
+from backend.app.services.knowledge_base import (
+    KnowledgeDocument,
+    is_tabular_document,
+)
 from backend.app.services.local_retrieval import retrieve_local_chunks
 from backend.app.services.semantic_tools import (
     CsvFilter,
@@ -1020,7 +1023,7 @@ def parse_evidence_review(value: str) -> EvidenceReview:
 
 
 def _csv_headers(document: KnowledgeDocument) -> tuple[str, ...]:
-    if not document.name.lower().endswith(".csv"):
+    if not is_tabular_document(document.name):
         return ()
     try:
         rows = csv.reader(io.StringIO(document.content))

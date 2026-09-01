@@ -1310,7 +1310,7 @@ export function OrionConsole() {
                   <span>Documento</span>
                   <input
                     type="file"
-                    accept=".txt,.md,.csv,.json,text/plain,text/csv,application/json"
+                    accept=".txt,.md,.csv,.json,.pdf,.xlsx,.xlsm,.docx"
                     onChange={handleKnowledgeUpload}
                   />
                 </label>

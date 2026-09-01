@@ -19,6 +19,17 @@ STOP_WORDS = {
 }
 
 
+# Documents whose stored text is a table Orion can compute over. A workbook
+# qualifies because extraction turns a single sheet into plain CSV precisely so
+# it lands on this path: filtering and averaging a GPS export must not depend on
+# whether the person exported it as .csv or handed over the .xlsx they were sent.
+TABULAR_EXTENSIONS = (".csv", ".xlsx", ".xlsm")
+
+
+def is_tabular_document(name: str) -> bool:
+    return name.lower().endswith(TABULAR_EXTENSIONS)
+
+
 @dataclass(frozen=True, slots=True)
 class KnowledgeDocument:
     id: str

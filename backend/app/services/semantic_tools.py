@@ -10,7 +10,10 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Sequence
 
-from backend.app.services.knowledge_base import KnowledgeDocument
+from backend.app.services.knowledge_base import (
+    KnowledgeDocument,
+    is_tabular_document,
+)
 
 
 VALID_AGGREGATIONS = frozenset({"none", "count", "sum", "average", "min", "max"})
@@ -132,8 +135,11 @@ def _document(documents: Sequence[KnowledgeDocument], name: str) -> KnowledgeDoc
         raise SemanticToolError(
             f"No se encontró de forma única el documento local '{name}'."
         )
-    if not matches[0].name.lower().endswith(".csv"):
-        raise SemanticToolError("La operación estructurada de datos requiere un CSV.")
+    if not is_tabular_document(matches[0].name):
+        raise SemanticToolError(
+            "La operación estructurada de datos requiere una tabla (CSV o Excel "
+            "de una sola hoja)."
+        )
     return matches[0]
 
 

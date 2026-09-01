@@ -87,7 +87,21 @@ test("sends the selected local sport context to the core", async () => {
   assert.match(component, /sport-picker/);
   assert.match(client, /sport:\s*input\.sport/);
   assert.match(component, /uploadKnowledgeDocument/);
-  assert.match(component, /accept="\.txt,\.md,\.csv,\.json/);
+  // The formats the job actually produces, not only the ones a person types:
+  // the GPS export is a workbook, the medical report a PDF, the scouting
+  // summary a Word file.
+  assert.match(component, /accept="\.txt,\.md,\.csv,\.json,\.pdf,\.xlsx,\.xlsm,\.docx"/);
+  // Sent as bytes through multipart. Reading a PDF as text in the browser (or
+  // in the proxy) decodes it through UTF-8 and hands the core a corrupted file.
+  assert.match(client, /new FormData\(\)/);
+  assert.match(client, /knowledge\/files/);
+  assert.doesNotMatch(client, /await file\.text\(\)/);
+  const proxyRoute = await readFile(
+    new URL("app/api/orion/[...path]/route.ts", root),
+    "utf8",
+  );
+  assert.match(proxyRoute, /await request\.arrayBuffer\(\)/);
+  assert.doesNotMatch(proxyRoute, /await request\.text\(\)/);
   assert.match(component, /knowledge-attachment/);
   assert.match(component, /knowledge-remove/);
   assert.match(component, /attachmentName/);

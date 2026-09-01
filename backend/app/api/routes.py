@@ -13,7 +13,15 @@ from time import perf_counter
 from typing import AsyncIterator
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.responses import StreamingResponse
 
 from backend.app.core.config import get_settings
@@ -64,6 +72,7 @@ from backend.app.services.conversation_repository import (
 )
 from backend.app.services.conversation_store import StoredMessage
 from backend.app.services.database import DatabaseUnavailableError
+from backend.app.services.document_text import DocumentExtractionError, extract_text
 from backend.app.services.knowledge_repository import create_knowledge_base
 from backend.app.services.memory_repository import (
     MemoryRepository,
@@ -632,23 +641,19 @@ async def list_knowledge_documents() -> list[KnowledgeDocumentResponse]:
     ]
 
 
-@router.post(
-    "/knowledge/documents",
-    response_model=KnowledgeDocumentResponse,
-    dependencies=[Depends(require_api_key), Depends(limit_upload_rate)],
-)
-async def add_knowledge_document(
-    request: KnowledgeDocumentRequest,
-) -> KnowledgeDocumentResponse:
+async def _store_document(name: str, content: str) -> KnowledgeDocumentResponse:
+    """Save one document, enforcing the quotas, whatever produced its text.
+
+    Shared by the JSON route and the file upload so a PDF and a pasted CSV are
+    held to exactly the same limits - a second copy of this logic would be a
+    second place for the quota to be forgotten.
+    """
+
     settings = get_settings()
     document_id = hashlib.sha256(
-        f"{request.name}\0{request.content}".encode("utf-8")
+        f"{name}\0{content}".encode("utf-8")
     ).hexdigest()[:16]
-    document = KnowledgeDocument(
-        document_id,
-        request.name.strip(),
-        request.content.strip(),
-    )
+    document = KnowledgeDocument(document_id, name.strip(), content.strip())
     knowledge = _knowledge_base()
     existing = await asyncio.to_thread(knowledge.list_documents)
     # Re-uploading the same content keeps the same id and just replaces the
@@ -685,6 +690,65 @@ async def add_knowledge_document(
         name=document.name,
         characters=len(document.content),
     )
+
+
+@router.post(
+    "/knowledge/documents",
+    response_model=KnowledgeDocumentResponse,
+    dependencies=[Depends(require_api_key), Depends(limit_upload_rate)],
+)
+async def add_knowledge_document(
+    request: KnowledgeDocumentRequest,
+) -> KnowledgeDocumentResponse:
+    return await _store_document(request.name, request.content)
+
+
+@router.post(
+    "/knowledge/files",
+    response_model=KnowledgeDocumentResponse,
+    dependencies=[Depends(require_api_key), Depends(limit_upload_rate)],
+)
+async def add_knowledge_file(file: UploadFile) -> KnowledgeDocumentResponse:
+    """Accept the formats a sports professional actually receives.
+
+    The browser can read a .txt; it cannot read a PDF, a workbook or a Word
+    file, so those arrive here as bytes and are turned into text server-side.
+    Parsing runs in a thread: pypdf and openpyxl are synchronous, and a large
+    workbook would otherwise freeze every other request while it is read.
+    """
+
+    settings = get_settings()
+    name = (file.filename or "documento").strip()
+    # Read bounded. The byte ceiling is generous next to the character limit
+    # extraction enforces, since a PDF or a workbook is far larger than the
+    # text inside it, but it has to exist: an unbounded read is memory the
+    # caller gets to choose for the server.
+    max_bytes = settings.knowledge_max_upload_bytes
+    data = await file.read(max_bytes + 1)
+    await file.close()
+    if len(data) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail={
+                "code": "knowledge_file_too_large",
+                "message": (
+                    f"El archivo supera el máximo de "
+                    f"{max_bytes // (1024 * 1024)} MB que Orion acepta."
+                ),
+            },
+        )
+
+    try:
+        content = await asyncio.to_thread(extract_text, name, data)
+    except DocumentExtractionError as exc:
+        # Written for the person holding the file: what is wrong and what to do
+        # about it, rather than a parser's own exception.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "document_unreadable", "message": str(exc)},
+        ) from exc
+
+    return await _store_document(name, content)
 
 
 @router.delete(
