@@ -37,6 +37,11 @@ STORAGE_METHODS = frozenset(
         "add_entry",
         "delete_entry",
         "delete_all",
+        "list_conversations",
+        "get_conversation",
+        "create_conversation",
+        "append_messages",
+        "delete_conversation",
     }
 )
 

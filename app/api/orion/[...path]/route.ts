@@ -21,6 +21,7 @@ const PROXYABLE_PATHS = new Set([
   "knowledge/documents",
   "memory/entries",
   "memory/suggestions",
+  "conversations",
   "diagnostics/traces/latest",
 ]);
 
@@ -38,6 +39,7 @@ function isProxyable(path: string): boolean {
   // Ids are dynamic, so match their shape rather than an exact value.
   if (/^diagnostics\/traces\/[A-Za-z0-9_-]{1,128}$/.test(path)) return true;
   if (/^knowledge\/documents\/[A-Za-z0-9_-]{1,128}$/.test(path)) return true;
+  if (/^conversations\/[A-Za-z0-9_-]{1,128}(\/messages)?$/.test(path)) return true;
   return /^memory\/entries\/[A-Za-z0-9_-]{1,128}$/.test(path);
 }
 

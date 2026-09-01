@@ -378,6 +378,79 @@ export async function uploadKnowledgeDocument(file: File): Promise<KnowledgeDocu
   return parseResponse<KnowledgeDocument>(response);
 }
 
+export type ConversationSummary = {
+  id: string;
+  title: string;
+  sport: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+};
+
+export type ConversationDetail = {
+  id: string;
+  title: string;
+  sport: string;
+  messages: Array<{ role: "user" | "assistant"; content: string }>;
+};
+
+/** Threads stored by the core so a reload gets the chat back.
+ *
+ * Every call here is a convenience around the conversation: a failure means
+ * "not saving right now", never a broken chat, so callers swallow errors. */
+export async function listConversations(
+  signal?: AbortSignal,
+): Promise<ConversationSummary[]> {
+  const response = await fetch(`${API_BASE}/conversations`, {
+    cache: "no-store",
+    signal,
+    headers: API_HEADERS,
+  });
+  return parseResponse<ConversationSummary[]>(response);
+}
+
+export async function createConversation(input: {
+  title: string;
+  sport: Sport;
+}): Promise<ConversationSummary> {
+  const response = await fetch(`${API_BASE}/conversations`, {
+    method: "POST",
+    headers: API_HEADERS,
+    body: JSON.stringify(input),
+  });
+  return parseResponse<ConversationSummary>(response);
+}
+
+export async function getConversation(
+  conversationId: string,
+  signal?: AbortSignal,
+): Promise<ConversationDetail> {
+  const response = await fetch(
+    `${API_BASE}/conversations/${encodeURIComponent(conversationId)}`,
+    { cache: "no-store", signal, headers: API_HEADERS },
+  );
+  return parseResponse<ConversationDetail>(response);
+}
+
+export async function appendConversationMessages(
+  conversationId: string,
+  messages: ChatMessage[],
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE}/conversations/${encodeURIComponent(conversationId)}/messages`,
+    { method: "POST", headers: API_HEADERS, body: JSON.stringify({ messages }) },
+  );
+  await parseResponse<{ status: string }>(response);
+}
+
+export async function deleteConversation(conversationId: string): Promise<void> {
+  const response = await fetch(
+    `${API_BASE}/conversations/${encodeURIComponent(conversationId)}`,
+    { method: "DELETE", headers: API_HEADERS },
+  );
+  await parseResponse<{ status: string }>(response);
+}
+
 export type MemorySuggestion = { content: string; reason: string };
 
 /** What Orion would remember, before anything is written.

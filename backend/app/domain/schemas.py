@@ -126,6 +126,48 @@ class MemorySuggestionResponse(BaseModel):
     reason: str = ""
 
 
+class ConversationCreateRequest(BaseModel):
+    """Opens a thread that survives reloading the page.
+
+    The title is the reader's handle on it in the sidebar; the interface derives
+    it from the first question, and it is display text, never interpreted.
+    """
+
+    title: str = Field(min_length=1, max_length=120)
+    sport: SportContext = SportContext.GENERAL
+
+
+class ConversationAppendRequest(BaseModel):
+    """One finished exchange: the question and its completed answer.
+
+    Whole exchanges only - the interface appends after an answer finishes, so a
+    reload never resurrects a half-written response.
+    """
+
+    messages: list[ChatMessage] = Field(min_length=1, max_length=4)
+
+
+class ConversationSummaryResponse(BaseModel):
+    id: str
+    title: str
+    sport: str
+    created_at: str
+    updated_at: str
+    message_count: int
+
+
+class ConversationMessageResponse(BaseModel):
+    role: str
+    content: str
+
+
+class ConversationDetailResponse(BaseModel):
+    id: str
+    title: str
+    sport: str
+    messages: list[ConversationMessageResponse]
+
+
 class MemoryEntryRequest(BaseModel):
     """A fact the user explicitly asks Orion to remember.
 

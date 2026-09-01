@@ -274,3 +274,55 @@ test("the reader sees which pipeline stage is running, not a blind spinner", asy
   // A fresh request must not inherit the previous one's last stage.
   assert.match(component, /setLoading\(true\);\s*\n\s*setLiveStage\(null\)/);
 });
+
+test("conversations survive a reload instead of dying with the tab", async () => {
+  // The sidebar used to warn that reloading lost the chat, and it was true:
+  // the conversation was the only stateful part of Orion living solely in one
+  // browser tab, while memory and documents were already durable.
+  const api = await readFile(new URL("app/lib/orion-api.ts", root), "utf8");
+  for (const fn of [
+    "listConversations",
+    "createConversation",
+    "getConversation",
+    "appendConversationMessages",
+    "deleteConversation",
+  ]) {
+    assert.match(api, new RegExp(`export async function ${fn}`), `falta ${fn}`);
+  }
+
+  const component = await readFile(
+    new URL("app/components/orion-console.tsx", root),
+    "utf8",
+  );
+  // Reopened on load, and only whole exchanges are stored - a reload must
+  // never resurrect half a streamed answer.
+  assert.match(component, /const hydrate = async/);
+  assert.match(component, /persistExchange/);
+  assert.match(component, /\{ role: "assistant", content: answer \}/);
+  // The id lives in a ref: it travels through async callbacks where state is stale.
+  assert.match(component, /conversationIdRef/);
+  assert.match(component, /startNewConversation/);
+  assert.match(component, /openConversation/);
+  assert.match(component, /removeConversation/);
+  // The stale promise is gone.
+  assert.doesNotMatch(component, /se pierden al recargar/);
+
+  const proxy = await readFile(
+    new URL("app/api/orion/[...path]/route.ts", root),
+    "utf8",
+  );
+  assert.match(proxy, /"conversations"/);
+  // The id-shaped routes reach the core too: opening one thread, and appending
+  // to it. Without the second, every answer would fail to save with a 404 the
+  // interface deliberately swallows - persistence would look enabled and store
+  // nothing.
+  assert.ok(proxy.includes("messages)?$"));
+  assert.match(proxy, /isProxyable[\s\S]*conversations/);
+
+  // The list scrolls inside its own bounds: the sidebar is a fixed 100dvh
+  // column with overflow hidden, so an unbounded list would push the memory
+  // panel off the bottom with no way to reach it.
+  const css = await readFile(new URL("app/globals.css", root), "utf8");
+  assert.match(css, /\.conversation-list\s*\{[^}]*overflow-y:\s*auto/s);
+  assert.match(css, /\.conversation-list\s*\{[^}]*max-height/s);
+});

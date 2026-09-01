@@ -27,6 +27,11 @@ from backend.app.domain.schemas import (
     KnowledgeDocumentResponse,
     MemoryEntryRequest,
     MemoryEntryResponse,
+    ConversationAppendRequest,
+    ConversationCreateRequest,
+    ConversationDetailResponse,
+    ConversationMessageResponse,
+    ConversationSummaryResponse,
     MemorySuggestionRequest,
     MemorySuggestionResponse,
     RequestedMode,
@@ -53,6 +58,11 @@ from backend.app.services.knowledge_base import (
     csv_tool_result,
     format_context,
 )
+from backend.app.services.conversation_repository import (
+    ConversationRepository,
+    create_conversation_repository,
+)
+from backend.app.services.conversation_store import StoredMessage
 from backend.app.services.database import DatabaseUnavailableError
 from backend.app.services.knowledge_repository import create_knowledge_base
 from backend.app.services.memory_repository import (
@@ -854,6 +864,145 @@ async def delete_all_memory_entries() -> dict[str, str]:
     except DatabaseUnavailableError as exc:
         raise _memory_unavailable(exc) from exc
     return {"status": "deleted_all"}
+
+
+def _conversation_store() -> ConversationRepository:
+    settings = get_settings()
+    return create_conversation_repository(
+        database_url=settings.database_url,
+        conversations_path=settings.conversations_path,
+    )
+
+
+def _conversations_unavailable(exc: Exception) -> HTTPException:
+    logger.warning("El historial de conversaciones no está disponible", exc_info=exc)
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={
+            "code": "conversations_unavailable",
+            "message": (
+                "El historial de conversaciones no está disponible en este "
+                "momento. La conversación actual sigue funcionando; solo no "
+                "se está guardando."
+            ),
+        },
+    )
+
+
+@router.get(
+    "/conversations",
+    response_model=list[ConversationSummaryResponse],
+    dependencies=[Depends(require_api_key)],
+)
+async def list_conversations() -> list[ConversationSummaryResponse]:
+    try:
+        summaries = await asyncio.to_thread(_conversation_store().list_conversations)
+    except DatabaseUnavailableError as exc:
+        raise _conversations_unavailable(exc) from exc
+    return [ConversationSummaryResponse(**asdict(item)) for item in summaries]
+
+
+@router.post(
+    "/conversations",
+    response_model=ConversationSummaryResponse,
+    dependencies=[Depends(require_api_key), Depends(limit_upload_rate)],
+)
+async def create_conversation(
+    request: ConversationCreateRequest,
+) -> ConversationSummaryResponse:
+    conversation_id = uuid4().hex[:16]
+    try:
+        summary = await asyncio.to_thread(
+            _conversation_store().create_conversation,
+            conversation_id,
+            request.title,
+            request.sport.value,
+        )
+    except DatabaseUnavailableError as exc:
+        raise _conversations_unavailable(exc) from exc
+    return ConversationSummaryResponse(**asdict(summary))
+
+
+@router.get(
+    "/conversations/{conversation_id}",
+    response_model=ConversationDetailResponse,
+    dependencies=[Depends(require_api_key)],
+)
+async def get_conversation(conversation_id: str) -> ConversationDetailResponse:
+    try:
+        conversation = await asyncio.to_thread(
+            _conversation_store().get_conversation, conversation_id
+        )
+    except DatabaseUnavailableError as exc:
+        raise _conversations_unavailable(exc) from exc
+    if conversation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "conversation_not_found",
+                "message": "Esa conversación ya no está guardada.",
+            },
+        )
+    return ConversationDetailResponse(
+        id=conversation.id,
+        title=conversation.title,
+        sport=conversation.sport,
+        messages=[
+            ConversationMessageResponse(role=item.role, content=item.content)
+            for item in conversation.messages
+        ],
+    )
+
+
+@router.post(
+    "/conversations/{conversation_id}/messages",
+    dependencies=[Depends(require_api_key), Depends(limit_upload_rate)],
+)
+async def append_conversation_messages(
+    conversation_id: str,
+    request: ConversationAppendRequest,
+) -> dict[str, str]:
+    stored = [
+        StoredMessage(role=item.role, content=item.content)
+        for item in request.messages
+    ]
+    try:
+        appended = await asyncio.to_thread(
+            _conversation_store().append_messages, conversation_id, stored
+        )
+    except DatabaseUnavailableError as exc:
+        raise _conversations_unavailable(exc) from exc
+    if not appended:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "conversation_not_found",
+                "message": "Esa conversación ya no está guardada.",
+            },
+        )
+    return {"status": "appended", "id": conversation_id}
+
+
+@router.delete(
+    "/conversations/{conversation_id}",
+    dependencies=[Depends(require_api_key)],
+)
+async def delete_conversation(conversation_id: str) -> dict[str, str]:
+    try:
+        deleted = await asyncio.to_thread(
+            _conversation_store().delete_conversation, conversation_id
+        )
+    except DatabaseUnavailableError as exc:
+        raise _conversations_unavailable(exc) from exc
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "conversation_not_found",
+                "message": "Esa conversación ya no está guardada.",
+            },
+        )
+    return {"status": "deleted", "id": conversation_id}
 
 
 @router.get(

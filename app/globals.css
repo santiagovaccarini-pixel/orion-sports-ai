@@ -262,6 +262,107 @@ button {
   color: #f0f1ea;
 }
 
+/* Conversation history.
+ *
+ * The sidebar is a fixed 100dvh column with overflow hidden, so a growing list
+ * would push the memory panel off the bottom with no way to reach it. This one
+ * scrolls inside its own bounds instead, and the column below it keeps its
+ * place no matter how many threads are saved. */
+.side-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.conversation-new {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0.6rem;
+  background: transparent;
+  padding: 0.2rem 0.5rem;
+  color: #c8c9c2;
+  cursor: pointer;
+  font-size: 0.7rem;
+  letter-spacing: 0.01em;
+}
+
+.conversation-new:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.07);
+  color: #f0f1ea;
+}
+
+.conversation-new:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.conversation-list {
+  display: grid;
+  max-height: 11rem;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.conversation-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 0.7rem;
+  background: rgba(255, 255, 255, 0.045);
+  padding: 0.1rem 0.35rem 0.1rem 0.55rem;
+}
+
+.conversation-item.active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.conversation-open {
+  overflow: hidden;
+  flex: 1 1 auto;
+  border: 0;
+  background: transparent;
+  padding: 0.45rem 0;
+  color: #c8c9c2;
+  cursor: pointer;
+  font-size: 0.75rem;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-item.active .conversation-open {
+  color: #f7f7f2;
+}
+
+.conversation-open:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.conversation-remove {
+  display: grid;
+  width: 1.2rem;
+  height: 1.2rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 0.4rem;
+  background: transparent;
+  color: #92948a;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.conversation-remove:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f0f1ea;
+}
+
 .side-note {
   margin-top: auto;
   border-top: 1px solid rgba(255, 255, 255, 0.1);

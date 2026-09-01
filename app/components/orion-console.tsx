@@ -12,7 +12,13 @@ import ReactMarkdown from "react-markdown";
 import { OrionMark } from "./orion-mark";
 import remarkGfm from "remark-gfm";
 import {
+  appendConversationMessages,
+  ConversationSummary,
+  createConversation,
+  deleteConversation,
   deleteKnowledgeDocument,
+  getConversation,
+  listConversations,
   suggestMemories,
   ChatMessage,
   MemorySuggestion,
@@ -273,6 +279,8 @@ export function OrionConsole() {
   const [suggestions, setSuggestions] = useState<MemorySuggestion[]>([]);
   const [suggestionDrafts, setSuggestionDrafts] = useState<string[]>([]);
   const [warning, setWarning] = useState<PendingWarning | null>(null);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const [showScrollToLatest, setShowScrollToLatest] = useState(false);
   const messagesRef = useRef<HTMLDivElement>(null);
   const sportPickerRef = useRef<HTMLDetailsElement>(null);
@@ -283,6 +291,9 @@ export function OrionConsole() {
   const shouldFollowRef = useRef(true);
   const previousScrollTopRef = useRef(0);
   const autoScrollFrameRef = useRef<number | null>(null);
+  // The id travels through async persistence callbacks, where state would be
+  // stale; the ref is the source of truth and the state mirrors it for the UI.
+  const conversationIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -291,6 +302,37 @@ export function OrionConsole() {
       .catch(() => {
         // Memory is supplementary: a failure here must not block the console.
       });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    // What a reload does now: list the saved threads and reopen the latest,
+    // instead of greeting the reader with an empty page and no way back.
+    const controller = new AbortController();
+    const hydrate = async () => {
+      try {
+        const summaries = await listConversations(controller.signal);
+        setConversations(summaries);
+        const latest = summaries[0];
+        if (!latest || latest.message_count === 0) return;
+        const detail = await getConversation(latest.id, controller.signal);
+        conversationIdRef.current = detail.id;
+        setConversationId(detail.id);
+        if (SPORT_LABELS[detail.sport as Sport]) {
+          setSport(detail.sport as Sport);
+        }
+        setMessages(
+          detail.messages.map((item) => ({
+            id: makeId(item.role),
+            role: item.role,
+            content: item.content,
+          })),
+        );
+      } catch {
+        // History is a convenience: without it the console still chats.
+      }
+    };
+    void hydrate();
     return () => controller.abort();
   }, []);
 
@@ -495,6 +537,12 @@ export function OrionConsole() {
         ),
       );
 
+      void persistExchange(
+        requestMessages[requestMessages.length - 1],
+        answerRef.current,
+        selectedSport,
+      );
+
       void askForSuggestions(
         [...requestMessages, { role: "assistant", content: answerRef.current }],
         answerRef.current,
@@ -676,6 +724,83 @@ export function OrionConsole() {
     }
   };
 
+  /** Store a finished exchange, opening the thread on the first one.
+   *
+   * Runs after the answer is on screen and never blocks it: if the core cannot
+   * save right now the conversation still works, it just is not persisted. Only
+   * complete exchanges are stored, so a reload never resurrects half an answer.
+   */
+  const persistExchange = async (
+    question: ChatMessage | undefined,
+    answer: string,
+    selectedSport: Sport,
+  ) => {
+    if (!question || !answer.trim()) return;
+    try {
+      let id = conversationIdRef.current;
+      if (!id) {
+        const created = await createConversation({
+          // The title is display text taken from the question itself, never
+          // interpreted: Orion does not classify what the thread is about.
+          title: question.content.slice(0, 120),
+          sport: selectedSport,
+        });
+        id = created.id;
+        conversationIdRef.current = id;
+        setConversationId(id);
+      }
+      await appendConversationMessages(id, [
+        question,
+        { role: "assistant", content: answer },
+      ]);
+      setConversations(await listConversations());
+    } catch {
+      // Persistence is a convenience; losing it must not cost the answer.
+    }
+  };
+
+  const openConversation = async (id: string) => {
+    if (loading) return;
+    try {
+      const detail = await getConversation(id);
+      conversationIdRef.current = detail.id;
+      setConversationId(detail.id);
+      if (SPORT_LABELS[detail.sport as Sport]) setSport(detail.sport as Sport);
+      setMessages(
+        detail.messages.map((item) => ({
+          id: makeId(item.role),
+          role: item.role,
+          content: item.content,
+        })),
+      );
+      setSuggestions([]);
+      setSuggestionDrafts([]);
+      setError(null);
+    } catch {
+      setError("No se pudo abrir esa conversación.");
+    }
+  };
+
+  const startNewConversation = () => {
+    if (loading) return;
+    conversationIdRef.current = null;
+    setConversationId(null);
+    setMessages([]);
+    setSuggestions([]);
+    setSuggestionDrafts([]);
+    setError(null);
+  };
+
+  const removeConversation = async (id: string) => {
+    try {
+      await deleteConversation(id);
+      setConversations((current) => current.filter((item) => item.id !== id));
+      if (conversationIdRef.current === id) startNewConversation();
+    } catch {
+      setError("No se pudo borrar esa conversación.");
+    }
+  };
+
   // Asked once the answer is on screen, so proposing costs the reader no wait.
   const askForSuggestions = async (
     conversation: ChatMessage[],
@@ -806,6 +931,53 @@ export function OrionConsole() {
         </div>
 
         <div className="side-stack">
+          <div className="side-heading">
+            <p className="side-label">Conversaciones</p>
+            <button
+              type="button"
+              className="conversation-new"
+              onClick={startNewConversation}
+              disabled={loading}
+              title="Empezar una conversación nueva"
+            >
+              + Nueva
+            </button>
+          </div>
+          {conversations.length === 0 ? (
+            <p className="memory-empty">Todavía no hay conversaciones guardadas.</p>
+          ) : (
+            <ul className="conversation-list">
+              {conversations.map((item) => (
+                <li
+                  key={item.id}
+                  className={`conversation-item ${
+                    item.id === conversationId ? "active" : ""
+                  }`}
+                >
+                  <button
+                    type="button"
+                    className="conversation-open"
+                    onClick={() => void openConversation(item.id)}
+                    disabled={loading}
+                    title={item.title}
+                  >
+                    {item.title}
+                  </button>
+                  <button
+                    type="button"
+                    className="conversation-remove"
+                    onClick={() => void removeConversation(item.id)}
+                    aria-label={`Borrar conversación: ${item.title}`}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="side-stack">
           <p className="side-label">Memoria</p>
           <p className="side-hint">
             Solo lo que guardes acá. Orion no guarda nada por su cuenta.
@@ -855,8 +1027,8 @@ export function OrionConsole() {
         </div>
 
         <p className="side-note">
-          Las conversaciones se pierden al recargar la página. Lo que guardes
-          en memoria y los documentos que subas sí quedan guardados.
+          Las conversaciones, la memoria y los documentos quedan guardados en el
+          núcleo de Orion: al recargar la página siguen acá.
         </p>
       </aside>
 

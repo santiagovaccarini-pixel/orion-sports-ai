@@ -140,6 +140,7 @@ class Settings:
     api_key: str | None = None
     knowledge_path: str = ".orion-runtime/knowledge/documents.json"
     memory_path: str = ".orion-runtime/memory/entries.json"
+    conversations_path: str = ".orion-runtime/conversations/threads.json"
     # When set, memory and knowledge live in Postgres instead of local JSON
     # files, so they survive restarts and redeploys on an ephemeral disk.
     database_url: str | None = None
@@ -257,6 +258,9 @@ def get_settings() -> Settings:
         api_key=os.getenv("ORION_API_KEY") or None,
         knowledge_path=os.getenv(
             "ORION_KNOWLEDGE_PATH", ".orion-runtime/knowledge/documents.json"
+        ),
+        conversations_path=os.getenv(
+            "ORION_CONVERSATIONS_PATH", ".orion-runtime/conversations/threads.json"
         ),
         memory_path=os.getenv(
             "ORION_MEMORY_PATH", ".orion-runtime/memory/entries.json"

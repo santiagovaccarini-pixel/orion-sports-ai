@@ -41,6 +41,36 @@ SCHEMA_STATEMENTS = (
     CREATE INDEX IF NOT EXISTS knowledge_documents_owner_created
         ON knowledge_documents (owner_id, created_at)
     """,
+    """
+    CREATE TABLE IF NOT EXISTS conversations (
+        id          TEXT PRIMARY KEY,
+        owner_id    TEXT NOT NULL DEFAULT 'orion',
+        title       TEXT NOT NULL,
+        sport       TEXT NOT NULL DEFAULT 'general',
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS conversations_owner_updated
+        ON conversations (owner_id, updated_at)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS conversation_messages (
+        id              TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL
+                        REFERENCES conversations(id) ON DELETE CASCADE,
+        owner_id        TEXT NOT NULL DEFAULT 'orion',
+        position        INTEGER NOT NULL,
+        role            TEXT NOT NULL,
+        content         TEXT NOT NULL,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS conversation_messages_conversation_position
+        ON conversation_messages (conversation_id, position)
+    """,
 )
 
 
