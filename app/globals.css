@@ -2,7 +2,15 @@
 
 :root {
   --ink: #11120f;
+  /* Secondary text on the light side. Measured at 5.2:1 on --paper, so it
+     clears the 4.5:1 minimum for body text. Several hand-picked greys around
+     it did not - #777970 sat at 4.26 and #8f9187 at 3.08 - and they were used
+     for the things read most often: the metrics under every answer and the
+     line that says what Orion is doing. */
   --muted: #686b62;
+  /* The same role on the dark sidebar, where the light-side grey would be too
+     dim to read. 6.1:1 on the sidebar's own background. */
+  --muted-dark: #92948a;
   --line: #dedfd9;
   --paper: #f4f4ef;
   --surface: #ffffff;
@@ -93,10 +101,18 @@ button {
   font-size: 0.72rem;
 }
 
-.side-label,
+.side-label {
+  margin: 0;
+  color: var(--muted-dark);
+  font-size: 0.68rem;
+  font-weight: 750;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+}
+
 .eyebrow {
   margin: 0;
-  color: #8f9187;
+  color: var(--muted);
   font-size: 0.68rem;
   font-weight: 750;
   letter-spacing: 0.17em;
@@ -695,7 +711,7 @@ button {
 }
 
 .chart-preview small {
-  color: #777970;
+  color: var(--muted);
   font-size: 0.66rem;
 }
 
@@ -721,7 +737,7 @@ button {
 
 .message-meta {
   margin-top: 0.65rem;
-  color: #777970;
+  color: var(--muted);
   font-size: 0.68rem;
 }
 
@@ -793,7 +809,7 @@ button {
 
 .thinking small {
   flex-basis: 100%;
-  color: #85877e;
+  color: var(--muted);
   font-size: 0.68rem;
 }
 
@@ -1053,7 +1069,7 @@ button {
 }
 
 .sport-picker-chevron {
-  color: #85877e;
+  color: var(--muted);
   font-size: 0.65rem;
 }
 

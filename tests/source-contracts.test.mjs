@@ -363,3 +363,66 @@ test("a progression is drawn as a line, not as bars to connect by eye", async ()
   assert.match(css, /\.chart-line\s*\{[^}]*stroke:\s*#8db92d/s);
   assert.match(css, /\.chart-line\s*\{[^}]*fill:\s*none/s);
 });
+
+test("secondary text meets the contrast minimum on both sides of the app", async () => {
+  // Measured, not eyeballed. Four hand-picked greys sat below 4.5:1 on the
+  // light side and were used for the text read most often: the metrics under
+  // every answer, the note under a chart, and the line saying what Orion is
+  // doing. On a screen in daylight - which is where a coach reads this - that
+  // is the difference between legible and squinting.
+  const css = await readFile(new URL("app/globals.css", root), "utf8");
+
+  const luminance = (hex) => {
+    const value = hex.replace("#", "");
+    const channel = (pair) => {
+      const n = parseInt(pair, 16) / 255;
+      return n <= 0.03928 ? n / 12.92 : ((n + 0.055) / 1.055) ** 2.4;
+    };
+    return (
+      0.2126 * channel(value.slice(0, 2)) +
+      0.7152 * channel(value.slice(2, 4)) +
+      0.0722 * channel(value.slice(4, 6))
+    );
+  };
+  const contrast = (a, b) => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+
+  const token = (name) => {
+    const declaration = `${name}:`;
+    const at = css.indexOf(declaration);
+    assert.ok(at >= 0, `falta el token ${name}`);
+    const found = css.slice(at).match(/#[0-9a-fA-F]{6}/);
+    assert.ok(found, `el token ${name} no declara un color hexadecimal`);
+    return found[0];
+  };
+
+  const paper = token("--paper");
+  const ink = token("--ink");
+  assert.ok(
+    contrast(token("--muted"), paper) >= 4.5,
+    "--muted no llega al mínimo sobre el papel",
+  );
+  assert.ok(
+    contrast(token("--muted-dark"), ink) >= 4.5,
+    "--muted-dark no llega al mínimo sobre la barra lateral",
+  );
+
+  // These four read on the light side, so they must use the light-side token:
+  // hard-coding a grey here is how the failing ones got in.
+  for (const rule of [
+    ".chart-preview small",
+    ".message-meta",
+    ".thinking small",
+    ".eyebrow",
+  ]) {
+    const at = css.indexOf(`${rule} {`);
+    assert.ok(at >= 0, `no encontré la regla ${rule}`);
+    const block = css.slice(at, css.indexOf("}", at));
+    assert.ok(
+      block.includes("color: var(--muted)"),
+      `${rule} debería usar var(--muted), no un gris propio`,
+    );
+  }
+});
